@@ -120,3 +120,38 @@ def test_build_lora_raises_when_no_targets_match():
     finally:
         peft.LoraConfig = original_LoraConfig
         peft.get_peft_model = original_get_peft_model
+
+
+def test_build_lora_raises_when_peft_model_has_zero_trainable_params():
+    """Targets may be non-empty (e.g. wrong bias, or all matched modules
+    skipped) but the resulting PEFT model can still expose 0 trainable
+    parameters. Per G4 we must abort in that case too.
+    """
+    import peft
+
+    class FakeLoraConfig:
+        def __init__(self, **kw):
+            pass
+
+    class FakePeftModelZeroTrainable:
+        def __init__(self, base, config):
+            pass
+
+        def parameters(self):
+            # Yield only params with requires_grad=False so trainable_params == 0.
+            class _P:
+                numel = staticmethod(lambda: 4)
+                requires_grad = False
+            return iter([_P(), _P()])
+
+    original_LoraConfig = peft.LoraConfig
+    original_get_peft_model = peft.get_peft_model
+    peft.LoraConfig = FakeLoraConfig
+    peft.get_peft_model = lambda base, cfg: FakePeftModelZeroTrainable(base, cfg)
+    try:
+        base = _TinyVJEPA2()  # has real matching targets so discover_lora_targets != []
+        with pytest.raises(ValueError, match=r"0 trainable params"):
+            build_lora_model(base)
+    finally:
+        peft.LoraConfig = original_LoraConfig
+        peft.get_peft_model = original_get_peft_model

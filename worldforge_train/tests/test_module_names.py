@@ -54,3 +54,36 @@ def test_discover_supports_nested_module_names():
     targets = discover_lora_targets(model, ["mlp.fc1"])
     assert "blocks.0.mlp.fc1" in targets
     assert "blocks.1.mlp.fc1" in targets
+
+
+def test_discover_suffix_only_false_requires_exact_full_path():
+    """With suffix_only=False, candidate must equal the module's full path."""
+
+    class Attention(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.q_proj = nn.Linear(2, 2)
+
+    class Block(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.attn = Attention()
+
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.blocks = nn.ModuleList([Block(), Block()])
+
+    model = Model()
+
+    # Leaf-only candidate does NOT match the full path blocks.0.attn.q_proj.
+    targets = discover_lora_targets(
+        model, ["q_proj"], suffix_only=False
+    )
+    assert targets == []
+
+    # Fully-qualified candidate matches only that exact path.
+    targets = discover_lora_targets(
+        model, ["blocks.0.attn.q_proj"], suffix_only=False
+    )
+    assert targets == ["blocks.0.attn.q_proj"]
