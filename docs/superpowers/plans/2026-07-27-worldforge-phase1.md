@@ -2122,7 +2122,9 @@ def test_compile_to_om_writes_om_file(tmp_path):
     src.mkdir()
     (src / "config.json").write_text("{}")
     out = tmp_path / "model.om"
-    result = compile_to_om(src, out, target_hardware="Atlas 800 A2 / 910B")
+    result = compile_to_om(
+        src, out, target_hardware="Atlas 800 A2 / 910B", require_quantized=False
+    )
     assert result.exists()
     assert result.suffix == ".om"
 
@@ -2793,7 +2795,25 @@ git commit -m "feat(inf): FastAPI server with /v1/world/encode and HMAC auth"
 - [ ] **Step 1: Append failing test to `test_api_endpoints.py`**
 
 ```python
-def test_predict_with_valid_auth_returns_200(client, fake_video_bytes):
+@pytest.fixture
+def predict_client(monkeypatch):
+    """Test client whose stub worker implements both encode() and predict()."""
+    class _StubWorker:
+        def encode(self, x):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+        def predict(self, x, mask):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+    monkeypatch.setattr(
+        "worldforge_inf.vjepa2_worker._load_hf_model", lambda p, dtype: _StubWorker()
+    )
+    return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
+
+
+def test_predict_with_valid_auth_returns_200(predict_client, fake_video_bytes):
     import hmac, hashlib, time
 
     method = "POST"
@@ -2803,28 +2823,19 @@ def test_predict_with_valid_auth_returns_200(client, fake_video_bytes):
     canonical = f"{method}\n{path}\n{len(body)}\n{ts}".encode() + body
     sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
 
-    # Patch the stub worker to also implement predict()
-    import worldforge_inf.vjepa2_worker as vw
-    class _StubWorker:
-        def encode(self, x):
-            import torch; return torch.zeros(1, 196, 1024)
-        def predict(self, x, mask):
-            import torch; return torch.zeros(1, 196, 1024)
-    monkeypatch_set = vw._load_hf_model  # noqa
-    import worldforge_inf.tests.test_api_endpoints as te
-    te.monkeypatch.setattr(vw, "_load_hf_model", lambda p, dtype: _StubWorker())
-    # rebuild app
-    from worldforge_inf.server import create_app
-    from fastapi.testclient import TestClient
-    test_client = TestClient(create_app(model_path="/fake/model", secret="test-secret"))
-
-    resp = test_client.post(
-        path, content=body,
-        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
-                 "Content-Type": "application/json"},
+    resp = predict_client.post(
+        path,
+        content=body,
+        headers={
+            "Authorization": f"HMAC {sig}",
+            "X-WorldForge-Timestamp": ts,
+            "Content-Type": "application/json",
+        },
     )
     assert resp.status_code == 200
-    assert "predicted_features" in resp.json()
+    payload = resp.json()
+    assert "predicted_features" in payload
+    assert "loss_score" in payload
 ```
 
 - [ ] **Step 2: Run failing test**
