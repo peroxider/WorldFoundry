@@ -939,6 +939,15 @@ def test_multiblock_mask_raises_when_target_unreachable():
             shape=(8, 14, 14), num_blocks=1, target_ratio=0.99,
             max_attempts=2, rng=np.random.default_rng(0),
         )
+
+
+def test_tubelet_mask_raises_when_shape_not_divisible():
+    # T=10 not divisible by tubelet_size_t=3 -> GridError (G8)
+    with pytest.raises(MaskingError, match=r"not divisible"):
+        tubelet_mask(
+            shape=(10, 14, 14), tubelet_size=(3, 14, 14),
+            rng=np.random.default_rng(0),
+        )
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1050,7 +1059,15 @@ def tubelet_mask(
     """Generate a tubelet-aligned binary mask by selecting whole tubelets at random.
 
     A tubelet of size (t,h,w) covers one cell in the grid (T/t, H/h, W/w).
+    Each input axis must be an integer multiple of the corresponding tubelet
+    axis; non-divisible shapes raise ``MaskingError`` (G8 — no silent
+    truncation). The returned mask always has shape exactly equal to ``shape``.
     """
+    if any(s % t != 0 for s, t in zip(shape, tubelet_size)):
+        raise MaskingError(
+            f"shape {shape} not divisible by tubelet_size {tubelet_size}; "
+            f"vjepa2 requires aligned grid."
+        )
     if rng is None:
         rng = np.random.default_rng()
     grid, _ = _broadcast_shape_for_tubelet(shape, tubelet_size)
@@ -1061,8 +1078,6 @@ def tubelet_mask(
     grid_mask = grid_mask.reshape(grid)
     # Broadcast each grid cell to a tubelet
     mask = np.kron(grid_mask, np.ones(tubelet_size, dtype=bool))
-    # Crop if shape not perfectly divisible by tubelet size
-    mask = mask[: shape[0], : shape[1], : shape[2]]
     return mask
 ```
 
