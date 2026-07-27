@@ -3,10 +3,21 @@
 Per spec §3.1:
 - Primary: Ascend DVPP (CANN hardware decoder)
 - Fallback: decord (CPU)
-- Single-batch DVPP failure must fall back to decord (per spec §4.7)
+
+Per spec §4.7, a single-batch DVPP decode failure falls back to decord. That
+fallback lives at the *decode* layer, not at construction: when DVPP is
+available and requested, ``build_video_source`` returns a
+``FallbackVideoSource`` wrapping a DVPP primary and a decord fallback. Its
+``read_all()`` tries DVPP first and, on ``NotImplementedError`` /
+``RuntimeError``, emits a ``logging`` WARNING naming the failure and the file,
+then decodes with decord. Any other exception propagates.
+
+Phase-1: ``_dvpp_available()`` always returns False and ``DVPPVideoSource``
+is a stub; the real acl_dvpp decoder arrives in Phase-2 W11.
 """
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Union
@@ -14,6 +25,8 @@ from typing import Union
 import numpy as np
 
 PathLike = Union[str, Path]
+
+logger = logging.getLogger(__name__)
 
 
 def _dvpp_available() -> bool:
@@ -69,14 +82,47 @@ class DVPPVideoSource(VideoSource):
         )
 
 
+class FallbackVideoSource(VideoSource):
+    """Compose a primary source with a fallback used on decode failure.
+
+    Per spec §4.7: a DVPP decode failure falls back to decord. The fallback is
+    never silent — it logs a WARNING naming the underlying exception and the
+    file being decoded. Only ``NotImplementedError`` (the Phase-1 DVPP stub)
+    and ``RuntimeError`` (the expected shape of an acl_dvpp decode failure) are
+    caught; anything else propagates to the caller.
+    """
+
+    #: Narrow, deliberate catch set. Do not widen to ``Exception``.
+    FALLBACK_ERRORS = (NotImplementedError, RuntimeError)
+
+    def __init__(self, primary: VideoSource, fallback: VideoSource) -> None:
+        self.primary = primary
+        self.fallback = fallback
+
+    @property
+    def path(self) -> Path:
+        return getattr(self.primary, "path", getattr(self.fallback, "path", None))
+
+    def read_all(self) -> np.ndarray:
+        try:
+            return self.primary.read_all()
+        except self.FALLBACK_ERRORS as exc:
+            logger.warning(
+                "Primary video source %s failed to decode %s (%r); "
+                "falling back to %s",
+                type(self.primary).__name__,
+                self.path,
+                exc,
+                type(self.fallback).__name__,
+            )
+            return self.fallback.read_all()
+
+
 def build_video_source(path: PathLike, prefer_dvpp: bool = True) -> VideoSource:
     """Build a video source, preferring DVPP if available and requested."""
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Video not found: {p}")
     if prefer_dvpp and _dvpp_available():
-        try:
-            return DVPPVideoSource(p)
-        except Exception:
-            pass  # fall through to decord per spec §4.7
+        return FallbackVideoSource(DVPPVideoSource(p), DecordVideoSource(p))
     return DecordVideoSource(p)
