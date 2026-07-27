@@ -52,3 +52,15 @@ class VJEPA2Worker:
         """Predict masked tokens (V-JEPA 2 native objective)."""
         out = self.model(pixel_values_videos=masked_video, bool_masked_pos=mask)
         return out.last_hidden_state
+
+    @torch.no_grad()
+    def plan(self, video_tensor: torch.Tensor, actions: list[int]) -> tuple[torch.Tensor, list[int]]:
+        """V-JEPA 2-AC: given (video, actions), return next-state features.
+
+        Phase-1: passthrough that returns the encoded features and the input
+        actions. Phase-2 W4 implements the action-conditioned predictor from
+        facebookresearch/vjepa2.
+        """
+        feats = self.encode(video_tensor)
+        return feats, list(actions)
+

@@ -110,3 +110,48 @@ def test_predict_with_valid_auth_returns_200(predict_client, fake_video_bytes):
     payload = resp.json()
     assert "predicted_features" in payload
     assert "loss_score" in payload
+
+
+@pytest.fixture
+def plan_client(monkeypatch):
+    """Test client whose stub worker implements encode/predict/plan."""
+    class _StubWorker:
+        def encode(self, x):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+        def predict(self, x, mask):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+        def plan(self, x, actions):
+            import torch
+            return torch.zeros(1, 196, 1024), [int(a) for a in actions]
+
+    monkeypatch.setattr("worldforge_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
+    return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
+
+
+def test_plan_with_valid_auth_returns_200(plan_client, fake_video_bytes):
+    import hmac, hashlib, time
+
+    method = "POST"
+    path = "/v1/world/plan"
+    body = f'{{"video":"{fake_video_bytes}","actions":[1,2,3]}}'.encode()
+    ts = str(int(time.time()))
+    canonical = f"{method}\n{path}\n{len(body)}\n{ts}".encode() + body
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+
+    resp = plan_client.post(
+        path,
+        content=body,
+        headers={
+            "Authorization": f"HMAC {sig}",
+            "X-WorldForge-Timestamp": ts,
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "next_features" in payload
+    assert payload["planned_actions"] == [1, 2, 3]  # stub returns ints
