@@ -5,6 +5,7 @@ Per spec §4.3: input (video, actions); output (next_features, planned_actions).
 from __future__ import annotations
 
 import base64
+import binascii
 
 import numpy as np
 import torch
@@ -24,12 +25,17 @@ async def plan(request: Request, auth: HmacTokenAuth = Depends(lambda: None)) ->
     payload = await request.json()
     if "video" not in payload or "actions" not in payload:
         raise HTTPException(status_code=400, detail="missing 'video' or 'actions'")
-    actions = list(payload["actions"])
-    if not all(isinstance(a, int) for a in actions):
+    if not isinstance(payload["actions"], list):
         raise HTTPException(status_code=400, detail="'actions' must be a list of integers")
+    actions = payload["actions"]
+    if not all(isinstance(a, int) and not isinstance(a, bool) for a in actions):
+        raise HTTPException(status_code=400, detail="'actions' must be a list of integers (booleans rejected)")
 
-    video_bytes = base64.b64decode(payload["video"])
-    video = np.frombuffer(video_bytes, dtype=np.uint8).reshape(-1, 64, 64, 3)
+    try:
+        video_bytes = base64.b64decode(payload["video"], validate=True)
+        video = np.frombuffer(video_bytes, dtype=np.uint8).reshape(-1, 64, 64, 3)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid video payload: {exc}") from exc
     tensor = torch.from_numpy(video).float().permute(0, 3, 1, 2).unsqueeze(0)
 
     adapter_name = payload.get("adapter", "default")

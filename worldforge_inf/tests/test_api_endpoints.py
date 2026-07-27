@@ -155,3 +155,55 @@ def test_plan_with_valid_auth_returns_200(plan_client, fake_video_bytes):
     payload = resp.json()
     assert "next_features" in payload
     assert payload["planned_actions"] == [1, 2, 3]  # stub returns ints
+
+
+def test_plan_rejects_null_actions(plan_client, fake_video_bytes):
+    import hmac, hashlib, time
+
+    method = "POST"
+    path = "/v1/world/plan"
+    body = f'{{"video":"{fake_video_bytes}","actions":null}}'.encode()
+    ts = str(int(time.time()))
+    canonical = f"{method}\n{path}\n{len(body)}\n{ts}".encode() + body
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+    resp = plan_client.post(
+        path, content=body,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+                 "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_plan_rejects_boolean_actions(plan_client, fake_video_bytes):
+    import hmac, hashlib, time
+
+    method = "POST"
+    path = "/v1/world/plan"
+    body = f'{{"video":"{fake_video_bytes}","actions":[true,false]}}'.encode()
+    ts = str(int(time.time()))
+    canonical = f"{method}\n{path}\n{len(body)}\n{ts}".encode() + body
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+    resp = plan_client.post(
+        path, content=body,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+                 "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
+def test_plan_rejects_malformed_video(plan_client):
+    import hmac, hashlib, time
+
+    method = "POST"
+    path = "/v1/world/plan"
+    # Invalid base64 + insufficient length → should be 400, not 500.
+    body = b'{"video":"%%%","actions":[1,2,3]}'
+    ts = str(int(time.time()))
+    canonical = f"{method}\n{path}\n{len(body)}\n{ts}".encode() + body
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+    resp = plan_client.post(
+        path, content=body,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+                 "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
