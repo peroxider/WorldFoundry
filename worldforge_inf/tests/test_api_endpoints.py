@@ -69,3 +69,44 @@ def test_encode_rejects_stale_timestamp(client, fake_video_bytes):
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 401
+
+
+@pytest.fixture
+def predict_client(monkeypatch):
+    """Test client whose stub worker implements both encode() and predict()."""
+    class _StubWorker:
+        def encode(self, x):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+        def predict(self, x, mask):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+    monkeypatch.setattr("worldforge_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
+    return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
+
+
+def test_predict_with_valid_auth_returns_200(predict_client, fake_video_bytes):
+    import hmac, hashlib, time
+
+    method = "POST"
+    path = "/v1/world/predict"
+    body = f'{{"video":"{fake_video_bytes}","mask_ratio":0.7}}'.encode()
+    ts = str(int(time.time()))
+    canonical = f"{method}\n{path}\n{len(body)}\n{ts}".encode() + body
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+
+    resp = predict_client.post(
+        path,
+        content=body,
+        headers={
+            "Authorization": f"HMAC {sig}",
+            "X-WorldForge-Timestamp": ts,
+            "Content-Type": "application/json",
+        },
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "predicted_features" in payload
+    assert "loss_score" in payload
