@@ -37,8 +37,10 @@ def test_tubelet_mask_is_subset_of_full():
 
 
 def test_multiblock_mask_raises_when_target_unreachable():
-    # tiny max_attempts forces the unreachable-target failure mode
-    with pytest.raises(MaskingError):
+    # tiny max_attempts forces the unreachable-target failure mode; the message
+    # must name both the achieved fraction and the target so a regression that
+    # swaps the inequality or skips the failure branch is caught.
+    with pytest.raises(MaskingError, match=r"of target 0\.99"):
         multiblock_mask(
             shape=(8, 14, 14), num_blocks=1, target_ratio=0.99,
             max_attempts=2, rng=np.random.default_rng(0),

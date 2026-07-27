@@ -5,20 +5,11 @@ Original: Copyright (c) Meta Platforms, Inc. and affiliates.
 """
 from __future__ import annotations
 
-from typing import Sequence, Tuple
+from typing import Tuple
 
 import numpy as np
 
 from worldforge_common.exceptions import MaskingError
-
-
-def _broadcast_shape_for_tubelet(
-    shape: Tuple[int, int, int],
-    tubelet_size: Tuple[int, int, int],
-) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
-    """Compute the grid shape and per-axis stride from a (T,H,W) tensor and tubelet size."""
-    grid = tuple(s // t for s, t in zip(shape, tubelet_size))
-    return grid, tubelet_size
 
 
 def multiblock_mask(
@@ -98,7 +89,7 @@ def tubelet_mask(
     """
     if rng is None:
         rng = np.random.default_rng()
-    grid, _ = _broadcast_shape_for_tubelet(shape, tubelet_size)
+    grid = tuple(s // t for s, t in zip(shape, tubelet_size))
     total = int(np.prod(grid))
     n_masked = int(round(mask_ratio * total))
     grid_mask = np.zeros(total, dtype=bool)
