@@ -1108,7 +1108,7 @@ git commit -m "feat(train): tubelet masking for V-JEPA 2"
 **Interfaces:**
 - Consumes: `worldforge_train.data.video_source.build_video_source`
 - Produces:
-  - `worldforge_train.data.dataset.Vjepa2Dataset(manifest_path, mask_fn)` returning dict `{"frames": Tensor, "mask": Tensor}` per item
+  - `worldforge_train.data.dataset.Vjepa2Dataset(manifest_path, mask_fn, patch_size=14)` returning dict `{"frames": Tensor, "mask": Tensor}` per item, where `mask` has shape `(T, H // patch_size, W // patch_size)` per the V-JEPA 2 ViT-L patch grid
 
 - [ ] **Step 1: Write failing test `worldforge_train/tests/test_dataset.py`**
 
@@ -1117,21 +1117,20 @@ import numpy as np
 import pytest
 
 from worldforge_train.data.dataset import Vjepa2Dataset
-from worldforge_train.data.tubelet_mask import tubelet_mask
 
 
 @pytest.fixture
-def manifest(tmp_path, sample_mp4_from_task3):
+def manifest(tmp_path, sample_mp4):
     """Write a tiny manifest CSV: video_path, num_frames, height, width."""
     csv = tmp_path / "manifest.csv"
-    csv.write_text(f"video_path,num_frames,height,width\n{sample_mp4_from_task4},20,64,64\n")
+    csv.write_text(f"video_path,num_frames,height,width\n{sample_mp4},20,64,64\n")
     return csv
 
 
 def test_dataset_len_matches_manifest(manifest):
     ds = Vjepa2Dataset(
         manifest_path=manifest,
-        mask_fn=lambda shape, rng: tubelet_mask(shape, (2, 14, 14), rng=rng),
+        mask_fn=lambda shape, rng: np.ones(shape, dtype=bool),
     )
     assert len(ds) == 1
 
@@ -1139,49 +1138,30 @@ def test_dataset_len_matches_manifest(manifest):
 def test_dataset_getitem_returns_correct_shapes(manifest):
     ds = Vjepa2Dataset(
         manifest_path=manifest,
-        mask_fn=lambda shape, rng: tubelet_mask(shape, (2, 14, 14), rng=rng),
+        mask_fn=lambda shape, rng: np.ones(shape, dtype=bool),
     )
     item = ds[0]
     assert "frames" in item and "mask" in item
     # frames: (T, C, H, W) float32 in [0,1]
-    assert item["frames"].shape[0] == 20
-    assert item["frames"].shape[1] == 3
+    assert item["frames"].shape == (20, 3, 64, 64)
     assert item["frames"].dtype == np.float32
     assert 0.0 <= item["frames"].min() and item["frames"].max() <= 1.0
-    # mask: (T, H_grid, W_grid) bool
+    # mask: (T, H_grid, W_grid) bool with H_grid, W_grid = H/patch_size, W/patch_size
     assert item["mask"].dtype == bool
+    assert item["mask"].shape == (20, 4, 4)
+
+
+def test_dataset_getitem_mask_grid_scales_with_patch_size(manifest):
+    # patch_size=8 on a 64x64 frame -> (20, 8, 8) grid
+    ds = Vjepa2Dataset(
+        manifest_path=manifest, patch_size=8,
+        mask_fn=lambda shape, rng: np.zeros(shape, dtype=bool),
+    )
+    item = ds[0]
+    assert item["mask"].shape == (20, 8, 8)
 ```
 
-- [ ] **Step 2: Add sample video fixture helper**
-
-Append to `worldforge_train/tests/test_video_source.py` (extend existing module):
-
-```python
-@pytest.fixture
-def sample_mp4_from_task3(tmp_path):
-    """Re-use sample_mp4 fixture for cross-task tests."""
-    import decord  # noqa
-    import av
-    out = tmp_path / "sample.mp4"
-    container = av.open(str(out), mode="w")
-    stream = container.add_stream("h264", rate=10)
-    stream.width, stream.height = 64, 64
-    for i in range(20):
-        frame = av.VideoFrame.from_ndarray(
-            np.full((64, 64, 3), i * 12, dtype=np.uint8)
-        )
-        frame.pts = i
-        for packet in stream.encode(frame):
-            container.mux(packet)
-    for packet in stream.encode():
-        container.mux(packet)
-    container.close()
-    return out
-```
-
-(Rename the existing fixture in test_video_source.py from `sample_mp4` to `sample_mp4_from_task3` if needed; both names work.)
-
-- [ ] **Step 3: Run failing test**
+- [ ] **Step 2: Run failing test**
 
 ```bash
 cd /mnt/c/WorkSpace/WorldForge
@@ -1190,15 +1170,22 @@ PYTHONPATH=. pytest worldforge_train/tests/test_dataset.py -v
 
 Expected: ImportError.
 
-- [ ] **Step 4: Implement `worldforge_train/data/dataset.py`**
+- [ ] **Step 3: Implement `worldforge_train/data/dataset.py`**
 
 ```python
-"""HF datasets wrapper for V-JEPA 2 training."""
+"""Video dataset wrapper for V-JEPA 2 training.
+
+Reads a CSV manifest of (video_path, num_frames, height, width), decodes
+each video via the project's `build_video_source` factory, normalizes
+frames to float32 in [0, 1], transposes to (T, 3, H, W), and invokes a
+caller-supplied `mask_fn` with the per-token patch grid derived from
+`patch_size` (default 14, V-JEPA 2 ViT-L).
+"""
 from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 import numpy as np
 
@@ -1210,14 +1197,22 @@ MaskFn = Callable[[tuple[int, int, int], np.random.Generator], np.ndarray]
 class Vjepa2Dataset:
     """Iterates (video, mask) samples from a CSV manifest.
 
-    Manifest schema: video_path, num_frames, height, width
+    Manifest schema: video_path, num_frames, height, width.
     """
 
-    def __init__(self, manifest_path: Path, mask_fn: MaskFn) -> None:
+    def __init__(
+        self,
+        manifest_path: Path,
+        mask_fn: MaskFn,
+        patch_size: int = 14,
+    ) -> None:
+        if patch_size <= 0:
+            raise ValueError(f"patch_size must be > 0; got {patch_size}")
         self.manifest_path = Path(manifest_path)
         if not self.manifest_path.exists():
             raise FileNotFoundError(f"Manifest not found: {self.manifest_path}")
         self.mask_fn = mask_fn
+        self.patch_size = patch_size
         self.entries: list[dict[str, str]] = []
         with self.manifest_path.open() as f:
             reader = csv.DictReader(f)
@@ -1230,31 +1225,28 @@ class Vjepa2Dataset:
         row = self.entries[idx]
         src = build_video_source(row["video_path"], prefer_dvpp=False)
         frames = src.read_all()  # (T, H, W, 3) uint8
-        # Normalize to float32 in [0,1]
         frames = frames.astype(np.float32) / 255.0
-        # (T, H, W, 3) → (T, 3, H, W)
-        frames = np.transpose(frames, (0, 3, 1, 2))
-        # Mask: align grid to height/width (no tubelet crop on T for simplicity)
+        frames = np.transpose(frames, (0, 3, 1, 2))  # (T, 3, H, W)
         T, _, H, W = frames.shape
-        grid_h, grid_w = H // 14, W // 14  # V-JEPA 2 default patch grid
-        mask = self.mask_fn((T, grid_h, grid_w), np.random.default_rng(idx))
+        grid = (T, H // self.patch_size, W // self.patch_size)
+        mask = self.mask_fn(grid, np.random.default_rng(idx))
         return {"frames": frames, "mask": mask}
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
 cd /mnt/c/WorkSpace/WorldForge
 PYTHONPATH=. pytest worldforge_train/tests/test_dataset.py -v
 ```
 
-Expected: 2 tests pass.
+Expected: 3 tests pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add worldforge_train/data/dataset.py worldforge_train/tests/test_dataset.py worldforge_train/tests/test_video_source.py
-git commit -m "feat(train): HF datasets wrapper with tubelet masking"
+git add worldforge_train/data/dataset.py worldforge_train/tests/test_dataset.py
+git commit -m "feat(train): video dataset wrapper with patch-grid mask_fn"
 ```
 
 ---
