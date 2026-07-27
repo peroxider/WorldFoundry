@@ -12,29 +12,6 @@ from worldforge_train.data.video_source import (
 )
 
 
-@pytest.fixture
-def sample_mp4(tmp_path):
-    """Create a 2-second 64x64 mp4 with decord for tests."""
-    import decord
-    import av
-
-    out = tmp_path / "sample.mp4"
-    container = av.open(str(out), mode="w")
-    stream = container.add_stream("h264", rate=10)
-    stream.width, stream.height = 64, 64
-    for i in range(20):
-        frame = av.VideoFrame.from_ndarray(
-            np.full((64, 64, 3), i * 12, dtype=np.uint8)
-        )
-        frame.pts = i
-        for packet in stream.encode(frame):
-            container.mux(packet)
-    for packet in stream.encode():
-        container.mux(packet)
-    container.close()
-    return out
-
-
 def test_decord_source_returns_uint8_frames(sample_mp4):
     src = DecordVideoSource(sample_mp4)
     frames = src.read_all()
