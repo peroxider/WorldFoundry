@@ -4,6 +4,7 @@ from worldforge_common.exceptions import (
     ModelNotFoundError,
     OMCompileError,
     AdapterNotFoundError,
+    MaskingError,
 )
 
 __all__ = [
@@ -11,4 +12,5 @@ __all__ = [
     "ModelNotFoundError",
     "OMCompileError",
     "AdapterNotFoundError",
+    "MaskingError",
 ]

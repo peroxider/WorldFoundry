@@ -20,3 +20,7 @@ class OMCompileError(WorldForgeError):
 
 class AdapterNotFoundError(WorldForgeError):
     """Raised when a LoRA adapter name is not registered."""
+
+
+class MaskingError(WorldForgeError):
+    """Raised when a mask generator cannot satisfy its target ratio within budget."""

@@ -1,5 +1,6 @@
 from worldforge_common.exceptions import (
     AdapterNotFoundError,
+    MaskingError,
     ModelNotFoundError,
     OMCompileError,
     VersionMismatchError,
@@ -8,5 +9,11 @@ from worldforge_common.exceptions import (
 
 
 def test_all_inherit_from_base():
-    for cls in (VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError):
+    for cls in (
+        VersionMismatchError,
+        ModelNotFoundError,
+        OMCompileError,
+        AdapterNotFoundError,
+        MaskingError,
+    ):
         assert issubclass(cls, WorldForgeError)
