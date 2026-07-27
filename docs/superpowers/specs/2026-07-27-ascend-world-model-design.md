@@ -50,7 +50,7 @@
 │  │   (DVPP decode,  │  │   torch_npu      │  │   插件挂载 V-JEPA 2  │    │
 │  │   masked view)   │  │ • V-JEPA 2-AC    │  │ • 自研 batch service │    │
 │  │ • FSDP /         │  │   动作条件化      │  │ • MindIE-SD 编译     │    │
-│  │   MindSpeed-MM   │  │ • 仿真环境集成    │  │ • W8A8/W4A8 量化    │    │
+│  │  MindSpeed-MM*   │  │ • 仿真环境集成    │  │ • W8A8/W4A8 量化    │    │
 │  │ • LoRA / SFT /   │  │   (MuJoCo/SAPIEN │  │                      │    │
 │  │   Full-FT        │  │    /CARLA-AD)    │  │                      │    │
 │  │ • DDP/FSDP/      │  │                  │  │                      │    │
@@ -63,8 +63,8 @@
 │                    │   共享层 (Common)     │                             │
 │                    │ • 模型仓库 (OM ckpt)  │                             │
 │                    │ • Ascend NPU 驱动栈    │                             │
-│                    │   (CANN 8.5 + torch_npu│                            │
-│                    │    2.8 + HCCL)         │                            │
+│                    │   (CANN 8.5.1 + torch │                             │
+│                    │    _npu 2.9.0 + HCCL)  │                            │
 │                    │ • 评价/可视化         │                             │
 │                    │ • 模型配置/Schema     │                             │
 │                    └────────────────────────┘                             │
@@ -74,13 +74,13 @@
 外部对齐:
   facebookresearch/vjepa2 (上游 PyTorch)
   transformers.VJEPA2Model (HF 上游)
-  vllm-ascend / vllm-omni / verl / MindSpeed-MM (昇腾生态)
+  vllm-ascend / vllm-omni / verl / MindSpeed-LLM+MM (昇腾生态, ViT支持待评估)
 ```
 
 ### 2.2 设计原则
 
 1. **三子系统独立部署**：训练、RL、推理各自可独立演进，避免相互阻塞
-2. **共享底座锁定硬件依赖**：CANN 8.5 + torch_npu 2.8 + HCCL 一处升级
+2. **共享底座锁定硬件依赖**：CANN 8.5.1 + torch_npu 2.9.0 + HCCL 一处升级
 3. **上游兼容**：训练代码尽量少改 facebookresearch/vjepa2，PR 回馈社区
 4. **接口契约化**：训练产出 OM/PT 权重 → 推理直接消费，模型仓库即接口
 
@@ -123,35 +123,49 @@ base = VJEPA2Model.from_pretrained(
     attn_implementation="sdpa",  # Ascend SDPA 后端
 )
 
+# ⚠️ Phase-1 W2 必做：先打印确认实际模块名
+#   for name, module in base.named_modules():
+#       print(name, type(module).__name__)
+# 然后再填写 target_modules。V-JEPA 2 基于 ViT-Large，但 HF 实现可能使用
+# fused qkv (单个 qkv_proj) 或分离的 q/k/v_proj，需要实际验证。
 peft_config = LoraConfig(
     r=16, lora_alpha=32,
     target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
-                    "mlp.fc1", "mlp.fc2"],
+                    "mlp.fc1", "mlp.fc2"],   # 候选默认值，Phase-1 验证
     lora_dropout=0.05, bias="none",
     modules_to_save=["predictor.head"],  # 预测头全参
 )
 model = get_peft_model(base, peft_config)
+
+# 启动 sanity check：确认 LoRA 实际匹配到参数
+model.print_trainable_parameters()
+# 期望: trainable params > 0 且 ~30M 量级
 ```
 
 ### 3.3 分布式训练（双阶段演进）
 
 | 阶段 | 框架 | 并行策略 | 适用场景 | 切换条件 |
 |------|------|----------|----------|----------|
-| **Phase-1 (原型)** | torch_npu + FSDP (PyTorch 2.8 native) | FSDP-2 + Hybrid Shard (ZeRO-3) | LoRA 微调、轻量续训 | 跑通即启 Phase-2 |
-| **Phase-2 (优化)** | MindSpeed-MM + torch_npu | TP-1 + DP-8 + ZeRO-1 + Activation Checkpointing | 全参微调、长序列训练 | LoRA 收敛后切换 |
+| **Phase-1 (原型)** | torch_npu + FSDP (PyTorch 2.9 native) | FSDP-2 + Hybrid Shard (ZeRO-3) 或 DDP（LoRA 时优先） | LoRA 微调、轻量续训 | 跑通即启 Phase-2 |
+| **Phase-2 (优化)** | MindSpeed-MM (候选) + torch_npu | TP-1 + DP-8 + ZeRO-1 + Activation Checkpointing | 全参微调、长序列训练 | LoRA 收敛后切换（**W9 前先评估 MindSpeed-MM 对 ViT-only 模型支持；若不支持回退 MindSpeed-LLM 或继续 FSDP**） |
 
 **Phase-1 启动命令**：
 
 ```bash
+# 默认走 DDP（LoRA + 1.2B 模型大小 + 8×64GB 不需要分片）
 torchrun --nproc_per_node=8 \
   worldforge_train/train.py \
   --model facebook/vjepa2-vitl-1.2b \
   --dataset /data/videomix22m \
-  --parallel fsdp --fsdp_shard_size 8 \
+  --parallel ddp \
   --bf16 --gradient_checkpointing \
   --lora_r 16 --lora_alpha 32 \
   --per_device_batch 2 --grad_accum 8
+# 全参微调时切换到 FSDP（启用 ZeRO-3）：
+#   --parallel fsdp --fsdp_shard_size 8 --fsdp_full_shard
 ```
+
+**为什么默认 DDP**：1.2B bf16 ≈ 2.4GB；+ AdamW 状态 ~9.6GB；+ 梯度 ~2.4GB；每卡 ~15GB，远低于 64GB 单卡显存。FSDP-8 分片对该模型收益有限（额外通信开销可能反超）。**全参微调**或**长序列**才值得启用 FSDP。
 
 ### 3.4 检查点 & 模型仓库
 
@@ -265,6 +279,17 @@ POST /v1/world/plan  (V-JEPA 2-AC)
 
 OpenAI 兼容层只是薄壳，**核心数据格式对齐 HF transformers.VJEPA2Model 的输入输出**。
 
+### 4.7 安全 / 鉴权 / 监控
+
+- **认证**：Phase-1 部署在内网，HMAC 签名 token（共享密钥 + timestamp + 路径）；Phase-2 引入 mTLS（双向证书）
+- **限速**：每 adapter 每分钟 token 桶限速；推理 QPS > 1000 时返回 429
+- **输入校验**：video URL 白名单 / 文件大小 ≤ 200MB / 时长 ≤ 60s
+- **可观测**：Prometheus 指标（`worldforge_rps`, `worldforge_latency_ms`, `worldforge_om_load_errors`）+ OpenTelemetry trace
+- **失败处理**：
+  - OM 加载失败 → 降级到原始 bf16 + 标记降级状态
+  - 单 batch DVPP 解码失败 → 回退到 decord
+  - LoRA 不存在 → 拒绝请求（4xx），不允许 silent 默认
+
 ---
 
 ## 5. RL 后训练子系统（WorldForge-RL）
@@ -311,11 +336,17 @@ OpenAI 兼容层只是薄壳，**核心数据格式对齐 HF transformers.VJEPA2
 
 ### 5.3 V-JEPA 2-AC 训练流（Phase-1 MVP）
 
+> ⚠️ **范围说明**：Meta 的 V-JEPA 2-AC 是基于 **1M 小时预训练 + 62h Droid 微调**得到的；W7-W8 仅复现 **AC 微调阶段**（latent action 训练），完整 80% 指标对齐不在 Phase-1 范围。
+
 ```python
-# 基于 facebookresearch/vjepa2 官方 evals/finetuning_ac.ipynb 改编
+# 基于 facebookresearch/vjepa2 官方 evals/ 目录的 AC 训练脚本改编
+# （Phase-1 W7 任务：先打开该仓库 evals/ 目录确认实际脚本名再 fill in）
 from worldforge_rl import VJEPAActor, DroidEnv, PPOTrainer
 
-actor = VJEPAActor.from_pretrained("models/vjepa2-vitl-1.2b-lora-ac")
+actor = VJEPAActor.from_pretrained(
+    "facebook/vjepa2-vitl-1.2b",   # 起点：原 V-JEPA 2 权重
+    load_lora_adapter="optional/vjepa2-ac-init",
+)
 env = DroidEnv(task="pick_place", max_steps=50)
 trainer = PPOTrainer(
     actor=actor,
@@ -371,15 +402,22 @@ trainer.fit(epochs=100, batch_size=32)
   • DVPP 解码：300+ fps/卡
 ```
 
-### 6.2 软件栈固定（CANN 8.5 + torch 2.8）
+### 6.2 软件栈固定（CANN 8.5.1 + torch 2.9.0 + vllm-ascend 0.18.0）
+
+> ⚠️ **版本矩阵**（按 [vLLM-Ascend Versioning Policy](https://docs.vllm.ai/projects/ascend/en/latest/community/versioning_policy.html)）：
+> - vllm-ascend v0.18.0 对应 CANN 8.5.1 + torch 2.9.0
+> - vllm-ascend v0.22.x 对应 CANN 9.0.0 + torch 2.10.0
+> - vllm-ascend v0.23.0rc1 对应 CANN ≥ 8.5.0 (HDK 25.5.1+) + torch ≥ 2.10.0
+>
+> **Phase-1 起始基线**：CANN 8.5.1 + torch 2.9.0 + vllm-ascend 0.18.0（保守兼容）。Phase-2 评估升级到 v0.22.1+。
 
 ```yaml
 # docker/worldforge-base/Dockerfile (基于 ascend-docker-image/ascend-pytorch)
-FROM ascend-pytorch:2.8.0-cann8.5.0-ubuntu22.04
+FROM ascend-pytorch:2.9.0-cann8.5.1-ubuntu22.04
 RUN pip install \
     transformers==4.55.0 \
     peft==0.18.0 \
-    vllm==0.23.0 vllm-ascend==0.23.0 \
+    vllm==0.18.0 vllm-ascend==0.18.0 \
     verl==0.5.0 \
     decord==0.6.0 av==14.0.0 \
     datasets==3.6.0 accelerate==1.10.0
@@ -417,13 +455,13 @@ Phase-1 (W1-W8) ─ 原型闭环
     • V-JEPA 2-AC 复现报告
 
 Phase-2 (W9-W16) ─ 性能优化 + RL 闭环
-  ├─ W9-W10: 切换 MindSpeed-MM (TP+DP 混合并行)
+  ├─ W9-W10: 评估并切换 MindSpeed-MM (TP+DP 混合并行)
   ├─ W11-W12: 量化 (W8A8 → W4A8) + 编译优化
   ├─ W13-W14: WorldForge-RL 完整 verl 集成
   └─ W15-W16: 自定义具身任务验证（自建仿真环境）
 
   交付物：
-    • worldforge-train Phase-2 (MindSpeed-MM 提速 30%+)
+    • worldforge-train Phase-2 (MindSpeed-MM 提速 30%+, 不达标则保留 FSDP)
     • worldforge-rl (PPO/GRPO 跑通)
     • 性能 benchmark 报告
 
@@ -444,10 +482,15 @@ Phase-3 (W17-W24) ─ 通用化 & 上游回馈
 | 风险 | 等级 | 缓解 |
 |------|------|------|
 | V-JEPA 2 在 Ascend NPU 上算子覆盖不全（如 SDPA 后端） | 高 | Phase-1 充分测试；准备回退到 eager + Ascend 实现 |
+| LoRA target_modules 与 V-JEPA 2 实际模块名不匹配 → 静默零训练 | 高 | Phase-1 W2 强制要求先 `print_trainable_parameters()`，匹配为 0 则拒绝启动 |
 | DVPP 与 HF datasets 数据格式不兼容 | 中 | 抽象 `VideoSource` 接口，DVPP/decord 双后端 |
+| DVPP 硬件故障导致 batch 中断 | 中 | 4.7 失败处理：单 batch DVPP 失败回退 decord，整卡失败剔除该 NPU |
 | vLLM-Ascend 注册 V-JEPA 2 需 fork 上游 | 中 | 通过 Hardware Pluggable 插件机制避免 fork；如必须 fork，开源回馈 |
-| MindSpeed-MM 对 ViT-only 模型支持薄弱 | 中 | 先 FSDP 跑通，MindSpeed 仅在瓶颈模块启用 |
+| MindSpeed-LLM 对 ViT-only 模型支持薄弱 | 中 | 先 FSDP 跑通，MindSpeed 仅在瓶颈模块启用；若不支持回退 FSDP |
+| vllm-ascend 与 CANN/torch 版本矩阵错位 | 中 | 锁定 vllm-ascend v0.18.0 + CANN 8.5.1 + torch 2.9.0；升级前查 Versioning Policy |
 | verl Ascend 后端稳定性 | 中 | 沿用 verl 官方推荐 torch_npu worker；遇 bug 提 PR |
+| W-JEPA 2-AC 复现无法在 W7-W8 达到 Meta 指标 | 中 | 范围收敛到 AC 微调阶段；不承诺完整 80% 复现 |
+| gRPC 服务无鉴权导致数据泄露 | 中 | Phase-1 引入 HMAC token；Phase-2 引入 mTLS |
 
 ---
 
@@ -472,20 +515,20 @@ Phase-3 (W17-W24) ─ 通用化 & 上游回馈
 
 ## 9. 验收标准
 
-| # | 验收项 | 度量 |
+| # | 验收项 | 度量（具体定义） |
 |---|--------|------|
-| 1 | 训练子系统 W1-W2 跑通 | FSDP LoRA 在 VideoMix22M 子集上 loss 单调下降 |
-| 2 | 推理引擎 W3-W4 跑通 | encode 模式 RPS > 50（8 卡 bf16） |
-| 3 | 端到端 smoke test W5-W6 | 训练→OM 编译→推理→评价闭环，平均视频特征相似度 > 0.95 |
-| 4 | V-JEPA 2-AC 复现 W7-W8 | Meta 官方指标 80% 复现 |
-| 5 | MindSpeed-MM 切换 W9-W10 | 训练吞吐 > FSDP baseline 30%+ |
-| 6 | W8A8 量化 W11-W12 | 模型大小压缩 ~50%，精度损失 < 2% |
-| 7 | WorldForge-RL PPO W13-W14 | Droid pick_place 成功率 > 50% |
-| 8 | 自定义具身任务 W15-W16 | 与 baseline 持平 |
-| 9 | V-JEPA 2.1 升级 W17-W18 | 新 loss 函数收敛 |
-| 10 | AD benchmark W19-W20 | CARLA 闭环跑通 |
-| 11 | Upstream PR W21-W22 | ≥3 个 PR merged |
-| 12 | 文档化 W23-W24 | 用户手册 + API 文档 + 培训视频 |
+| 1 | 训练子系统 W1-W2 跑通 | DDP LoRA 在 VideoMix22M 1000 子集上 100 步内 train loss 单调下降（前 50 步 ≤ 起动 +0.5），`model.print_trainable_parameters()` 输出 > 0 |
+| 2 | 推理引擎 W3-W4 跑通 | encode 模式 P99 latency < 200ms（batch=1，bf16，8 卡），稳态 RPS > 50 |
+| 3 | 端到端 smoke test W5-W6 | 训练→OM 编译→推理→评价闭环：训练 checkpoint 输出 bf16 features 与推理 OM 输出 bf16 features 在 `allclose(atol=1e-3)` 内通过 |
+| 4 | V-JEPA 2-AC 复现 W7-W8 | **仅复现 AC 微调阶段**：latent action prediction loss 在 Droid 验证集上 ≤ Meta 公开值 × 1.2 倍（不要求完整 80% 复现） |
+| 5 | MindSpeed 切换 W9-W10 | 训练吞吐 > DDP baseline 30%+（衡量标准：每秒处理 video clip 数） |
+| 6 | W8A8 量化 W11-W12 | 模型 OM 大小压缩 ~50%，下游特征 cosine similarity 与 bf16 baseline ≥ 0.98 |
+| 7 | WorldForge-RL PPO W13-W14 | Droid pick_place 任务成功率 ≥ 50%（100 episode 平均，meta 公开值 ~75%） |
+| 8 | 自定义具身任务 W15-W16 | 与 DDP LoRA baseline 在 eval suite 上 ±2% 内 |
+| 9 | V-JEPA 2.1 升级 W17-W18 | Dense Predictive Loss 在 VideoMix22M 1k 子集上 100 步内 loss 单调下降 |
+| 10 | AD benchmark W19-W20 | CARLA Town01 直行场景闭环跑通：100 episode 平均 episode_return ≥ Meta GAIA-1 公开 baseline × 0.9 |
+| 11 | Upstream PR W21-W22 | ≥3 个 PR merged（vjepa2 / vllm-ascend / verl 各 ≥1） |
+| 12 | 文档化 W23-W24 | 用户手册 ≥ 50 页 + 完整 OpenAPI 文档 + 至少 1 段培训视频 |
 
 ---
 
