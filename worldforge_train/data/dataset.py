@@ -90,9 +90,9 @@ def _self_test() -> int:
         out = Path(tmp) / "clip.mp4"
         c = av.open(str(out), mode="w")
         s = c.add_stream("h264", rate=10)
-        s.width = s.height = 64
+        s.width = s.height = 196
         for i in range(20):
-            f = av.VideoFrame.from_ndarray(np.full((64, 64, 3), i * 12, dtype=np.uint8))
+            f = av.VideoFrame.from_ndarray(np.full((196, 196, 3), i * 12, dtype=np.uint8))
             f.pts = i
             for p in s.encode(f):
                 c.mux(p)
@@ -100,7 +100,7 @@ def _self_test() -> int:
             c.mux(p)
         c.close()
         manifest = Path(tmp) / "manifest.csv"
-        manifest.write_text(f"video_path,num_frames,height,width\n{out},20,64,64\n")
+        manifest.write_text(f"video_path,num_frames,height,width\n{out},20,196,196\n")
         from worldforge_train.data.tubelet_mask import tubelet_mask
         ds = Vjepa2Dataset(manifest, mask_fn=lambda shape, rng: tubelet_mask(shape, (2, 14, 14), rng=rng))
         item = ds[0]
