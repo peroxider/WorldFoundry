@@ -75,3 +75,41 @@ class Vjepa2Dataset:
         grid = (T, H // self.patch_size, W // self.patch_size)
         mask = self.mask_fn(grid, np.random.default_rng(idx))
         return {"frames": frames, "mask": mask}
+
+
+def _self_test() -> int:
+    import tempfile
+    from pathlib import Path
+    try:
+        import av
+    except ImportError:
+        print("Vjepa2Dataset self-test SKIPPED: PyAV not installed")
+        return 0
+    import numpy as np
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "clip.mp4"
+        c = av.open(str(out), mode="w")
+        s = c.add_stream("h264", rate=10)
+        s.width = s.height = 64
+        for i in range(20):
+            f = av.VideoFrame.from_ndarray(np.full((64, 64, 3), i * 12, dtype=np.uint8))
+            f.pts = i
+            for p in s.encode(f):
+                c.mux(p)
+        for p in s.encode():
+            c.mux(p)
+        c.close()
+        manifest = Path(tmp) / "manifest.csv"
+        manifest.write_text(f"video_path,num_frames,height,width\n{out},20,64,64\n")
+        from worldforge_train.data.tubelet_mask import tubelet_mask
+        ds = Vjepa2Dataset(manifest, mask_fn=lambda shape, rng: tubelet_mask(shape, (2, 14, 14), rng=rng))
+        item = ds[0]
+        assert item["frames"].shape[0] == 20
+    print("Vjepa2Dataset self-test OK")
+    return 0
+
+
+if __name__ == "__main__":
+    import sys
+    if "--self-test" in sys.argv:
+        raise SystemExit(_self_test())
