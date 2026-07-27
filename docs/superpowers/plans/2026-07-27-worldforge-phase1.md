@@ -420,7 +420,7 @@ git commit -m "chore: Phase-1 project skeleton, Dockerfile, docs"
   - `worldforge_common.npu_env.check_versions()` → `None` (raises `VersionMismatchError`)
   - `worldforge_common.npu_env.is_npu_available()` → `bool`
   - `worldforge_common.model_registry.MODEL_REGISTRY: dict[str, ModelEntry]`
-  - `worldforge_common.exceptions.{VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError}`
+  - `worldforge_common.exceptions.{VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError, MaskingError}`
 
 - [ ] **Step 1: Write `worldforge_common/__init__.py`**
 
@@ -431,6 +431,7 @@ from worldforge_common.exceptions import (
     ModelNotFoundError,
     OMCompileError,
     AdapterNotFoundError,
+    MaskingError,
 )
 
 __all__ = [
@@ -438,6 +439,7 @@ __all__ = [
     "ModelNotFoundError",
     "OMCompileError",
     "AdapterNotFoundError",
+    "MaskingError",
 ]
 ```
 
@@ -466,6 +468,10 @@ class OMCompileError(WorldForgeError):
 
 class AdapterNotFoundError(WorldForgeError):
     """Raised when a LoRA adapter name is not registered."""
+
+
+class MaskingError(WorldForgeError):
+    """Raised when a masking objective cannot reach its target ratio."""
 ```
 
 - [ ] **Step 3: Write `worldforge_common/npu_env.py`**
@@ -598,6 +604,7 @@ done
 ```python
 from worldforge_common.exceptions import (
     AdapterNotFoundError,
+    MaskingError,
     ModelNotFoundError,
     OMCompileError,
     VersionMismatchError,
@@ -606,7 +613,7 @@ from worldforge_common.exceptions import (
 
 
 def test_all_inherit_from_base():
-    for cls in (VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError):
+    for cls in (VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError, MaskingError):
         assert issubclass(cls, WorldForgeError)
 ```
 
@@ -890,21 +897,28 @@ git commit -m "feat(train): video source with DVPP/decord backends"
 import numpy as np
 import pytest
 
+from worldforge_common.exceptions import MaskingError
 from worldforge_train.data.tubelet_mask import multiblock_mask, tubelet_mask
 
 
 def test_multiblock_mask_shape_and_dtype():
     shape = (8, 14, 14)
-    mask = multiblock_mask(shape=shape, num_blocks=4, spatial_only=False, rng=np.random.default_rng(0))
+    mask = multiblock_mask(
+        shape=shape, num_blocks=4, spatial_only=False, target_ratio=0.5,
+        rng=np.random.default_rng(0),
+    )
     assert mask.shape == shape
     assert mask.dtype == bool
-    # roughly half masked
-    assert 0.3 <= mask.mean() <= 0.7
+    # blocks accumulate until target_ratio is reached
+    assert mask.mean() >= 0.5
 
 
 def test_multiblock_mask_spatial_only_zero_t():
     shape = (8, 14, 14)
-    mask = multiblock_mask(shape=shape, num_blocks=4, spatial_only=True, rng=np.random.default_rng(0))
+    mask = multiblock_mask(
+        shape=shape, num_blocks=4, spatial_only=True, target_ratio=0.5,
+        rng=np.random.default_rng(0),
+    )
     # spatial_only: same mask broadcast across T
     assert np.all(mask[0] == mask[1])
 
@@ -916,6 +930,15 @@ def test_tubelet_mask_is_subset_of_full():
     assert masked.shape == shape
     assert masked.sum() < full.sum()
     assert masked.dtype == bool
+
+
+def test_multiblock_mask_raises_when_target_unreachable():
+    # tiny max_attempts forces the unreachable-target failure mode
+    with pytest.raises(MaskingError):
+        multiblock_mask(
+            shape=(8, 14, 14), num_blocks=1, target_ratio=0.99,
+            max_attempts=2, rng=np.random.default_rng(0),
+        )
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -941,6 +964,8 @@ from typing import Sequence, Tuple
 
 import numpy as np
 
+from worldforge_common.exceptions import MaskingError
+
 
 def _broadcast_shape_for_tubelet(
     shape: Tuple[int, int, int],
@@ -955,41 +980,57 @@ def multiblock_mask(
     shape: Tuple[int, int, int],
     num_blocks: int,
     spatial_only: bool = False,
+    target_ratio: float = 0.5,
+    max_attempts: int = 100,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Generate a multiblock mask following Bardes et al. 2024 (V-JEPA 2).
 
+    Blocks accumulate across rounds of `num_blocks` samples until at least
+    `target_ratio` of the volume is masked, or `max_attempts` is reached.
+
     Args:
         shape: (T, H, W) target tensor shape.
-        num_blocks: number of rectangular blocks to mask.
-        spatial_only: if True, broadcast mask across T.
+        num_blocks: number of rectangular blocks sampled per round.
+        spatial_only: if True, blocks are sampled on (H, W) and broadcast across T.
+        target_ratio: required minimum fraction of cells masked (default 0.5).
+        max_attempts: hard cap on sampling rounds (default 100).
         rng: numpy Generator for reproducibility.
     """
     if rng is None:
         rng = np.random.default_rng()
-    if spatial_only:
-        spatial = _sample_block_mask_2d((shape[1], shape[2]), num_blocks, rng)
-        mask = np.broadcast_to(spatial[None], shape).copy()
+    base_shape = (shape[1], shape[2]) if spatial_only else shape
+    mask = np.zeros(base_shape, dtype=bool)
+    for _ in range(max_attempts):
+        if spatial_only:
+            _accumulate_blocks_2d(mask, num_blocks, rng)
+        else:
+            _accumulate_blocks_3d(mask, num_blocks, rng)
+        if mask.mean() >= target_ratio:
+            break
     else:
-        mask = _sample_block_mask_3d(shape, num_blocks, rng)
+        raise MaskingError(
+            f"multiblock_mask reached only {mask.mean():.3f} of target "
+            f"{target_ratio} after {max_attempts} rounds; raise num_blocks, "
+            f"increase max_attempts, or lower target_ratio."
+        )
+    if spatial_only:
+        mask = np.broadcast_to(mask[None], shape).copy()
     return mask
 
 
-def _sample_block_mask_2d(shape_hw: Tuple[int, int], num_blocks: int, rng: np.random.Generator) -> np.ndarray:
-    H, W = shape_hw
-    mask = np.zeros((H, W), dtype=bool)
+def _accumulate_blocks_2d(mask_hw: np.ndarray, num_blocks: int, rng: np.random.Generator) -> None:
+    H, W = mask_hw.shape
     for _ in range(num_blocks):
         h = rng.integers(1, max(1, H // 2) + 1)
         w = rng.integers(1, max(1, W // 2) + 1)
         top = rng.integers(0, H - h + 1)
         left = rng.integers(0, W - w + 1)
-        mask[top:top + h, left:left + w] = True
-    return mask
+        mask_hw[top:top + h, left:left + w] = True
 
 
-def _sample_block_mask_3d(shape: Tuple[int, int, int], num_blocks: int, rng: np.random.Generator) -> np.ndarray:
-    T, H, W = shape
-    mask = np.zeros(shape, dtype=bool)
+def _accumulate_blocks_3d(mask: np.ndarray, num_blocks: int, rng: np.random.Generator) -> None:
+    T, H, W = mask.shape
     for _ in range(num_blocks):
         t = rng.integers(1, max(1, T // 2) + 1)
         h = rng.integers(1, max(1, H // 2) + 1)
@@ -998,7 +1039,6 @@ def _sample_block_mask_3d(shape: Tuple[int, int, int], num_blocks: int, rng: np.
         h0 = rng.integers(0, H - h + 1)
         w0 = rng.integers(0, W - w + 1)
         mask[t0:t0 + t, h0:h0 + h, w0:w0 + w] = True
-    return mask
 
 
 def tubelet_mask(
