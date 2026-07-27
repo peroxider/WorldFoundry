@@ -41,7 +41,26 @@ class Vjepa2Dataset:
         self.entries: list[dict[str, str]] = []
         with self.manifest_path.open() as f:
             reader = csv.DictReader(f)
+            assert reader.fieldnames == [
+                "video_path",
+                "num_frames",
+                "height",
+                "width",
+            ], (
+                "manifest schema must be "
+                "(video_path, num_frames, height, width); "
+                f"got {reader.fieldnames}"
+            )
             self.entries = list(reader)
+        for i, row in enumerate(self.entries):
+            h = int(row["height"])
+            w = int(row["width"])
+            if h < patch_size or w < patch_size:
+                raise ValueError(
+                    f"manifest row {i} has height={h}, width={w} which is "
+                    f"smaller than patch_size={patch_size}; grid would be "
+                    "non-positive on at least one spatial axis"
+                )
 
     def __len__(self) -> int:
         return len(self.entries)
