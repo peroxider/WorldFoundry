@@ -45,3 +45,12 @@ def test_multiblock_mask_raises_when_target_unreachable():
             shape=(8, 14, 14), num_blocks=1, target_ratio=0.99,
             max_attempts=2, rng=np.random.default_rng(0),
         )
+
+
+def test_tubelet_mask_raises_when_shape_not_divisible():
+    # T=10 not divisible by tubelet_size_t=3 -> G8: explicit failure, no silent truncation
+    with pytest.raises(MaskingError, match=r"not divisible"):
+        tubelet_mask(
+            shape=(10, 14, 14), tubelet_size=(3, 14, 14),
+            rng=np.random.default_rng(0),
+        )
