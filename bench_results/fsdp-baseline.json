@@ -1,4 +1,5 @@
 {
+  "label": "local smoke, not hardware baseline",
   "profile": "train",
   "tag": "fsdp-baseline",
   "world_size": 1,

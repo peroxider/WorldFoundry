@@ -521,7 +521,7 @@ Phase-3 (W17-W24) ─ 通用化 & 上游回馈
 | 2 | 推理引擎 W3-W4 跑通 | encode 模式 P99 latency < 200ms（batch=1，bf16，8 卡），稳态 RPS > 50 |
 | 3 | 端到端 smoke test W5-W6 | 训练→OM 编译→推理→评价闭环：训练 checkpoint 输出 bf16 features 与推理 OM 输出 bf16 features 在 `allclose(atol=1e-3)` 内通过 |
 | 4 | V-JEPA 2-AC 复现 W7-W8 | **仅复现 AC 微调阶段**：latent action prediction loss 在 Droid 验证集上 ≤ Meta 公开值 × 1.2 倍（不要求完整 80% 复现） |
-| 5 | MindSpeed 切换 W9-W10 | 训练吞吐 > DDP baseline 30%+（**Phase-2 W9 = NO-GO; deferred to W11-W12 quantization**） |
+| 5 | MindSpeed 切换 W9-W10 | 训练吞吐 > DDP baseline 30%+（**Phase-2 W9 = NO-GO; deferred pending future MindSpeed re-evaluation. W11-W12 quantization is a separate workstream.**） |
 | 6 | W8A8 量化 W11-W12 | 模型 OM 大小压缩 ~50%，下游特征 cosine similarity 与 bf16 baseline ≥ 0.98 |
 | 7 | WorldForge-RL PPO W13-W14 | Droid pick_place 任务成功率 ≥ 50%（100 episode 平均，meta 公开值 ~75%） |
 | 8 | 自定义具身任务 W15-W16 | 与 DDP LoRA baseline 在 eval suite 上 ±2% 内 |

@@ -2,13 +2,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 
 from torch import nn
 from torch.optim import Optimizer
-
-if TYPE_CHECKING:
-    pass
 
 
 class DistributedStrategy(ABC):

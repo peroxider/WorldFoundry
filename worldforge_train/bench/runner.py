@@ -62,7 +62,7 @@ def run_bench(
     for _ in range(warmup):
         out = model(**batch)
         loss = out.sum()
-        loss.backward()
+        strategy.backward(loss)
         strategy.step(optimizer)
 
     # Measurement
@@ -70,14 +70,14 @@ def run_bench(
     for _ in range(measurement_steps):
         out = model(**batch)
         loss = out.sum()
-        loss.backward()
+        strategy.backward(loss)
         strategy.step(optimizer)
         loss_curve.append(float(loss.detach()))
     elapsed = time.monotonic() - t0
 
     # clips_per_s: 1 batch * 1 clip / elapsed seconds
     # (real eval uses real batch_size; this stub uses 1 for simplicity)
-    clips_per_s = measurement_steps * 1 / elapsed if elapsed > 0 else 0.0
+    clips_per_s = measurement_steps / elapsed if elapsed > 0 else 0.0
 
     payload: dict[str, Any] = {
         "profile": profile,

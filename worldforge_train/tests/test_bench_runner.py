@@ -38,3 +38,43 @@ def test_run_bench_writes_json(tmp_path, monkeypatch):
     assert data["measurement_steps"] == 8  # 10 - 2
     assert len(data["loss_curve"]) == 8
     assert "clips_per_s" in data
+
+
+def test_run_bench_delegates_backward_to_strategy(tmp_path, monkeypatch):
+    """runner must call strategy.backward(loss), NOT loss.backward() directly.
+
+    Backend-neutral lifecycle: real MM strategy expects engine.backward(loss)
+    so the runner must route backward through the strategy abstraction.
+    """
+    from worldforge_train.bench import runner
+
+    class TinyModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear = torch.nn.Linear(4, 1)
+        def forward(self, x):
+            return self.linear(x).sum()
+
+    # Strategy that records call count and does NOT chain to loss.backward().
+    # If runner called loss.backward() directly, this strategy would never run.
+    calls = {"backward": 0}
+
+    class TrackingStrategy:
+        def wrap(self, model): return model
+        def backward(self, loss):
+            calls["backward"] += 1
+        def step(self, optimizer): pass
+
+    monkeypatch.setattr(runner, "select_strategy", lambda profile: TrackingStrategy())
+    monkeypatch.setattr(runner, "_build_tiny_model", lambda: TinyModel())
+    monkeypatch.setattr(runner, "_fixed_batch", lambda: {"x": torch.zeros(1, 4)})
+
+    runner.run_bench(
+        profile="train",
+        steps=4,
+        warmup=1,
+        tag="test-bwd",
+        output_dir=tmp_path,
+    )
+    # 1 warmup + 3 measurement = 4 calls to strategy.backward
+    assert calls["backward"] == 4

@@ -290,7 +290,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 ### 6.3 与 spec §9 验收项 #5 对齐
 
 - **GO 路径**：W10 完成后实测 `train-mmspeed` 吞吐 > FSDP 30%+，对应验收项 #5 "MindSpeed 切换 W9-W10：训练吞吐 > DDP baseline 30%+"
-- **NO-GO 路径**：`W9_EVAL_REPORT.md` 记录 4 项 FAIL 原因 + 决策结论"保留 FSDP"+ 留待 W11-W12 量化补足性能。验收项 #5 标为 "deferred to W11-W12"。
+- **NO-GO 路径**：`W9_EVAL_REPORT.md` 记录 4 项 FAIL 原因 + 决策结论"保留 FSDP"+ 留待 W11-W12 量化补足性能。验收项 #5 标为 "deferred pending future MindSpeed re-evaluation. W11-W12 quantization is a separate workstream."。
 
 ---
 
@@ -323,7 +323,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 4. `scripts/w9_eval.sh`
 5. `docs/superpowers/specs/W9_EVAL_REPORT.md`（GO 或 NO-GO 均产出）
 6. `pyproject.toml` 新增 `[mindspeed]` extra
-7. 单元测试 13 个（覆盖选择器 / FSDPStrategy / MMStrategy / compare.py）
+7. 单元测试 11 unit tests on NO-GO path; 13 on GO path (T8's 2 tests added)（覆盖选择器 / FSDPStrategy / MMStrategy / compare.py）
 
 ### 8.3 NO-GO 路径下的最小交付
 
@@ -343,7 +343,9 @@ W9-W10 完成后，下一个 Phase-2 sub-project 是 **W11-W12 量化**（独立
 
 ## 10. W9 实际执行结果（追加）
 
+---
+
 - W9 评估报告：`docs/superpowers/specs/W9_EVAL_REPORT.md`
 - 结论：NO-GO
 - 失败项：见报告
-- 下一步：进入 W11-W12 量化 sub-project（独立 spec → plan）
+- 下一步：进入 W11-W12 量化 sub-project（独立 spec → plan）。注：W11-W12 量化不替代 MindSpeed 切换；后者待未来重新评估。
