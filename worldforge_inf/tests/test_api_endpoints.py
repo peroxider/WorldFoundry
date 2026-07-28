@@ -191,6 +191,24 @@ def test_plan_rejects_boolean_actions(plan_client, fake_video_bytes):
     assert resp.status_code == 400
 
 
+def test_predict_rejects_malformed_video(predict_client):
+    import hmac, hashlib, time
+
+    method = "POST"
+    path = "/v1/world/predict"
+    # Invalid base64 + insufficient length → should be 400, not 200 (G8).
+    body = b'{"video":"%%%","mask_ratio":0.5}'
+    ts = str(int(time.time()))
+    canonical = f"{method}\n{path}\n{len(body)}\n{ts}".encode() + body
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+    resp = predict_client.post(
+        path, content=body,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+                 "Content-Type": "application/json"},
+    )
+    assert resp.status_code == 400
+
+
 def test_plan_rejects_malformed_video(plan_client):
     import hmac, hashlib, time
 

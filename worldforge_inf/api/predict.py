@@ -6,6 +6,7 @@ mask_ratio. Uses V-JEPA 2's native masked prediction objective.
 from __future__ import annotations
 
 import base64
+import binascii
 
 import numpy as np
 import torch
@@ -29,8 +30,11 @@ async def predict(request: Request, auth: HmacTokenAuth = Depends(lambda: None))
     if not 0.0 <= mask_ratio <= 1.0:
         raise HTTPException(status_code=400, detail="mask_ratio must be in [0,1]")
 
-    video_bytes = base64.b64decode(payload["video"])
-    video = np.frombuffer(video_bytes, dtype=np.uint8).reshape(-1, 64, 64, 3)
+    try:
+        video_bytes = base64.b64decode(payload["video"], validate=True)
+        video = np.frombuffer(video_bytes, dtype=np.uint8).reshape(-1, 64, 64, 3)
+    except (binascii.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=f"invalid video payload: {exc}") from exc
     tensor = torch.from_numpy(video).float().permute(0, 3, 1, 2).unsqueeze(0)
     mask = torch.zeros(1, video.shape[0], dtype=torch.bool)
     n_masked = int(mask_ratio * video.shape[0])
