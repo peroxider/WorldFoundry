@@ -35,8 +35,12 @@ RUN pip install --no-cache-dir \
 # RL deps (optional layer)
 RUN pip install --no-cache-dir verl==0.5.0 || echo "verl install; rebuild for actual NPU host"
 
-# Clone upstream V-JEPA 2 reference (NOT to be modified — G7)
-RUN git clone https://github.com/facebookresearch/vjepa2 /opt/vjepa2
+# Clone upstream V-JEPA 2 reference (NOT to be modified — G7).
+# Pin the commit because upstream currently publishes no release tags.
+RUN git clone --depth 1 --branch main --single-branch https://github.com/facebookresearch/vjepa2 /opt/vjepa2 \
+    && cd /opt/vjepa2 \
+    && git fetch --depth 1 origin 5a58d8661b8972106712142ebbd07fe9fb119c8f \
+    && git checkout --detach 5a58d8661b8972106712142ebbd07fe9fb119c8f
 
 # Project source
 WORKDIR /workspace
