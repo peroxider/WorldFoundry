@@ -340,3 +340,10 @@ W9-W10 sub-project 完成对应 spec §9 验收项 #5：
 - **NO-GO**：`W9_EVAL_REPORT.md` 记录决策，保留 FSDP，验收项 #5 标 deferred
 
 W9-W10 完成后，下一个 Phase-2 sub-project 是 **W11-W12 量化**（独立 spec → plan 流程）。
+
+## 10. W9 实际执行结果（追加）
+
+- W9 评估报告：`docs/superpowers/specs/W9_EVAL_REPORT.md`
+- 结论：NO-GO
+- 失败项：见报告
+- 下一步：进入 W11-W12 量化 sub-project（独立 spec → plan）
