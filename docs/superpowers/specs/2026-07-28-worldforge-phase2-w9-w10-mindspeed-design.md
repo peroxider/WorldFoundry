@@ -70,8 +70,13 @@ class DistributedStrategy(ABC):
         """并行化模型。FSDP 返回 FSDPModule；MM 返回 MM MSTrainEngine 包装的 module。"""
 
     @abstractmethod
+    def backward(self, loss: torch.Tensor) -> None:
+        """执行 loss.backward()（FSDP = passthrough；MM = engine.backward(loss)）。"""
+
+    @abstractmethod
     def step(self, optimizer: Optimizer) -> None:
-        """同步梯度 + optimizer.step() + zero_grad()。"""
+        """同步梯度 + optimizer.step() + zero_grad()。FSDP 自行 all_reduce；
+        MM 委托 engine.step() + engine.zero_grad()。"""
 ```
 
 ### 2.3 选择器
@@ -99,6 +104,7 @@ def select_strategy(profile: str) -> DistributedStrategy:
 ```python
 self.strategy = select_strategy(profile=os.environ["WORLDFORGE_PROFILE"])
 self.model = self.strategy.wrap(self.model)
+# 现有 step 循环中的 loss.backward() 替换为 self.strategy.backward(loss)
 # 现有 step 循环中的 optimizer.step() 替换为 self.strategy.step(optimizer)
 ```
 
@@ -119,6 +125,7 @@ self.model = self.strategy.wrap(self.model)
 
 - **行为**：
   - `wrap(model)`：调用 `torch.distributed.fsdp.FSDPModule(model)`，配置 `use_orig_params=True`
+  - `backward(loss)`：直接 `loss.backward()`（passthrough；保留 trainer 现有的 backward 调用位置）
   - `step(optimizer)`：`all_reduce(grad, group=dp_group)` → `optimizer.step()` → `optimizer.zero_grad()`
 - **依赖**：`torch.distributed.fsdp`（Phase-1 已有）
 - **等价性要求**：与 Phase-1 T3 trainer 直接调用 FSDP 的行为**完全一致**（GO/NO-GO 路径的参考基线；任何 FSDPStrategy 与 Phase-1 trainer 行为不一致都视为 bug）
@@ -127,7 +134,8 @@ self.model = self.strategy.wrap(self.model)
 
 - **行为**：
   - `wrap(model)`：构造 `MSTrainEngine(model, config=...)`，配置 `tensor_model_parallel_size=1, data_parallel_size=8, zero_optimization.stage=1, activation_checkpointing=True`
-  - `step(optimizer)`：`engine.step(loss)`，由 MM 内部完成梯度同步 + optimizer 步进
+  - `backward(loss)`：调用 `self._engine.backward(loss)`（MM 在引擎内完成分布式反向；不再走 `loss.backward()` 路径）
+  - `step(optimizer)`：调用 `self._engine.step()` → `self._engine.zero_grad()`（**不**直接调 `optimizer.step()`，由 MM 内部调度）
 - **依赖**：`mindspeed-mm`（可选依赖，`pyproject.toml` 的 `[mindspeed]` extra）；`torch_npu`（已有）
 - **错误处理**：
   - `wrap()` 失败 → 必须抛出明确的"V-JEPA 2 submodule not recognized by MindSpeed-MM" 错误信息（不暴露 MM 内部 traceback 噪音）
@@ -183,7 +191,7 @@ self.model = self.strategy.wrap(self.model)
   ## GO/NO-GO 门
   | # | 项 | 状态 | 详情 |
   | 1 | 加载成功 | ✅/❌ | ... |
-  | 2 | 100 步无崩溃 | ✅/❌ | ... |
+  | 2 | 150 步无崩溃 | ✅/❌ | ... |
   | 3 | 吞吐 ≥ FSDP × 0.7 | ✅/❌ | ratio=X.XX |
   | 4 | Loss 曲线 atol=1e-2 | ✅/❌ | max abs diff=X.XX |
 
@@ -202,7 +210,7 @@ self.model = self.strategy.wrap(self.model)
 for batch in dataloader:           # Phase-1 T5 已实现
     batch = batch.to(f"npu:{local_rank}")
     loss = model(batch)
-    loss.backward()
+    strategy.backward(loss)        # ← 新钩子（FSDP passthrough / MM engine.backward）
     strategy.step(optimizer)        # ← 新钩子（FSDP 手动同步 / MM engine.step）
     worldlogger.log(loss=loss.item(), step=step)
 ```
@@ -314,7 +322,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 4. `scripts/w9_eval.sh`
 5. `docs/superpowers/specs/W9_EVAL_REPORT.md`（GO 或 NO-GO 均产出）
 6. `pyproject.toml` 新增 `[mindspeed]` extra
-7. 单元测试 12 个（覆盖选择器 / FSDPStrategy / MMStrategy / compare.py）
+7. 单元测试 13 个（覆盖选择器 / FSDPStrategy / MMStrategy / compare.py）
 
 ### 8.3 NO-GO 路径下的最小交付
 

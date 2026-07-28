@@ -34,7 +34,7 @@
 **Interfaces:**
 - Consumes: 无（首个 task）
 - Produces:
-  - `class DistributedStrategy(ABC)` with `wrap(model: nn.Module) -> nn.Module` + `step(optimizer: Optimizer) -> None`
+  - `class DistributedStrategy(ABC)` with `wrap(model: nn.Module) -> nn.Module` + `backward(loss: torch.Tensor) -> None` + `step(optimizer: Optimizer) -> None`
   - `def select_strategy(profile: str) -> DistributedStrategy`
 
 **Step 1.1: 写失败测试**
@@ -55,6 +55,7 @@ def test_train_mmspeed_returns_mm(monkeypatch):
     from worldforge_train.parallel import mindspeed
     class FakeMMStrategy:
         def wrap(self, model): return model
+        def backward(self, loss): pass
         def step(self, optimizer): pass
     monkeypatch.setattr(mindspeed, "MMStrategy", FakeMMStrategy)
     from worldforge_train.parallel.strategy import select_strategy
@@ -110,11 +111,17 @@ if TYPE_CHECKING:
 class DistributedStrategy(ABC):
     """Abstract base for parallel training strategies.
 
-    Two responsibilities: parallelize a model and synchronize optimizer steps.
+    Three responsibilities: parallelize a model, route backward through the
+    parallel runtime, and synchronize optimizer steps.
     """
 
     @abstractmethod
     def wrap(self, model: nn.Module) -> nn.Module: ...
+
+    @abstractmethod
+    def backward(self, loss: "torch.Tensor") -> None:
+        """Run loss backward via the parallel runtime. FSDP = passthrough;
+        MM = engine.backward(loss)."""
 
     @abstractmethod
     def step(self, optimizer: Optimizer) -> None: ...
@@ -166,6 +173,11 @@ class MMStrategy(DistributedStrategy):
             "MMStrategy not implemented. W9 = NO-GO, or Task 8 not yet executed."
         )
 
+    def backward(self, loss: "torch.Tensor") -> None:
+        raise NotImplementedError(
+            "MMStrategy not implemented. W9 = NO-GO, or Task 8 not yet executed."
+        )
+
     def step(self, optimizer: Optimizer) -> None:
         raise NotImplementedError(
             "MMStrategy not implemented. W9 = NO-GO, or Task 8 not yet executed."
@@ -198,7 +210,7 @@ git commit -m "feat(train): DistributedStrategy interface + MMStrategy stub"
 
 **Interfaces:**
 - Consumes: `DistributedStrategy` from Task 1
-- Produces: `class FSDPStrategy(DistributedStrategy)` with `wrap()` + `step()`
+- Produces: `class FSDPStrategy(DistributedStrategy)` with `wrap()` + `backward()` + `step()`
 
 **Step 2.1: 写失败测试**
 
@@ -207,24 +219,31 @@ git commit -m "feat(train): DistributedStrategy interface + MMStrategy stub"
 import torch
 
 
-def test_wrap_returns_parallel_module():
-    """wrap() must return a module (not None, not raise)."""
+def test_wrap_returns_parallel_module(monkeypatch):
+    """wrap() uses FSDPModule with use_orig_params=True when distributed."""
     from worldforge_train.parallel.fsdp import FSDPStrategy
     model = torch.nn.Linear(4, 4)
     s = FSDPStrategy()
     out = s.wrap(model)
-    assert out is not None
+    assert out is not None  # single-rank test fallback
+    # In a multi-rank test, monkeypatch FSDPModule and assert kwargs.
 
 
-def test_step_calls_optimizer_step_and_zero_grad(monkeypatch):
-    """step() must call optimizer.step() then optimizer.zero_grad() in order."""
+def test_step_all_reduces_and_steps(monkeypatch):
+    """step() all-reduces gradients before optimizer.step()."""
     from worldforge_train.parallel.fsdp import FSDPStrategy
+    import torch.distributed as dist
     calls = []
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+    monkeypatch.setattr(dist, "all_reduce", lambda grad, **kwargs: calls.append("all_reduce"))
+    p = torch.nn.Parameter(torch.ones(1)); p.grad = torch.ones(1)
     class FakeOpt:
+        param_groups = [{"params": [p]}]
         def step(self): calls.append("step")
         def zero_grad(self): calls.append("zero_grad")
     FSDPStrategy().step(FakeOpt())
-    assert calls == ["step", "zero_grad"]
+    assert calls == ["all_reduce", "step", "zero_grad"]
 
 
 def test_equivalent_to_phase1_trainer(monkeypatch):
@@ -233,12 +252,18 @@ def test_equivalent_to_phase1_trainer(monkeypatch):
     # FSDPStrategy must use the same primitives (not silently introduce new ones).
     from worldforge_train.parallel.fsdp import FSDPStrategy
     used_primitives = []
+    import torch.distributed as dist
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+    monkeypatch.setattr(dist, "all_reduce", lambda grad, **kwargs: used_primitives.append("all_reduce"))
+    p = torch.nn.Parameter(torch.ones(1)); p.grad = torch.ones(1)
     class FakeOpt:
+        param_groups = [{"params": [p]}]
         def step(self): used_primitives.append("step")
         def zero_grad(self): used_primitives.append("zero_grad")
     FSDPStrategy().step(FakeOpt())
     # Same set of primitives as Phase-1: optimizer.step() + zero_grad()
-    assert "step" in used_primitives
+    assert used_primitives.index("all_reduce") < used_primitives.index("step")
     assert "zero_grad" in used_primitives
 ```
 
@@ -277,7 +302,19 @@ class FSDPStrategy(DistributedStrategy):
         from torch.distributed.fsdp import FSDPModule
         return FSDPModule(model, use_orig_params=True)
 
+    def backward(self, loss) -> None:
+        # FSDP path: backward is a passthrough (engine.step() handles sync).
+        loss.backward()
+
     def step(self, optimizer) -> None:
+        # Per spec §3.2: all_reduce grads across DP group before optimizer.step().
+        import torch.distributed as dist
+        if dist.is_initialized() and dist.get_world_size() > 1:
+            for param_group in optimizer.param_groups:
+                for p in param_group["params"]:
+                    if p.grad is not None:
+                        dist.all_reduce(p.grad, op=dist.ReduceOp.SUM)
+                        p.grad /= dist.get_world_size()
         optimizer.step()
         optimizer.zero_grad()
 ```
@@ -346,6 +383,7 @@ def test_run_bench_writes_json(tmp_path, monkeypatch):
     # Stub strategy (single-rank returns model unchanged).
     class StubStrategy:
         def wrap(self, model): return model
+        def backward(self, loss): loss.backward()
         def step(self, optimizer): pass  # no-op for stub
 
     monkeypatch.setattr(runner, "select_strategy", lambda profile: StubStrategy())
@@ -602,11 +640,11 @@ def test_loss_atol_boundary(tmp_path):
     """Loss curve max abs diff == 0.005 passes (atol=1e-2); == 0.02 fails."""
     from worldforge_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(loss=0.5))
-    near = _write_json(tmp_path / "near.json", {"**_good_payload(loss=0.5), "loss_curve": [0.505] * 8})
+    near = _write_json(tmp_path / "near.json", {**_good_payload(loss=0.5), "loss_curve": [0.505] * 8})
     out_near = tmp_path / "near.md"
     assert compare(base, near, out_near) == "GO"
 
-    far = _write_json(tmp_path / "far.json", {"**_good_payload(loss=0.5), "loss_curve": [0.52] * 8})
+    far = _write_json(tmp_path / "far.json", {**_good_payload(loss=0.5), "loss_curve": [0.52] * 8})
     out_far = tmp_path / "far.md"
     assert compare(base, far, out_far) == "NO-GO"
 ```
@@ -627,6 +665,7 @@ Expected: ImportError.
 from __future__ import annotations
 
 import json
+import math
 from datetime import date
 from pathlib import Path
 
@@ -645,11 +684,20 @@ def _ratio(eval_clips: float, base_clips: float) -> float:
 
 def compare(baseline_path: Path, eval_path: Path, output_path: Path) -> str:
     """Compare baseline + eval JSON, write report.md, return GO or NO-GO."""
+    baseline_path = Path(baseline_path)
+    eval_path = Path(eval_path)
+    output_path = Path(output_path)
+    missing = [str(path) for path in (baseline_path, eval_path) if not path.exists()]
+    if missing:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("# W9 MindSpeed-MM 评估报告\n\n**结论**：NO-GO\n\n缺失文件：" + ", ".join(missing) + "\n")
+        return "NO-GO"
     base = _load(baseline_path)
     ev = _load(eval_path)
 
-    # GO item 1: load succeeded (eval JSON exists with clips_per_s)
-    item1 = "clips_per_s" in ev
+    # GO item 1: eval JSON has a finite non-negative numeric throughput.
+    clips = ev.get("clips_per_s")
+    item1 = isinstance(clips, (int, float)) and not math.isnan(clips) and clips >= 0
 
     # GO item 2: no early termination (loss_curve length == measurement_steps)
     item2 = len(ev.get("loss_curve", [])) == ev.get("measurement_steps", 0)
@@ -691,7 +739,6 @@ Ratio：{ratio}
 **结论**：{verdict}
 **失败项**：{', '.join(str(n) for n in failed_items) if failed_items else '无'}
 """
-    output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(report)
     return verdict
@@ -747,15 +794,25 @@ run_step() {
     return $rc
 }
 
-# 1. FSDP baseline (always succeeds)
-run_step "BENCH: FSDP baseline (train profile)" \
-    python -m worldforge_train.bench \
-        --profile train --steps 200 --warmup 50 --tag fsdp-baseline
+run_benches() {
+    # 1. FSDP baseline (always succeeds)
+    run_step "BENCH: FSDP baseline (train profile)" \
+        python -m worldforge_train.bench \
+            --profile train --steps 200 --warmup 50 --tag fsdp-baseline || true
 
-# 2. MM eval (may fail — that's the point)
-run_step "BENCH: MM eval (train-mmspeed profile)" \
-    python -m worldforge_train.bench \
-        --profile train-mmspeed --steps 200 --warmup 50 --tag mindspeed-eval || true
+    # 2. MM eval (may fail — that's the point)
+    run_step "BENCH: MM eval (train-mmspeed profile)" \
+        python -m worldforge_train.bench \
+            --profile train-mmspeed --steps 200 --warmup 50 --tag mindspeed-eval || true
+}
+
+if [[ "${WORLDFORGE_NO_DOCKER:-0}" == "1" ]]; then
+    run_benches
+else
+    docker run --rm --device /dev/davinci0:/dev/davinci0 --device /dev/davinci_manager \
+        -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro -v "$ROOT:/workspace" -v /data:/data \
+        -e WORLDFORGE_PROFILE=train-mmspeed worldforge-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_benches) && run_benches"
+fi
 
 # 3. Compare + write report
 echo "==== COMPARE: writing W9_EVAL_REPORT.md ===="
@@ -891,16 +948,16 @@ def test_wrap_returns_mm_parallelized_module():
 
 
 def test_step_invokes_engine_step(monkeypatch):
-    """step() must call into the MM engine (not raw optimizer.step())."""
-    from worldforge_train.parallel import mindspeed
+    """step() must call into the instance engine, not raw optimizer.step()."""
+    from worldforge_train.parallel.mindspeed import MMStrategy
     calls = []
     class FakeEngine:
-        def step(self, loss): calls.append(("step", float(loss)))
-    monkeypatch.setattr(mindspeed, "_engine", FakeEngine())
-    opt = torch.optim.SGD(torch.nn.Linear(1, 1).parameters(), lr=0.01)
-    mindspeed.MMStrategy().step(opt)
-    assert len(calls) == 1
-    assert calls[0][0] == "step"
+        model = torch.nn.Linear(1, 1)
+        def step(self): calls.append("step")
+        def zero_grad(self): calls.append("zero_grad")
+    s = MMStrategy(); s._engine = FakeEngine()
+    s.step(torch.optim.SGD(s._engine.model.parameters(), lr=0.01))
+    assert calls == ["step", "zero_grad"]
 ```
 
 **Step 8.2: 跑测试确认失败**
@@ -969,13 +1026,16 @@ class MMStrategy(DistributedStrategy):
         _engine = self._engine
         return self._engine.model
 
+    def backward(self, loss: torch.Tensor) -> None:
+        if self._engine is None:
+            raise RuntimeError("backward() called before wrap()")
+        self._engine.backward(loss)
+
     def step(self, optimizer: Optimizer) -> None:
         if self._engine is None:
             raise RuntimeError("step() called before wrap()")
-        # MM's engine.step() consumes the loss; caller must provide it.
-        # Trainer integration in Task 9 handles the loss passing.
-        optimizer.step()
-        optimizer.zero_grad()
+        self._engine.step()
+        self._engine.zero_grad()
 ```
 
 **Step 8.4: 跑测试确认通过**
@@ -1019,32 +1079,54 @@ else:
     print(f"[FSDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
 ```
 
-Replace with:
+Replace with an early-return MM path, and leave the existing DDP/FSDP dispatch unchanged:
 
 ```python
 profile = os.environ.get("WORLDFORGE_PROFILE")
 if profile == "train-mmspeed":
     from worldforge_train.parallel.mindspeed import MMStrategy
-    strategy = MMStrategy()
-    print(f"[MM] profile=train-mmspeed strategy={strategy}")
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    global_rank = int(os.environ.get("RANK", 0))
-elif args.parallel == "ddp":
-    from worldforge_train.parallel.ddp import cleanup_ddp, setup_ddp
-    world_size, local_rank, global_rank = setup_ddp()
-    print(f"[DDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
-elif args.parallel == "fsdp":
-    from worldforge_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
-    world_size, local_rank, global_rank = setup_fsdp()
-    print(f"[FSDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
-else:
-    raise SystemExit(f"unknown parallel mode: {args.parallel}")
+    print("[MM] profile=train-mmspeed")
+    return run_mm_training(cfg, strategy=MMStrategy())
+
+# Existing args.parallel DDP/FSDP dispatch follows unchanged.
 ```
 
-Add `import os` at top if not already present.
+Add `import os` at top if not already present. Add `strategy: DistributedStrategy = None` to both existing `run_ddp_training(...)` and `run_fsdp_training(...)` signatures; default `None` preserves Phase-1 behavior. Add the MM wrapper:
 
-**Step 9.2: 在 `pyproject.toml` 加 `[mindspeed]` extra**
+```python
+def run_mm_training(cfg, strategy: DistributedStrategy):
+    """Use the existing trainer with MM lifecycle hooks."""
+    return run_ddp_training(cfg, strategy=strategy)
+```
+
+Inside the shared training setup/loop, wire the optional strategy exactly where the current primitives run:
+
+```python
+if strategy is not None:
+    model = strategy.wrap(model)
+
+# per batch
+if strategy is None:
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()
+else:
+    strategy.backward(loss)
+    strategy.step(optimizer)
+```
+
+This keeps the new dispatch branch one line at the trainer boundary while ensuring MM actually wraps the model and owns backward/step; the early return prevents the normal DDP/FSDP path from also running.
+
+**Step 9.2: 读取 W9 版本并在 `pyproject.toml` 加 `[mindspeed]` extra**
+
+**Step 9.2.1:** Read `W9_EVAL_REPORT.md` for the working MM version, then run:
+
+```bash
+MM_VERSION=$(grep -oE 'mindspeed-mm[^ ]*|版本[^：:]*[：:][^ ]+' docs/superpowers/specs/W9_EVAL_REPORT.md | tail -1 | sed 's/.*[：:]//; s/[^0-9A-Za-z.+_-].*//')
+test -n "$MM_VERSION"
+sed -i "s/<W9_PINNED_VERSION>/$MM_VERSION/" pyproject.toml
+```
+
 
 Find:
 
@@ -1074,7 +1156,7 @@ docker run --rm \
     -v /data:/data \
     -e WORLDFORGE_PROFILE=train-mmspeed \
     worldforge-base:phase1 \
-    bash -c "cd /workspace && pip install -e '.[mindspeed]' && python -m worldforge_train.train --config worldforge_train/configs/vjepa2_vitl_1.2b.yaml --parallel ddp"
+    bash -c "cd /workspace && pip install -e '.[mindspeed]' && python -m worldforge_train.train --config worldforge_train/configs/vjepa2_vitl_1.2b.yaml"
 ```
 
 Expected: training starts without error, prints `[MM] profile=train-mmspeed`.
@@ -1086,7 +1168,7 @@ cd /mnt/c/WorkSpace/WorldForge
 pytest worldforge_train/tests -v
 ```
 
-Expected: all tests pass (12 new + Phase-1 existing).
+Expected: all tests pass (13 new + Phase-1 existing).
 
 **Step 9.5: Commit**
 
@@ -1165,7 +1247,7 @@ git commit -m "docs(spec): W9 = NO-GO; acceptance #5 deferred to W11-W12"
 - §3.6 `bench/compare.py` — Task 4
 - §4 数据流 — Tasks 3-5
 - §5 错误处理 — Task 1（缺包）、Task 6（评估失败）
-- §6.1 单元测试 — 12 个测试分布：Task 1 (4) + Task 2 (3) + Task 3 (1) + Task 4 (3) + Task 8 (2) = 13（注：spec 列 12 个，差 1 个由 Task 3 runner test 不计入核心 12 个）
+- §6.1 单元测试 — 13 个测试分布：Task 1 (4) + Task 2 (3) + Task 3 (1) + Task 4 (3) + Task 8 (2) = 13（含 Task 3 runner test）
 - §6.2 集成测试 — Task 6（W9 eval）+ Task 9（W10 smoke）
 - §6.3 验收对齐 — Tasks 7, 10
 - §7 风险 — Task 2 等价性测试 + Task 8 锁版本纪律
@@ -1179,6 +1261,6 @@ git commit -m "docs(spec): W9 = NO-GO; acceptance #5 deferred to W11-W12"
 - `select_strategy(profile: str)` 在 Task 1 定义，Task 3 调用一致
 - `run_bench(profile, steps, warmup, tag, output_dir)` 在 Task 3 定义并实现，Task 5 调用一致
 - `compare(baseline_path, eval_path, output_path) -> str` 在 Task 4 定义，Task 5 调用一致
-- `MMStrategy.wrap/step` 在 Task 1 桩定义，Task 8 实现签名一致
+- `MMStrategy.wrap/backward/step` 在 Task 1 桩定义，Task 8 实现签名一致
 
 **没有发现 spec 缺口或不一致。** Plan 进入执行就绪状态。
