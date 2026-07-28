@@ -264,6 +264,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 | `tests/test_strategy_select.py::test_mm_missing_dep_raises` | B1 错误 | MM profile + 缺包（`sys.modules['mindspeed'] = None`）→ `ImportError` 含 `pip install` |
 | `tests/test_fsdp_strategy.py::test_wrap_calls_fsdp_module` | B2 接口 | mock `FSDPModule`，验证 `FSDPStrategy.wrap()` 调用 |
 | `tests/test_fsdp_strategy.py::test_step_all_reduces_and_steps` | B2 接口 | mock optimizer + dp group，验证 `all_reduce` → `step` → `zero_grad` 顺序 |
+| `tests/test_fsdp_strategy.py::test_equivalent_to_phase1_trainer` | B2 等价性 | 同一 model + 同一 batch 走 `FSDPStrategy` 与 Phase-1 T3 直调 FSDP 两条路径，验证最终 loss 数值 `allclose(atol=1e-6)`（保证 W9 baseline 数字可比） |
 | `tests/test_mm_strategy.py::test_wrap_configures_tp_dp_zero_grad_ckpt` | B3 接口 | mock `MSTrainEngine`，验证 config 传入参数为 `tp=1, dp=8, zero=1, grad_ckpt=True` |
 | `tests/test_mm_strategy.py::test_wrap_failure_surfaces_clear_error` | B3 错误 | MM `wrap()` 抛 `ValueError` 含 "V-JEPA 2" 关键字 |
 | `tests/test_bench_compare.py::test_all_pass_writes_go` | B3.6 | 4 项全 PASS 假数据 → 报告含 "**结论**：GO" |
@@ -302,7 +303,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 
 - **Phase-1 已就位**：`worldforge-train`（T1-T3）、WorldLogger、DataLoader、LoRA wrapper
 - **新增依赖**（`pyproject.toml` 的 `[mindspeed]` extra）：
-  - `mindspeed-mm==<待 W9 评估确定>`（锁版本，对照 Phase-1 G2 纪律）
+  - `mindspeed-mm` 精确版本**延后到 W9 评估确定**：W9 评估脚本在容器内跑时记录 MM 实际工作的版本，写入 `W9_EVAL_REPORT.md`，再据此 pin 到 `pyproject.toml` 的 `[mindspeed]` extra。这是设计而非占位——Phase-1 G2 锁版本纪律要求，但我们不能 pin 一个未验证兼容性的版本。
 - **Docker**：复用 `worldforge-base:phase1` 镜像；不新增镜像层
 
 ### 8.2 交付物
@@ -313,7 +314,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 4. `scripts/w9_eval.sh`
 5. `docs/superpowers/specs/W9_EVAL_REPORT.md`（GO 或 NO-GO 均产出）
 6. `pyproject.toml` 新增 `[mindspeed]` extra
-7. 单元测试 11 个（覆盖选择器 / FSDPStrategy / MMStrategy / compare.py）
+7. 单元测试 12 个（覆盖选择器 / FSDPStrategy / MMStrategy / compare.py）
 
 ### 8.3 NO-GO 路径下的最小交付
 
