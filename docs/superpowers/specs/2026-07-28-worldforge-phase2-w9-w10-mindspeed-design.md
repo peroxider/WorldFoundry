@@ -41,7 +41,7 @@ worldforge_train/
 │   ├── strategy.py                # DistributedStrategy 接口 + select_strategy()
 │   ├── fsdp.py                    # FSDPStrategy：封装 Phase-1 T3 已用的 FSDP
 │   └── mindspeed.py               # MMStrategy：仅 W10、仅 GO 路径实现
-└── (现有 trainer.py / data / model / worldlogger 不改逻辑，仅 trainer.py 引入 strategy 注入)
+└── (现有 train.py / data / model / worldlogger 不改逻辑，仅 train.py 引入 strategy 注入)
 
 scripts/
 ├── w9_eval.sh                     # W9 端到端评估脚本（生成 W9_EVAL_REPORT.md）
@@ -99,7 +99,7 @@ def select_strategy(profile: str) -> DistributedStrategy:
 
 ### 2.4 与现有 Trainer 的注入点
 
-`worldforge_train/trainer.py` 仅新增一行（Phase-1 T3 已有结构，注入点位置在 `init_distributed()` 之后、`for batch in dataloader` 之前）：
+`worldforge_train/train.py` 仅新增一行（Phase-1 T3 已有结构，注入点位置在 `init_distributed()` 之后、`for batch in dataloader` 之前）：
 
 ```python
 self.strategy = select_strategy(profile=os.environ["WORLDFORGE_PROFILE"])
@@ -108,7 +108,7 @@ self.model = self.strategy.wrap(self.model)
 # 现有 step 循环中的 optimizer.step() 替换为 self.strategy.step(optimizer)
 ```
 
-**约束**：`trainer.py` 其他代码 0 修改。
+**约束**：`train.py` 其他代码 0 修改。
 
 ---
 
@@ -273,6 +273,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 | `tests/test_fsdp_strategy.py::test_wrap_calls_fsdp_module` | B2 接口 | mock `FSDPModule`，验证 `FSDPStrategy.wrap()` 调用 |
 | `tests/test_fsdp_strategy.py::test_step_all_reduces_and_steps` | B2 接口 | mock optimizer + dp group，验证 `all_reduce` → `step` → `zero_grad` 顺序 |
 | `tests/test_fsdp_strategy.py::test_equivalent_to_phase1_trainer` | B2 等价性 | 同一 model + 同一 batch 走 `FSDPStrategy` 与 Phase-1 T3 直调 FSDP 两条路径，验证最终 loss 数值 `allclose(atol=1e-6)`（保证 W9 baseline 数字可比） |
+| `tests/test_bench_runner.py::test_run_bench_writes_json` | B3.5 接口 | mock strategy + tiny model，验证 JSON 含 profile/tag/loss_curve/clips_per_s |
 | `tests/test_mm_strategy.py::test_wrap_configures_tp_dp_zero_grad_ckpt` | B3 接口 | mock `MSTrainEngine`，验证 config 传入参数为 `tp=1, dp=8, zero=1, grad_ckpt=True` |
 | `tests/test_mm_strategy.py::test_wrap_failure_surfaces_clear_error` | B3 错误 | MM `wrap()` 抛 `ValueError` 含 "V-JEPA 2" 关键字 |
 | `tests/test_bench_compare.py::test_all_pass_writes_go` | B3.6 | 4 项全 PASS 假数据 → 报告含 "**结论**：GO" |
@@ -317,7 +318,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 ### 8.2 交付物
 
 1. `worldforge_train/parallel/` 3 个文件
-2. `worldforge_train/trainer.py` 一行注入
+2. `worldforge_train/train.py` 一行注入
 3. `worldforge_train/bench/` 子包（runner + compare）
 4. `scripts/w9_eval.sh`
 5. `docs/superpowers/specs/W9_EVAL_REPORT.md`（GO 或 NO-GO 均产出）

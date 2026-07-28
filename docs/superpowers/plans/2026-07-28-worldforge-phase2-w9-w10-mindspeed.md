@@ -216,21 +216,53 @@ git commit -m "feat(train): DistributedStrategy interface + MMStrategy stub"
 
 ```python
 # worldforge_train/tests/test_fsdp_strategy.py
+import pytest
 import torch
 
 
-def test_wrap_returns_parallel_module(monkeypatch):
-    """wrap() uses FSDPModule with use_orig_params=True when distributed."""
+def test_wrap_single_rank_returns_model_unchanged():
+    """On single-rank (CPU tests), wrap() returns the model as-is."""
     from worldforge_train.parallel.fsdp import FSDPStrategy
     model = torch.nn.Linear(4, 4)
-    s = FSDPStrategy()
-    out = s.wrap(model)
-    assert out is not None  # single-rank test fallback
-    # In a multi-rank test, monkeypatch FSDPModule and assert kwargs.
+    out = FSDPStrategy().wrap(model)
+    assert out is model  # identity, not None
+
+
+def test_wrap_multi_rank_uses_fsdp_module_with_use_orig_params(monkeypatch):
+    """On multi-rank, wrap() must invoke FSDPModule(model, use_orig_params=True)."""
+    pytest.importorskip("torch.distributed.fsdp")
+    import torch.distributed as dist
+
+    captured = {}
+
+    class FakeFSDPModule:
+        def __init__(self, model, **kwargs):
+            captured["model"] = model
+            captured["kwargs"] = kwargs
+
+    # wrap() does `from torch.distributed.fsdp import FSDPModule` inside the
+    # function, so we patch the symbol on that submodule. Setting it as a
+    # module attribute on torch.distributed.fsdp is what subsequent imports
+    # of the name will resolve to.
+    from torch.distributed import fsdp as torch_fsdp
+    monkeypatch.setattr(torch_fsdp, "FSDPModule", FakeFSDPModule)
+
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+
+    model = torch.nn.Linear(4, 4)
+    FSDPStrategy().wrap(model)
+    assert "kwargs" in captured
+    assert captured["kwargs"].get("use_orig_params") is True
 
 
 def test_step_all_reduces_and_steps(monkeypatch):
-    """step() all-reduces gradients before optimizer.step()."""
+    """step() all-reduces gradients before optimizer.step().
+
+    Also pins equivalence with Phase-1 trainer (G3): FSDPStrategy.step() must
+    use the same primitives Phase-1 used (all_reduce -> step -> zero_grad) so
+    W9 baseline numbers stay comparable to Phase-1 (spec §3.2 equivalence).
+    """
     from worldforge_train.parallel.fsdp import FSDPStrategy
     import torch.distributed as dist
     calls = []
@@ -243,28 +275,10 @@ def test_step_all_reduces_and_steps(monkeypatch):
         def step(self): calls.append("step")
         def zero_grad(self): calls.append("zero_grad")
     FSDPStrategy().step(FakeOpt())
-    assert calls == ["all_reduce", "step", "zero_grad"]
-
-
-def test_equivalent_to_phase1_trainer(monkeypatch):
-    """FSDPStrategy.step() must invoke same primitives Phase-1 trainer used (G3)."""
-    # Phase-1 fsdp.py is a stub that delegates to DDP via setup_ddp.
-    # FSDPStrategy must use the same primitives (not silently introduce new ones).
-    from worldforge_train.parallel.fsdp import FSDPStrategy
-    used_primitives = []
-    import torch.distributed as dist
-    monkeypatch.setattr(dist, "is_initialized", lambda: True)
-    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
-    monkeypatch.setattr(dist, "all_reduce", lambda grad, **kwargs: used_primitives.append("all_reduce"))
-    p = torch.nn.Parameter(torch.ones(1)); p.grad = torch.ones(1)
-    class FakeOpt:
-        param_groups = [{"params": [p]}]
-        def step(self): used_primitives.append("step")
-        def zero_grad(self): used_primitives.append("zero_grad")
-    FSDPStrategy().step(FakeOpt())
     # Same set of primitives as Phase-1: optimizer.step() + zero_grad()
-    assert used_primitives.index("all_reduce") < used_primitives.index("step")
-    assert "zero_grad" in used_primitives
+    assert calls == ["all_reduce", "step", "zero_grad"]
+    assert calls.index("all_reduce") < calls.index("step")
+    assert "zero_grad" in calls
 ```
 
 **Step 2.2: 跑测试确认失败**
@@ -278,7 +292,14 @@ Expected: failures (FSDPStrategy doesn't exist yet).
 
 **Step 2.3: 在 `parallel/fsdp.py` 末尾添加 `FSDPStrategy` 类**
 
-Append to existing `/mnt/c/WorkSpace/WorldForge/worldforge_train/parallel/fsdp.py`:
+Append to existing `/mnt/c/WorkSpace/WorldForge/worldforge_train/parallel/fsdp.py`. The existing file already has `import warnings`; ensure the appended `FSDPStrategy` block has access to these imports at module scope by adding them if missing:
+
+```python
+from torch import nn
+from worldforge_train.parallel.strategy import DistributedStrategy
+```
+
+Then append the class:
 
 ```python
 class FSDPStrategy(DistributedStrategy):
@@ -936,28 +957,41 @@ echo "W9 verdict: $VERDICT"
 
 ```python
 # worldforge_train/tests/test_mm_strategy.py
+import pytest
 import torch
 
 
-def test_wrap_returns_mm_parallelized_module():
-    from worldforge_train.parallel.mindspeed import MMStrategy
+def test_wrap_configures_tp_dp_zero_grad_ckpt(monkeypatch):
+    """wrap() must invoke MSTrainEngine with tp=1, dp=8, zero=1, grad_ckpt=True."""
+    from worldforge_train.parallel import mindspeed as mm_mod
+    captured = {}
+
+    class FakeMSTrainEngine:
+        def __init__(self, model, **kwargs):
+            captured["model"] = model
+            captured["kwargs"] = kwargs
+            self.model = model
+
+    monkeypatch.setattr(mm_mod, "MSTrainEngine", FakeMSTrainEngine)
     model = torch.nn.Linear(4, 4)
-    s = MMStrategy()
-    out = s.wrap(model)
-    assert out is not None
+    mm_mod.MMStrategy().wrap(model)
+    assert captured["kwargs"].get("tensor_model_parallel_size") == 1
+    assert captured["kwargs"].get("data_parallel_size") == 8
+    assert captured["kwargs"].get("zero_optimization_stage") == 1
+    assert captured["kwargs"].get("activation_checkpointing") is True
 
 
-def test_step_invokes_engine_step(monkeypatch):
-    """step() must call into the instance engine, not raw optimizer.step()."""
+def test_wrap_failure_surfaces_clear_error(monkeypatch):
+    """wrap() failure must surface "V-JEPA 2" ValueError (spec §3.3)."""
     from worldforge_train.parallel.mindspeed import MMStrategy
-    calls = []
-    class FakeEngine:
-        model = torch.nn.Linear(1, 1)
-        def step(self): calls.append("step")
-        def zero_grad(self): calls.append("zero_grad")
-    s = MMStrategy(); s._engine = FakeEngine()
-    s.step(torch.optim.SGD(s._engine.model.parameters(), lr=0.01))
-    assert calls == ["step", "zero_grad"]
+
+    def fake_build_engine(model):
+        raise RuntimeError("unknown submodule: vision_encoder.layers.0")
+
+    monkeypatch.setattr("worldforge_train.parallel.mindspeed._build_engine", fake_build_engine)
+    model = torch.nn.Linear(4, 4)
+    with pytest.raises(ValueError, match="V-JEPA 2"):
+        MMStrategy().wrap(model)
 ```
 
 **Step 8.2: 跑测试确认失败**
@@ -996,7 +1030,12 @@ _engine: Any = None  # module-level reference for tests
 
 
 def _build_engine(model: nn.Module) -> Any:
-    """Construct MSTrainEngine with W9-validated config."""
+    """Construct MSTrainEngine with W9-validated config.
+
+    Per spec §3.3: any construction failure is re-raised as a ValueError
+    with a clear "V-JEPA 2 submodule not recognized by MindSpeed-MM" message
+    so users see a domain-specific diagnosis instead of MM's internal traceback.
+    """
     try:
         from mindspeed_mm import MSTrainEngine
     except ImportError as exc:
@@ -1004,13 +1043,18 @@ def _build_engine(model: nn.Module) -> Any:
             "MindSpeed-MM not installed. Run: pip install -e '.[mindspeed]'"
         ) from exc
 
-    return MSTrainEngine(
-        model,
-        tensor_model_parallel_size=1,
-        data_parallel_size=8,
-        zero_optimization_stage=1,
-        activation_checkpointing=True,
-    )
+    try:
+        return MSTrainEngine(
+            model,
+            tensor_model_parallel_size=1,
+            data_parallel_size=8,
+            zero_optimization_stage=1,
+            activation_checkpointing=True,
+        )
+    except (RuntimeError, ValueError, KeyError, AttributeError) as exc:
+        raise ValueError(
+            f"V-JEPA 2 submodule not recognized by MindSpeed-MM: {exc}"
+        ) from exc
 
 
 class MMStrategy(DistributedStrategy):
@@ -1223,7 +1267,7 @@ cd /mnt/c/WorkSpace/WorldForge
 pytest worldforge_train/tests -v
 ```
 
-Expected: all tests pass (9 new from Tasks 1-5; Tasks 8-9 跳过；`mindspeed.py` 桩存在).
+Expected: all tests pass (11 new from Tasks 1-5; Tasks 8-9 跳过；`mindspeed.py` 桩存在).
 
 **Step 10.6: Commit**
 
