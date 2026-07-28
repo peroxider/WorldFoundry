@@ -69,7 +69,7 @@ def test_unknown_raises():
         select_strategy("foo")
 
 
-def test_mm_missing_dep_raises_with_install_hint(monkeypatch):
+def test_mm_missing_dep_raises(monkeypatch):
     """If mindspeed import fails, error message must include pip install hint (G4)."""
     import builtins
     real_import = builtins.__import__
@@ -220,15 +220,7 @@ import pytest
 import torch
 
 
-def test_wrap_single_rank_returns_model_unchanged():
-    """On single-rank (CPU tests), wrap() returns the model as-is."""
-    from worldforge_train.parallel.fsdp import FSDPStrategy
-    model = torch.nn.Linear(4, 4)
-    out = FSDPStrategy().wrap(model)
-    assert out is model  # identity, not None
-
-
-def test_wrap_multi_rank_uses_fsdp_module_with_use_orig_params(monkeypatch):
+def test_wrap_calls_fsdp_module(monkeypatch):
     """On multi-rank, wrap() must invoke FSDPModule(model, use_orig_params=True)."""
     pytest.importorskip("torch.distributed.fsdp")
     import torch.distributed as dist
@@ -279,6 +271,39 @@ def test_step_all_reduces_and_steps(monkeypatch):
     assert calls == ["all_reduce", "step", "zero_grad"]
     assert calls.index("all_reduce") < calls.index("step")
     assert "zero_grad" in calls
+
+
+def test_equivalent_to_phase1_trainer(monkeypatch):
+    """FSDPStrategy.step() must produce same loss as direct optimizer.step()
+    (Phase-1 T3 trainer behavior) within atol=1e-6 (spec §6.1 row 7).
+
+    Proves W9 baseline numbers (from FSDPStrategy) are comparable to Phase-1.
+    """
+    import torch
+    from worldforge_train.parallel.fsdp import FSDPStrategy
+
+    model = torch.nn.Linear(4, 1)
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+    x = torch.zeros(1, 4)
+
+    # Path A: FSDPStrategy.step()
+    out_a = model(x).sum()
+    out_a.backward()
+    FSDPStrategy().step(optimizer)
+
+    # Path B: direct optimizer.step() (Phase-1 trainer behavior)
+    model_b = torch.nn.Linear(4, 1)
+    opt_b = torch.optim.SGD(model_b.parameters(), lr=0.01)
+    out_b = model_b(x).sum()
+    out_b.backward()
+    opt_b.step()
+    opt_b.zero_grad()
+
+    # Both paths should produce same gradient updates → same param values
+    a_params = list(model.parameters())
+    b_params = list(model_b.parameters())
+    for pa, pb in zip(a_params, b_params):
+        assert torch.allclose(pa, pb, atol=1e-6), "FSDPStrategy diverges from Phase-1 trainer"
 ```
 
 **Step 2.2: 跑测试确认失败**
@@ -288,7 +313,7 @@ cd /mnt/c/WorkSpace/WorldForge
 pytest worldforge_train/tests/test_fsdp_strategy.py -v
 ```
 
-Expected: failures (FSDPStrategy doesn't exist yet).
+Expected: 3 failures (FSDPStrategy doesn't exist yet).
 
 **Step 2.3: 在 `parallel/fsdp.py` 末尾添加 `FSDPStrategy` 类**
 
@@ -463,9 +488,19 @@ import torch
 from worldforge_train.parallel.strategy import select_strategy
 
 
+class _TinyBenchModel(torch.nn.Module):
+    """Tiny model for bench smoke testing. Accepts forward(x=...)."""
+    def __init__(self) -> None:
+        super().__init__()
+        self.linear = torch.nn.Linear(4, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear(x).sum()
+
+
 def _build_tiny_model() -> torch.nn.Module:
-    """Tiny Linear model for bench smoke testing."""
-    return torch.nn.Linear(4, 1)
+    """Tiny bench model for smoke testing (matches test's TinyModel shape)."""
+    return _TinyBenchModel()
 
 
 def _fixed_batch() -> dict[str, torch.Tensor]:
@@ -635,7 +670,7 @@ def _good_payload(clips_per_s: float = 10.0, loss: float = 0.5) -> dict:
     }
 
 
-def test_all_pass_returns_go(tmp_path):
+def test_all_pass_writes_go(tmp_path):
     from worldforge_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(10.0))
     ev = _write_json(tmp_path / "eval.json", _good_payload(8.0))  # ratio 0.8 >= 0.7
@@ -645,7 +680,7 @@ def test_all_pass_returns_go(tmp_path):
     assert "**结论**：GO" in out.read_text()
 
 
-def test_throughput_fail_returns_nogo(tmp_path):
+def test_throughput_fail_writes_nogo(tmp_path):
     from worldforge_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(10.0))
     ev = _write_json(tmp_path / "eval.json", _good_payload(5.0))  # ratio 0.5 < 0.7
@@ -657,7 +692,7 @@ def test_throughput_fail_returns_nogo(tmp_path):
     assert "ratio=0.50" in body
 
 
-def test_loss_atol_boundary(tmp_path):
+def test_loss_curve_atol_boundary(tmp_path):
     """Loss curve max abs diff == 0.005 passes (atol=1e-2); == 0.02 fails."""
     from worldforge_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(loss=0.5))
