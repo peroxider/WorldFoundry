@@ -90,7 +90,7 @@ cd /mnt/c/WorkSpace/WorldForge
 pytest worldforge_train/tests/test_strategy_select.py -v
 ```
 
-Expected: 4 failures with `ImportError: No module named 'worldforge_train.parallel.strategy'`.
+Expected: 4 failures. The first 3 fail with `ImportError: No module named 'worldforge_train.parallel.strategy'`; the 4th (`test_train_returns_fsdp`) fails with `ImportError: cannot import name 'FSDPStrategy'` because `FSDPStrategy` is created in Task 2. This is expected — Task 1 alone cannot make that test pass.
 
 **Step 1.3: 实现 `strategy.py`**
 
@@ -191,7 +191,7 @@ cd /mnt/c/WorkSpace/WorldForge
 pytest worldforge_train/tests/test_strategy_select.py -v
 ```
 
-Expected: 4 passed.
+Expected: 3 passed. `test_train_returns_fsdp` remains failing (needs `FSDPStrategy` from Task 2); it will pass after Task 2 completes.
 
 **Step 1.6: Commit**
 
@@ -199,6 +199,8 @@ Expected: 4 passed.
 git add worldforge_train/parallel/strategy.py worldforge_train/parallel/mindspeed.py worldforge_train/tests/test_strategy_select.py
 git commit -m "feat(train): DistributedStrategy interface + MMStrategy stub"
 ```
+
+**Note**: `test_train_returns_fsdp` is included in this file but will only pass after Task 2 implements `FSDPStrategy`. Task 1 ends with 3/4 passing; the 4th resolves during Task 2.
 
 ---
 
