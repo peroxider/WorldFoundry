@@ -420,7 +420,7 @@ git commit -m "chore: Phase-1 project skeleton, Dockerfile, docs"
   - `worldforge_common.npu_env.check_versions()` → `None` (raises `VersionMismatchError`)
   - `worldforge_common.npu_env.is_npu_available()` → `bool`
   - `worldforge_common.model_registry.MODEL_REGISTRY: dict[str, ModelEntry]`
-  - `worldforge_common.exceptions.{VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError}`
+  - `worldforge_common.exceptions.{VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError, MaskingError}`
 
 - [ ] **Step 1: Write `worldforge_common/__init__.py`**
 
@@ -431,6 +431,7 @@ from worldforge_common.exceptions import (
     ModelNotFoundError,
     OMCompileError,
     AdapterNotFoundError,
+    MaskingError,
 )
 
 __all__ = [
@@ -438,6 +439,7 @@ __all__ = [
     "ModelNotFoundError",
     "OMCompileError",
     "AdapterNotFoundError",
+    "MaskingError",
 ]
 ```
 
@@ -466,6 +468,10 @@ class OMCompileError(WorldForgeError):
 
 class AdapterNotFoundError(WorldForgeError):
     """Raised when a LoRA adapter name is not registered."""
+
+
+class MaskingError(WorldForgeError):
+    """Raised when a masking objective cannot reach its target ratio."""
 ```
 
 - [ ] **Step 3: Write `worldforge_common/npu_env.py`**
@@ -598,6 +604,7 @@ done
 ```python
 from worldforge_common.exceptions import (
     AdapterNotFoundError,
+    MaskingError,
     ModelNotFoundError,
     OMCompileError,
     VersionMismatchError,
@@ -606,7 +613,7 @@ from worldforge_common.exceptions import (
 
 
 def test_all_inherit_from_base():
-    for cls in (VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError):
+    for cls in (VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError, MaskingError):
         assert issubclass(cls, WorldForgeError)
 ```
 
@@ -890,21 +897,28 @@ git commit -m "feat(train): video source with DVPP/decord backends"
 import numpy as np
 import pytest
 
+from worldforge_common.exceptions import MaskingError
 from worldforge_train.data.tubelet_mask import multiblock_mask, tubelet_mask
 
 
 def test_multiblock_mask_shape_and_dtype():
     shape = (8, 14, 14)
-    mask = multiblock_mask(shape=shape, num_blocks=4, spatial_only=False, rng=np.random.default_rng(0))
+    mask = multiblock_mask(
+        shape=shape, num_blocks=4, spatial_only=False, target_ratio=0.5,
+        rng=np.random.default_rng(0),
+    )
     assert mask.shape == shape
     assert mask.dtype == bool
-    # roughly half masked
-    assert 0.3 <= mask.mean() <= 0.7
+    # blocks accumulate until target_ratio is reached
+    assert mask.mean() >= 0.5
 
 
 def test_multiblock_mask_spatial_only_zero_t():
     shape = (8, 14, 14)
-    mask = multiblock_mask(shape=shape, num_blocks=4, spatial_only=True, rng=np.random.default_rng(0))
+    mask = multiblock_mask(
+        shape=shape, num_blocks=4, spatial_only=True, target_ratio=0.5,
+        rng=np.random.default_rng(0),
+    )
     # spatial_only: same mask broadcast across T
     assert np.all(mask[0] == mask[1])
 
@@ -916,6 +930,24 @@ def test_tubelet_mask_is_subset_of_full():
     assert masked.shape == shape
     assert masked.sum() < full.sum()
     assert masked.dtype == bool
+
+
+def test_multiblock_mask_raises_when_target_unreachable():
+    # tiny max_attempts forces the unreachable-target failure mode
+    with pytest.raises(MaskingError):
+        multiblock_mask(
+            shape=(8, 14, 14), num_blocks=1, target_ratio=0.99,
+            max_attempts=2, rng=np.random.default_rng(0),
+        )
+
+
+def test_tubelet_mask_raises_when_shape_not_divisible():
+    # T=10 not divisible by tubelet_size_t=3 -> GridError (G8)
+    with pytest.raises(MaskingError, match=r"not divisible"):
+        tubelet_mask(
+            shape=(10, 14, 14), tubelet_size=(3, 14, 14),
+            rng=np.random.default_rng(0),
+        )
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -941,6 +973,8 @@ from typing import Sequence, Tuple
 
 import numpy as np
 
+from worldforge_common.exceptions import MaskingError
+
 
 def _broadcast_shape_for_tubelet(
     shape: Tuple[int, int, int],
@@ -955,41 +989,57 @@ def multiblock_mask(
     shape: Tuple[int, int, int],
     num_blocks: int,
     spatial_only: bool = False,
+    target_ratio: float = 0.5,
+    max_attempts: int = 100,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray:
     """Generate a multiblock mask following Bardes et al. 2024 (V-JEPA 2).
 
+    Blocks accumulate across rounds of `num_blocks` samples until at least
+    `target_ratio` of the volume is masked, or `max_attempts` is reached.
+
     Args:
         shape: (T, H, W) target tensor shape.
-        num_blocks: number of rectangular blocks to mask.
-        spatial_only: if True, broadcast mask across T.
+        num_blocks: number of rectangular blocks sampled per round.
+        spatial_only: if True, blocks are sampled on (H, W) and broadcast across T.
+        target_ratio: required minimum fraction of cells masked (default 0.5).
+        max_attempts: hard cap on sampling rounds (default 100).
         rng: numpy Generator for reproducibility.
     """
     if rng is None:
         rng = np.random.default_rng()
-    if spatial_only:
-        spatial = _sample_block_mask_2d((shape[1], shape[2]), num_blocks, rng)
-        mask = np.broadcast_to(spatial[None], shape).copy()
+    base_shape = (shape[1], shape[2]) if spatial_only else shape
+    mask = np.zeros(base_shape, dtype=bool)
+    for _ in range(max_attempts):
+        if spatial_only:
+            _accumulate_blocks_2d(mask, num_blocks, rng)
+        else:
+            _accumulate_blocks_3d(mask, num_blocks, rng)
+        if mask.mean() >= target_ratio:
+            break
     else:
-        mask = _sample_block_mask_3d(shape, num_blocks, rng)
+        raise MaskingError(
+            f"multiblock_mask reached only {mask.mean():.3f} of target "
+            f"{target_ratio} after {max_attempts} rounds; raise num_blocks, "
+            f"increase max_attempts, or lower target_ratio."
+        )
+    if spatial_only:
+        mask = np.broadcast_to(mask[None], shape).copy()
     return mask
 
 
-def _sample_block_mask_2d(shape_hw: Tuple[int, int], num_blocks: int, rng: np.random.Generator) -> np.ndarray:
-    H, W = shape_hw
-    mask = np.zeros((H, W), dtype=bool)
+def _accumulate_blocks_2d(mask_hw: np.ndarray, num_blocks: int, rng: np.random.Generator) -> None:
+    H, W = mask_hw.shape
     for _ in range(num_blocks):
         h = rng.integers(1, max(1, H // 2) + 1)
         w = rng.integers(1, max(1, W // 2) + 1)
         top = rng.integers(0, H - h + 1)
         left = rng.integers(0, W - w + 1)
-        mask[top:top + h, left:left + w] = True
-    return mask
+        mask_hw[top:top + h, left:left + w] = True
 
 
-def _sample_block_mask_3d(shape: Tuple[int, int, int], num_blocks: int, rng: np.random.Generator) -> np.ndarray:
-    T, H, W = shape
-    mask = np.zeros(shape, dtype=bool)
+def _accumulate_blocks_3d(mask: np.ndarray, num_blocks: int, rng: np.random.Generator) -> None:
+    T, H, W = mask.shape
     for _ in range(num_blocks):
         t = rng.integers(1, max(1, T // 2) + 1)
         h = rng.integers(1, max(1, H // 2) + 1)
@@ -998,7 +1048,6 @@ def _sample_block_mask_3d(shape: Tuple[int, int, int], num_blocks: int, rng: np.
         h0 = rng.integers(0, H - h + 1)
         w0 = rng.integers(0, W - w + 1)
         mask[t0:t0 + t, h0:h0 + h, w0:w0 + w] = True
-    return mask
 
 
 def tubelet_mask(
@@ -1010,7 +1059,15 @@ def tubelet_mask(
     """Generate a tubelet-aligned binary mask by selecting whole tubelets at random.
 
     A tubelet of size (t,h,w) covers one cell in the grid (T/t, H/h, W/w).
+    Each input axis must be an integer multiple of the corresponding tubelet
+    axis; non-divisible shapes raise ``MaskingError`` (G8 — no silent
+    truncation). The returned mask always has shape exactly equal to ``shape``.
     """
+    if any(s % t != 0 for s, t in zip(shape, tubelet_size)):
+        raise MaskingError(
+            f"shape {shape} not divisible by tubelet_size {tubelet_size}; "
+            f"vjepa2 requires aligned grid."
+        )
     if rng is None:
         rng = np.random.default_rng()
     grid, _ = _broadcast_shape_for_tubelet(shape, tubelet_size)
@@ -1021,8 +1078,6 @@ def tubelet_mask(
     grid_mask = grid_mask.reshape(grid)
     # Broadcast each grid cell to a tubelet
     mask = np.kron(grid_mask, np.ones(tubelet_size, dtype=bool))
-    # Crop if shape not perfectly divisible by tubelet size
-    mask = mask[: shape[0], : shape[1], : shape[2]]
     return mask
 ```
 
@@ -1053,7 +1108,7 @@ git commit -m "feat(train): tubelet masking for V-JEPA 2"
 **Interfaces:**
 - Consumes: `worldforge_train.data.video_source.build_video_source`
 - Produces:
-  - `worldforge_train.data.dataset.Vjepa2Dataset(manifest_path, mask_fn)` returning dict `{"frames": Tensor, "mask": Tensor}` per item
+  - `worldforge_train.data.dataset.Vjepa2Dataset(manifest_path, mask_fn, patch_size=14)` returning dict `{"frames": Tensor, "mask": Tensor}` per item, where `mask` has shape `(T, H // patch_size, W // patch_size)` per the V-JEPA 2 ViT-L patch grid
 
 - [ ] **Step 1: Write failing test `worldforge_train/tests/test_dataset.py`**
 
@@ -1062,21 +1117,20 @@ import numpy as np
 import pytest
 
 from worldforge_train.data.dataset import Vjepa2Dataset
-from worldforge_train.data.tubelet_mask import tubelet_mask
 
 
 @pytest.fixture
-def manifest(tmp_path, sample_mp4_from_task3):
+def manifest(tmp_path, sample_mp4):
     """Write a tiny manifest CSV: video_path, num_frames, height, width."""
     csv = tmp_path / "manifest.csv"
-    csv.write_text(f"video_path,num_frames,height,width\n{sample_mp4_from_task4},20,64,64\n")
+    csv.write_text(f"video_path,num_frames,height,width\n{sample_mp4},20,64,64\n")
     return csv
 
 
 def test_dataset_len_matches_manifest(manifest):
     ds = Vjepa2Dataset(
         manifest_path=manifest,
-        mask_fn=lambda shape, rng: tubelet_mask(shape, (2, 14, 14), rng=rng),
+        mask_fn=lambda shape, rng: np.ones(shape, dtype=bool),
     )
     assert len(ds) == 1
 
@@ -1084,49 +1138,30 @@ def test_dataset_len_matches_manifest(manifest):
 def test_dataset_getitem_returns_correct_shapes(manifest):
     ds = Vjepa2Dataset(
         manifest_path=manifest,
-        mask_fn=lambda shape, rng: tubelet_mask(shape, (2, 14, 14), rng=rng),
+        mask_fn=lambda shape, rng: np.ones(shape, dtype=bool),
     )
     item = ds[0]
     assert "frames" in item and "mask" in item
     # frames: (T, C, H, W) float32 in [0,1]
-    assert item["frames"].shape[0] == 20
-    assert item["frames"].shape[1] == 3
+    assert item["frames"].shape == (20, 3, 64, 64)
     assert item["frames"].dtype == np.float32
     assert 0.0 <= item["frames"].min() and item["frames"].max() <= 1.0
-    # mask: (T, H_grid, W_grid) bool
+    # mask: (T, H_grid, W_grid) bool with H_grid, W_grid = H/patch_size, W/patch_size
     assert item["mask"].dtype == bool
+    assert item["mask"].shape == (20, 4, 4)
+
+
+def test_dataset_getitem_mask_grid_scales_with_patch_size(manifest):
+    # patch_size=8 on a 64x64 frame -> (20, 8, 8) grid
+    ds = Vjepa2Dataset(
+        manifest_path=manifest, patch_size=8,
+        mask_fn=lambda shape, rng: np.zeros(shape, dtype=bool),
+    )
+    item = ds[0]
+    assert item["mask"].shape == (20, 8, 8)
 ```
 
-- [ ] **Step 2: Add sample video fixture helper**
-
-Append to `worldforge_train/tests/test_video_source.py` (extend existing module):
-
-```python
-@pytest.fixture
-def sample_mp4_from_task3(tmp_path):
-    """Re-use sample_mp4 fixture for cross-task tests."""
-    import decord  # noqa
-    import av
-    out = tmp_path / "sample.mp4"
-    container = av.open(str(out), mode="w")
-    stream = container.add_stream("h264", rate=10)
-    stream.width, stream.height = 64, 64
-    for i in range(20):
-        frame = av.VideoFrame.from_ndarray(
-            np.full((64, 64, 3), i * 12, dtype=np.uint8)
-        )
-        frame.pts = i
-        for packet in stream.encode(frame):
-            container.mux(packet)
-    for packet in stream.encode():
-        container.mux(packet)
-    container.close()
-    return out
-```
-
-(Rename the existing fixture in test_video_source.py from `sample_mp4` to `sample_mp4_from_task3` if needed; both names work.)
-
-- [ ] **Step 3: Run failing test**
+- [ ] **Step 2: Run failing test**
 
 ```bash
 cd /mnt/c/WorkSpace/WorldForge
@@ -1135,15 +1170,22 @@ PYTHONPATH=. pytest worldforge_train/tests/test_dataset.py -v
 
 Expected: ImportError.
 
-- [ ] **Step 4: Implement `worldforge_train/data/dataset.py`**
+- [ ] **Step 3: Implement `worldforge_train/data/dataset.py`**
 
 ```python
-"""HF datasets wrapper for V-JEPA 2 training."""
+"""Video dataset wrapper for V-JEPA 2 training.
+
+Reads a CSV manifest of (video_path, num_frames, height, width), decodes
+each video via the project's `build_video_source` factory, normalizes
+frames to float32 in [0, 1], transposes to (T, 3, H, W), and invokes a
+caller-supplied `mask_fn` with the per-token patch grid derived from
+`patch_size` (default 14, V-JEPA 2 ViT-L).
+"""
 from __future__ import annotations
 
 import csv
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 import numpy as np
 
@@ -1155,14 +1197,22 @@ MaskFn = Callable[[tuple[int, int, int], np.random.Generator], np.ndarray]
 class Vjepa2Dataset:
     """Iterates (video, mask) samples from a CSV manifest.
 
-    Manifest schema: video_path, num_frames, height, width
+    Manifest schema: video_path, num_frames, height, width.
     """
 
-    def __init__(self, manifest_path: Path, mask_fn: MaskFn) -> None:
+    def __init__(
+        self,
+        manifest_path: Path,
+        mask_fn: MaskFn,
+        patch_size: int = 14,
+    ) -> None:
+        if patch_size <= 0:
+            raise ValueError(f"patch_size must be > 0; got {patch_size}")
         self.manifest_path = Path(manifest_path)
         if not self.manifest_path.exists():
             raise FileNotFoundError(f"Manifest not found: {self.manifest_path}")
         self.mask_fn = mask_fn
+        self.patch_size = patch_size
         self.entries: list[dict[str, str]] = []
         with self.manifest_path.open() as f:
             reader = csv.DictReader(f)
@@ -1175,31 +1225,28 @@ class Vjepa2Dataset:
         row = self.entries[idx]
         src = build_video_source(row["video_path"], prefer_dvpp=False)
         frames = src.read_all()  # (T, H, W, 3) uint8
-        # Normalize to float32 in [0,1]
         frames = frames.astype(np.float32) / 255.0
-        # (T, H, W, 3) → (T, 3, H, W)
-        frames = np.transpose(frames, (0, 3, 1, 2))
-        # Mask: align grid to height/width (no tubelet crop on T for simplicity)
+        frames = np.transpose(frames, (0, 3, 1, 2))  # (T, 3, H, W)
         T, _, H, W = frames.shape
-        grid_h, grid_w = H // 14, W // 14  # V-JEPA 2 default patch grid
-        mask = self.mask_fn((T, grid_h, grid_w), np.random.default_rng(idx))
+        grid = (T, H // self.patch_size, W // self.patch_size)
+        mask = self.mask_fn(grid, np.random.default_rng(idx))
         return {"frames": frames, "mask": mask}
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
 cd /mnt/c/WorkSpace/WorldForge
 PYTHONPATH=. pytest worldforge_train/tests/test_dataset.py -v
 ```
 
-Expected: 2 tests pass.
+Expected: 3 tests pass.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add worldforge_train/data/dataset.py worldforge_train/tests/test_dataset.py worldforge_train/tests/test_video_source.py
-git commit -m "feat(train): HF datasets wrapper with tubelet masking"
+git add worldforge_train/data/dataset.py worldforge_train/tests/test_dataset.py
+git commit -m "feat(train): video dataset wrapper with patch-grid mask_fn"
 ```
 
 ---
