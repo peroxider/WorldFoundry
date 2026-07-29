@@ -33,7 +33,9 @@ def test_fake_backend_quantize_copies_weights_and_meta(tmp_path):
 
 
 def test_fake_backend_writes_quant_meta_with_required_fields(tmp_path):
-    """quant_meta.json has all 7 spec fields (matches W8A8Backend schema)."""
+    """quant_meta.json writes the 6 fields FakeBackend owns (msmodelslim_version
+    intentionally omitted — no msModelSlim involvement in the CPU smoke path).
+    Field set is a strict subset of W8A8Backend's schema."""
     from worldforge_inf.compile.quantize_backends.fake import FakeBackend
 
     src = tmp_path / "bf16"
