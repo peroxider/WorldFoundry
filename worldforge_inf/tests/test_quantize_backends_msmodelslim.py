@@ -55,16 +55,34 @@ def test_w8a8_backend_quantize_writes_meta(tmp_path):
     fake_samples = [MagicMock() for _ in range(4)]
 
     fake_msmodelslim = _make_fake_msmodelslim()
+    fake_slim = fake_msmodelslim.MSModelSlim.return_value
+    fake_quantized_model = fake_slim.quantize.return_value
     fake_auto_model = MagicMock()
-    fake_auto_model.from_pretrained.return_value = MagicMock()
+    fake_model = MagicMock()
+    fake_auto_model.from_pretrained.return_value = fake_model
 
     ms_mod = _reload_with_mock_msmodelslim(fake_msmodelslim)
     assert ms_mod._MSMODELSLIM_AVAILABLE is True
 
-    with patch.object(ms_mod, "_load_calibration_dataset", return_value=fake_samples):
+    with patch.object(
+        ms_mod, "_load_calibration_dataset", return_value=fake_samples
+    ) as fake_loader:
         with patch.object(ms_mod, "AutoModel", fake_auto_model):
             backend = ms_mod.W8A8Backend()
             result = backend.quantize(src, out, calibration_dataset="videomix22m-512")
+
+    fake_loader.assert_called_once_with(n=512, seed=42)
+    fake_auto_model.from_pretrained.assert_called_once_with(
+        str(src), torch_dtype=ms_mod.torch.bfloat16
+    )
+    fake_msmodelslim.MSModelSlim.assert_called_once_with(fake_model)
+    fake_slim.quantize.assert_called_once_with(
+        quant_type="W8A8",
+        quant_mode="static",
+        calibration_data=fake_samples,
+        calibration_size=len(fake_samples),
+    )
+    fake_quantized_model.save_pretrained.assert_called_once_with(str(out))
 
     assert result == out
     meta_path = out / "quant_meta.json"
@@ -75,6 +93,8 @@ def test_w8a8_backend_quantize_writes_meta(tmp_path):
     assert meta["backend"] == "msmodelslim"
     assert meta["phase"] == "phase2-w11"
     assert meta["msmodelslim_version"] == "26.1.0"
+    assert "note" in meta
+    assert meta["note"] == "W8A8 static quantization via msModelSlim."
     # Phase-1 contract fields preserved
     assert "source_model_path" in meta
     assert meta["source_model_path"] == str(src)
@@ -91,6 +111,31 @@ def test_w8a8_backend_missing_config_raises(tmp_path):
     backend = ms_mod.W8A8Backend()
     with pytest.raises(FileNotFoundError, match="missing config.json"):
         backend.quantize(src, out, calibration_dataset=None)
+
+
+def test_w8a8_backend_unknown_calibration_dataset_raises(tmp_path):
+    """Unknown calibration datasets fail before loading or quantization work."""
+    src = tmp_path / "src_model"
+    src.mkdir()
+    (src / "config.json").write_text('{"model_type": "vjepa2"}')
+    out = tmp_path / "quantized"
+
+    fake_msmodelslim = _make_fake_msmodelslim()
+    fake_auto_model = MagicMock()
+    ms_mod = _reload_with_mock_msmodelslim(fake_msmodelslim)
+
+    with patch.object(ms_mod, "_load_calibration_dataset") as fake_loader:
+        with patch.object(ms_mod, "AutoModel", fake_auto_model):
+            backend = ms_mod.W8A8Backend()
+            with pytest.raises(
+                ValueError,
+                match=r"Supported: None \| 'videomix22m-512'",
+            ):
+                backend.quantize(src, out, calibration_dataset="unknown")
+
+    fake_loader.assert_not_called()
+    fake_auto_model.from_pretrained.assert_not_called()
+    fake_msmodelslim.MSModelSlim.assert_not_called()
 
 
 def test_w8a8_backend_raises_actionable_error_when_msmodelslim_absent(tmp_path):
