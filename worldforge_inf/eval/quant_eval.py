@@ -93,3 +93,46 @@ def cosine_similarity(
         threshold=threshold,
         n_samples=len(per_sample_cosine),
     )
+
+
+def _cli() -> int:
+    """CLI entry point. Returns process exit code (0 = pass, 1 = fail)."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="Cosine similarity eval: bf16 baseline vs quantized model"
+    )
+    parser.add_argument("--baseline", required=True, type=Path,
+                        help="Path to bf16 baseline model directory")
+    parser.add_argument("--quantized", required=True, type=Path,
+                        help="Path to quantized model directory")
+    parser.add_argument("--threshold", type=float, default=0.98,
+                        help="Cosine threshold (default 0.98)")
+    parser.add_argument("--n-samples", type=int, default=100,
+                        help="Number of eval samples (default 100)")
+    args = parser.parse_args()
+
+    try:
+        report = cosine_similarity(
+            baseline_path=args.baseline,
+            quantized_path=args.quantized,
+            threshold=args.threshold,
+            n_samples=args.n_samples,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2  # setup/config error
+
+    print(
+        f"Cosine: {report.aggregate_cosine:.4f} "
+        f"(threshold {report.threshold:.4f}, "
+        f"n={report.n_samples}) → "
+        f"{'PASS' if report.passed else 'FAIL'}"
+    )
+    return 0 if report.passed else 1
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_cli())

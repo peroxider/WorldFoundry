@@ -107,3 +107,38 @@ def test_aggregate_cosine_is_mean_of_per_sample():
 
     expected_mean = sum(report.per_sample_cosine) / len(report.per_sample_cosine)
     assert abs(report.aggregate_cosine - expected_mean) < 1e-5
+
+
+def test_shape_mismatch_raises_value_error():
+    """Different bf16 vs int8 output shapes → ValueError."""
+    from worldforge_inf.eval.quant_eval import cosine_similarity
+
+    bf16_feat = torch.randn(1, 4, 8)
+    int8_feat = torch.randn(1, 4, 16)  # different last dim
+
+    bf16_model = _make_model(bf16_feat)
+    int8_model = _make_model(int8_feat)
+
+    with patch(
+        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
+        side_effect=[bf16_model, int8_model],
+    ):
+        with pytest.raises(ValueError, match="Shape mismatch"):
+            cosine_similarity(
+                baseline_path=Path("/fake/bf16"),
+                quantized_path=Path("/fake/int8"),
+                eval_dataset=[torch.zeros(3, 224, 224)],
+                n_samples=1,
+            )
+
+
+def test_empty_eval_dataset_raises():
+    """n_samples=0 → ValueError before model load."""
+    from worldforge_inf.eval.quant_eval import cosine_similarity
+
+    with pytest.raises(ValueError, match="n_samples must be positive"):
+        cosine_similarity(
+            baseline_path=Path("/fake/bf16"),
+            quantized_path=Path("/fake/int8"),
+            n_samples=0,
+        )
