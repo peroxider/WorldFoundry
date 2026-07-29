@@ -40,9 +40,16 @@ class FakeBackend:
             )
 
         shutil.copy2(config, output_path / "config.json")
-        weights_src = model_path / "pytorch_model.bin"
-        if weights_src.exists():
-            shutil.copy2(weights_src, output_path / "pytorch_model.bin")
+        # Copy weights in whichever format the source uses. Modern HF
+        # saves as ``model.safetensors``; legacy save uses
+        # ``pytorch_model.bin``. AutoModel.from_pretrained can load
+        # either as long as the file lives next to ``config.json``.
+        weights_bin = model_path / "pytorch_model.bin"
+        weights_safetensors = model_path / "model.safetensors"
+        if weights_bin.exists():
+            shutil.copy2(weights_bin, output_path / "pytorch_model.bin")
+        elif weights_safetensors.exists():
+            shutil.copy2(weights_safetensors, output_path / "model.safetensors")
 
         meta = {
             "quant_type": "fake",

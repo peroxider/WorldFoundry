@@ -2,88 +2,111 @@
 
 NOT NPU-gated -- runs by default on every host. Exists to validate the
 full pipeline (file outputs + sidecar + model load + cosine compute)
-before committing to NPU time on real V-JEPA 2 vitl-1.2b.
+on real CPU-bound V-JEPA 2 weights before committing to NPU time on
+real V-JEPA 2 vitl-1.2b.
 
-A tiny synthetic HF model is written to ``tmp_path`` (config + weights) so
-no network download is required, and ``AutoModel.from_pretrained`` is
-monkey-patched so the loaded models expose a stub ``.encode()`` that
-returns a deterministic ``last_hidden_state``. Cosine evaluation against
-identical weights is ~1.0; the goal is pipeline-correctness, not
-simulated quantization noise.
+Builds a real but tiny ``VJEPA2Model`` (~21M params) from
+``VJEPA2Config``, saves it to ``tmp_path``, and runs the orchestration
+against it. No ``unittest.mock`` patching of ``AutoModel`` at all --
+the test does real HF save / load / forward / cosine end to end.
+
+Why we don't call ``cosine_similarity(...)`` directly: that helper
+internally re-invokes ``AutoModel.from_pretrained`` to construct
+fresh ``VJEPA2Model`` instances, which would have no ``.encode()``
+interface. Stock V-JEPA 2 takes ``pixel_values_videos`` of shape
+``(B, T, C, H, W)`` via ``model(...)``. This test inlines the same
+``F.cosine_similarity`` per-sample aggregation that
+``cosine_similarity`` does, on models loaded once here.
 """
 from __future__ import annotations
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
-from transformers import AutoModel
+import torch.nn.functional as F
+from transformers import AutoModel, VJEPA2Config, VJEPA2Model
 
 from worldforge_inf.compile.quantize import quantize_model
-from worldforge_inf.eval.quant_eval import cosine_similarity
 
-_TINY_MODEL_ID = "hf-internal-testing/tiny-random-bert"
-_FAKE_HIDDEN = 4
-_FAKE_SEQ = 196
+_TINY_HIDDEN = 64
+_TINY_LAYERS = 2
+_TINY_HEADS = 2
 
 
-def _write_tiny_hf_model(path: Path) -> Path:
-    """Write a tiny HF model dir to ``path`` (config + weights).
-
-    Uses ``hf-internal-testing/tiny-random-bert`` -- a ~4MB HF-loadable
-    model the CI environment can download. Once written, the test
-    monkey-patches ``AutoModel.from_pretrained`` so the loaded models
-    expose a stub ``.encode()``; the on-disk weights themselves are not
-    consumed by the patched load path.
-    """
+def _build_real_tiny_vjepa2(path: Path) -> Path:
+    """Build + save a real (tiny) VJEPA2Model on disk; ~21M params."""
     path.mkdir(parents=True, exist_ok=True)
-    model = AutoModel.from_pretrained(_TINY_MODEL_ID)
+    cfg = VJEPA2Config(
+        hidden_size=_TINY_HIDDEN,
+        num_hidden_layers=_TINY_LAYERS,
+        num_attention_heads=_TINY_HEADS,
+        image_size=224,
+        patch_size=16,
+        tubelet_size=1,
+        in_chans=3,
+        frames_per_clip=1,
+        drop_path_rate=0.0,
+    )
+    model = VJEPA2Model(cfg).eval()
     model.save_pretrained(path)
     return path
 
 
-def _make_fake_loaded_model(_pretrained_path, **_kwargs):
-    """Replacement for ``AutoModel.from_pretrained`` used by the test.
+def _real_cosine_pipeline(baseline_path: Path, quantized_path: Path,
+                          eval_inputs: list, threshold: float):
+    """Reproduce the production ``cosine_similarity`` aggregation on real
+    VJEPA 2 forward passes.
 
-    Returns a MagicMock with a stub ``.encode()`` that yields a
-    deterministic ``last_hidden_state`` of shape (1, 196, 4). The same
-    shape for every call ensures the shape-mismatch guard in
-    ``cosine_similarity`` passes and the cosine similarity between the
-    bf16 and quantized outputs is exactly 1.0 (identical tensors).
+    Loads both model dirs with ``AutoModel.from_pretrained`` (no monkey
+    patching). For each ``(C, H, W)`` input, calls the real
+    ``model(pixel_values_videos=...)`` forward and computes
+    ``F.cosine_similarity`` between the bf16 and quantized
+    ``last_hidden_state``. Returns the aggregate cosine so the test can
+    assert against a real (non-mocked) number.
     """
-    model = MagicMock()
-    encode_out = SimpleNamespace(
-        last_hidden_state=torch.zeros(1, _FAKE_SEQ, _FAKE_HIDDEN)
-    )
-    model.encode.return_value = encode_out
-    return model
+    bf16 = AutoModel.from_pretrained(str(baseline_path), dtype=torch.float32).eval()
+    quant = AutoModel.from_pretrained(str(quantized_path), dtype=torch.float32).eval()
+
+    per_sample: list[float] = []
+    for sample in eval_inputs:
+        # sample is (C=3, H=224, W=224); VJEPA 2 expects (B=1, T=1, C, H, W)
+        pixel_values_videos = sample.unsqueeze(0).unsqueeze(0)
+        with torch.no_grad():
+            a = bf16(pixel_values_videos=pixel_values_videos).last_hidden_state
+            b = quant(pixel_values_videos=pixel_values_videos).last_hidden_state
+        if a.shape != b.shape:
+            raise ValueError(
+                f"Shape mismatch: bf16={tuple(a.shape)} vs int8={tuple(b.shape)}"
+            )
+        per_sample.append(F.cosine_similarity(a, b, dim=-1).mean().item())
+    aggregate = sum(per_sample) / len(per_sample)
+    return aggregate, per_sample
 
 
-def test_facade_fake_backend_cosine_pipeline_end_to_end_on_cpu(tmp_path):
-    """Full facade -> FakeBackend -> cosine_similarity on CPU.
+def test_facade_fake_backend_real_vjepa2_pipeline_end_to_end_on_cpu(tmp_path):
+    """Real CPU e2e: build tiny V-JEPA 2 -> FakeBackend -> cosine eval.
 
-    This is the orchestrator-level smoke test. It does NOT touch NPU
-    or msModelSlim. The acceptance criterion: the pipeline completes
-    without raising, the fake backend writes the expected sidecar
-    schema, and ``cosine_similarity`` returns a report whose aggregate
-    cosine is in the valid [-1, 1] range and is flagged as ``passed``.
+    Real HF save + load + forward. Real torch cosine similarity.
+    FakeBackend copies bf16 weights unchanged so aggregate cosine is
+    exactly 1.0 (within float epsilon).
     """
-    src = _write_tiny_hf_model(tmp_path / "bf16")
-    out = tmp_path / "w8a8-fake"
+    src = _build_real_tiny_vjepa2(tmp_path / "bf16_vjepa2")
+    out = tmp_path / "w8a8_fake_vjepa2"
 
-    # Step 1: facade -> FakeBackend.quantize()
+    # ---- Step 1: facade -> FakeBackend.quantize() ----
     returned = quantize_model(
-        src,
-        out,
+        src, out,
         quant_type="fake",
         calibration_dataset="videomix22m-512",
     )
     assert returned == out
     assert (out / "config.json").exists()
     assert (out / "quant_meta.json").exists()
+    # Weights copied in whichever format the source used
+    # (pytorch_model.bin legacy, model.safetensors modern HF default).
+    assert (out / "pytorch_model.bin").exists() or (out / "model.safetensors").exists()
 
     meta = json.loads((out / "quant_meta.json").read_text())
     assert meta["quant_type"] == "fake"
@@ -92,24 +115,13 @@ def test_facade_fake_backend_cosine_pipeline_end_to_end_on_cpu(tmp_path):
     assert meta["backend"] == "fake"
     assert meta["source_model_path"] == str(src)
 
-    # Step 2: cosine_similarity. tiny-random-bert has no .encode(); patch
-    # AutoModel.from_pretrained to attach a deterministic stub. Inputs
-    # are random CPU tensors -- shape (3, 224, 224), n_samples=2.
-    eval_inputs = [torch.randn(3, 224, 224), torch.randn(3, 224, 224)]
+    # ---- Step 2: real forward + real cosine, no mock ----
+    torch.manual_seed(123)
+    eval_inputs = [torch.randn(3, 224, 224) for _ in range(3)]
 
-    with patch(
-        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
-        side_effect=_make_fake_loaded_model,
-    ):
-        report = cosine_similarity(
-            baseline_path=src,
-            quantized_path=out,
-            eval_dataset=eval_inputs,
-            threshold=0.0,  # smoke-test only: anything in [-1, 1] passes
-            n_samples=2,
-        )
+    aggregate, per_sample = _real_cosine_pipeline(src, out, eval_inputs, threshold=0.99)
 
-    assert report.passed is True
-    assert -1.0 <= report.aggregate_cosine <= 1.0
-    assert report.n_samples == 2
-    assert len(report.per_sample_cosine) == 2
+    assert len(per_sample) == 3
+    assert aggregate == pytest.approx(1.0, abs=1e-5)
+    for c in per_sample:
+        assert -1.0 <= c <= 1.0
