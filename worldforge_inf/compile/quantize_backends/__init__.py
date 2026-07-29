@@ -78,8 +78,9 @@ def backend_available(quant_type: str) -> tuple[bool, str | None]:
 # ImportError with the install hint when the dep is absent. That's the
 # single source of truth for the missing-deps error path (G4).
 from . import msmodelslim  # noqa: F401, E402  (W8A8Backend self-registers via @register)
+from . import fake  # noqa: F401, E402  (FakeBackend self-registers via @register; CPU surrogate)
 
 
 # Public list of quant types the facade accepts. Backends register themselves
 # at import time; the facade only dispatches to types listed here.
-SUPPORTED_QUANT_TYPES: tuple[str, ...] = ("w8a8", "w4a8")  # w4a8 deferred to future sub-project
+SUPPORTED_QUANT_TYPES: tuple[str, ...] = ("w8a8", "w4a8", "fake")  # w4a8 deferred to future sub-project; fake is a CPU smoke-test surrogate
