@@ -162,3 +162,23 @@ def test_w4a8_raises_with_deferral_message():
     assert available is False
     assert hint is not None
     assert "w4a8" in hint
+
+
+def test_w4a8_public_facade_raises_value_error_with_deferral():
+    """quantize_model(quant_type='w4a8') raises ValueError per spec §5.
+
+    Must match BOTH 'No backend registered' (contract) AND 'deferred to
+    future sub-project' (actionable deferral message, G4).
+    """
+    from worldforge_inf.compile.quantize import quantize_model
+
+    with pytest.raises(ValueError) as exc_info:
+        quantize_model(
+            Path("/fake/bf16"),
+            Path("/fake/w4a8"),
+            quant_type="w4a8",
+        )
+    msg = str(exc_info.value)
+    assert "No backend registered" in msg
+    assert "w4a8" in msg
+    assert "deferred to future sub-project" in msg

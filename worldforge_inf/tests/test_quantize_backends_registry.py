@@ -27,17 +27,14 @@ def test_get_backend_unknown_raises_value_error():
         get_backend("nope")
 
 
-def test_backend_available_true_when_registered(monkeypatch):
-    """backend_available returns (True, None) for a registered type when deps importable.
+def test_backend_available_true_when_registered():
+    """backend_available returns (True, None) for a registered type.
 
-    Simulates the production scenario where msModelSlim IS installed:
-    _BACKEND_IMPORT_ERROR is None, so backend_available() reaches the registry
-    check and returns (True, None) for a registered type.
+    Missing-deps reporting is the backend's responsibility (see
+    W8A8Backend._MSMODELSLIM_AVAILABLE + its quantize() check); the
+    registry's backend_available() only reports whether a backend is
+    registered.
     """
-    # Simulate successful import (production scenario: msmodelslim installed)
-    from worldforge_inf.compile import quantize_backends
-    monkeypatch.setattr(quantize_backends, "_BACKEND_IMPORT_ERROR", None)
-
     @register("bar")
     class BarBackend:
         def quantize(self, model_path, output_path, calibration_dataset):

@@ -50,22 +50,20 @@ def get_backend(quant_type: str) -> QuantBackend:
     return _REGISTRY[quant_type]()
 
 
-_BACKEND_IMPORT_ERROR: Exception | None = None
-
-
 def backend_available(quant_type: str) -> tuple[bool, str | None]:
     """Return ``(available, hint)`` for ``quant_type``.
 
-    ``hint`` is non-None when the backend is unavailable due to a missing
-    dependency (e.g. msModelSlim not installed). The facade uses this to
-    emit an ImportError with an actionable install instruction (G4).
+    ``hint`` is non-None when the backend is unavailable. The facade uses
+    this to emit an ``ImportError`` with an actionable install instruction
+    (G4) when the backend's optional dependency is missing.
+
+    Note: a *missing* backend (deferred, not yet implemented — e.g. W4A8)
+    is reported by the facade as a separate ``ValueError`` before this
+    function is consulted, so unregistered types never reach here in the
+    dispatch path. Missing-deps hints (msModelSlim) come from the backend
+    module's own guarded import + ``quantize()`` check, not from this
+    registry.
     """
-    if _BACKEND_IMPORT_ERROR is not None:
-        return False, (
-            "W8A8 quantization requires msmodelslim. "
-            "Install with: pip install worldforge[quant]\n"
-            f"Underlying error: {_BACKEND_IMPORT_ERROR}"
-        )
     if quant_type not in _REGISTRY:
         return False, (
             f"No backend registered for quant_type={quant_type!r}. "
@@ -74,13 +72,12 @@ def backend_available(quant_type: str) -> tuple[bool, str | None]:
     return True, None
 
 
-# Trigger backend module imports so they self-register. msModelSlim backend
-# (Task 3) imports msmodelslim at module top; if missing, capture the error
-# so backend_available() can surface it later.
-try:
-    from . import msmodelslim  # noqa: F401  (W8A8Backend self-registers via @register)
-except ImportError as exc:
-    _BACKEND_IMPORT_ERROR = exc
+# Trigger backend module imports so they self-register. The msModelSlim
+# backend guards its import at module top and exposes
+# ``_MSMODELSLIM_AVAILABLE``; its ``quantize()`` raises the actionable
+# ImportError with the install hint when the dep is absent. That's the
+# single source of truth for the missing-deps error path (G4).
+from . import msmodelslim  # noqa: F401, E402  (W8A8Backend self-registers via @register)
 
 
 # Public list of quant types the facade accepts. Backends register themselves

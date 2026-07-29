@@ -142,3 +142,23 @@ def test_empty_eval_dataset_raises():
             quantized_path=Path("/fake/int8"),
             n_samples=0,
         )
+
+
+def test_empty_iter_eval_dataset_raises():
+    """eval_dataset=[] with positive n_samples → ValueError after model load."""
+    from worldforge_inf.eval.quant_eval import cosine_similarity
+
+    bf16_model = _make_model(torch.randn(1, 4, 8))
+    int8_model = _make_model(torch.randn(1, 4, 8))
+
+    with patch(
+        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
+        side_effect=[bf16_model, int8_model],
+    ):
+        with pytest.raises(ValueError, match="eval_dataset is empty"):
+            cosine_similarity(
+                baseline_path=Path("/fake/bf16"),
+                quantized_path=Path("/fake/int8"),
+                eval_dataset=[],
+                n_samples=1,
+            )
