@@ -81,3 +81,8 @@ try:
     from . import msmodelslim  # noqa: F401  (W8A8Backend self-registers via @register)
 except ImportError as exc:
     _BACKEND_IMPORT_ERROR = exc
+
+
+# Public list of quant types the facade accepts. Backends register themselves
+# at import time; the facade only dispatches to types listed here.
+SUPPORTED_QUANT_TYPES: tuple[str, ...] = ("w8a8", "w4a8")  # w4a8 deferred to future sub-project

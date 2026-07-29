@@ -1,15 +1,19 @@
-"""ModelSlim-style quantization wrapper.
+"""Quantization facade — dispatches by quant_type to registered backend.
 
-Phase-1 stub: applies W8A8 symmetric quantization in-place on weights and writes
-a quant_meta.json sidecar. Real vLLM-Ascend ModelSlim integration lands in
-Phase-2 W11 (W4A8).
+Phase-1 API surface preserved verbatim (G3). The actual quantization work
+lives in worldforge_inf.compile.quantize_backends.*.
 """
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-SUPPORTED_QUANT_TYPES = ("w8a8", "w4a8", "w4a16")
+from worldforge_inf.compile.quantize_backends import (
+    SUPPORTED_QUANT_TYPES,
+    backend_available,
+    get_backend,
+)
+
+__all__ = ["quantize_model", "SUPPORTED_QUANT_TYPES"]
 
 
 def quantize_model(
@@ -18,9 +22,12 @@ def quantize_model(
     quant_type: str = "w8a8",
     calibration_dataset: str | None = None,
 ) -> Path:
-    """Quantize a model directory and write the result to `output_path`.
+    """Quantize a model directory and write the result to ``output_path``.
 
-    Returns the output directory path. Raises ValueError on unsupported type.
+    Returns the output directory path. Raises ``ValueError`` on unsupported
+    ``quant_type``, ``ImportError`` if the backend's dependencies are not
+    installed (with an actionable install hint), or any exception propagated
+    from the backend (e.g. ``FileNotFoundError`` for missing model files).
     """
     if quant_type not in SUPPORTED_QUANT_TYPES:
         raise ValueError(
@@ -28,22 +35,9 @@ def quantize_model(
             f"Supported: {SUPPORTED_QUANT_TYPES}"
         )
 
-    src = Path(model_path)
-    dst = Path(output_path)
-    dst.mkdir(parents=True, exist_ok=True)
+    available, hint = backend_available(quant_type)
+    if not available:
+        raise ImportError(hint)
 
-    # Phase-1 stub: copy model files and emit a quant_meta.json sidecar.
-    # Real W8A8 weight replacement is wired in Phase-2 W11.
-    for f in src.iterdir():
-        if f.is_file():
-            (dst / f.name).write_bytes(f.read_bytes())
-
-    meta = {
-        "quant_type": quant_type,
-        "calibration_dataset": calibration_dataset,
-        "source_model_path": str(src),
-        "phase": "phase1-stub",
-        "note": "Phase-2 W11: replace with real ModelSlim W8A8.",
-    }
-    (dst / "quant_meta.json").write_text(json.dumps(meta, indent=2))
-    return dst
+    backend = get_backend(quant_type)
+    return backend.quantize(Path(model_path), Path(output_path), calibration_dataset)
