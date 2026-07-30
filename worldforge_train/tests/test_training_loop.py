@@ -1,8 +1,6 @@
 """Unit tests for worldforge_train.training_loop (mock-based, fast)."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 import torch
 import torch.nn as nn
