@@ -84,8 +84,14 @@ def run_training_loop(
     strategy: DistributedStrategy,
     optimizer: Optimizer,
     loss_fn: LossFn | None = None,
+    step_callback: Callable[[int, float], None] | None = None,
 ) -> list[float]:
-    """Run ``num_steps`` training steps, returning per-step losses."""
+    """Run ``num_steps`` training steps, returning per-step losses.
+
+    If ``step_callback`` is provided, it is called as
+    ``step_callback(step_no, loss)`` after each step (1-indexed step_no).
+    Used by trainer to schedule checkpoint saves.
+    """
     if num_steps <= 0:
         raise ValueError(f"num_steps must be positive, got {num_steps}")
 
@@ -95,6 +101,8 @@ def run_training_loop(
         batch = next(iterator)
         loss = run_training_step(model, batch, strategy, optimizer, loss_fn)
         losses.append(loss)
+        if step_callback is not None:
+            step_callback(step + 1, loss)
     return losses
 
 

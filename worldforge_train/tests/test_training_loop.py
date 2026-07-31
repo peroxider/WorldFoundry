@@ -104,3 +104,44 @@ def test_run_training_step_calls_strategy_step_once_per_step():
     for _ in range(3):
         run_training_step(model, batch, strategy, optimizer, loss_fn=loss_fn)
     assert len(strategy.step_calls) == 3
+
+
+def test_run_training_loop_calls_step_callback_each_step():
+    """W16 T2: step_callback receives (step_no, loss) after each step (1-indexed)."""
+    model = nn.Linear(4, 1)
+    optimizer = SGD(model.parameters(), lr=0.01)
+    strategy = _PassthroughStrategy()
+    batch = {"x": torch.randn(2, 4), "y": torch.randn(2, 1)}
+
+    def loss_fn(m, b):
+        return (m(b["x"]) - b["y"]).pow(2).sum()
+
+    batches = [dict(batch) for _ in range(5)]
+    calls: list[tuple[int, float]] = []
+
+    def cb(s, l):
+        calls.append((s, l))
+
+    losses = run_training_loop(model, iter(batches), num_steps=5,
+                              strategy=strategy, optimizer=optimizer,
+                              loss_fn=loss_fn, step_callback=cb)
+    assert [s for s, _ in calls] == [1, 2, 3, 4, 5]
+    assert len(losses) == 5
+
+
+def test_run_training_loop_step_callback_none_unchanged():
+    """W16 T2: backward compat — step_callback=None (default) reproduces prior behavior."""
+    model = nn.Linear(4, 1)
+    optimizer = SGD(model.parameters(), lr=0.01)
+    strategy = _PassthroughStrategy()
+    batch = {"x": torch.randn(2, 4), "y": torch.randn(2, 1)}
+
+    def loss_fn(m, b):
+        return (m(b["x"]) - b["y"]).pow(2).sum()
+
+    batches = [dict(batch) for _ in range(3)]
+    losses = run_training_loop(model, iter(batches), num_steps=3,
+                              strategy=strategy, optimizer=optimizer,
+                              loss_fn=loss_fn)
+    assert len(losses) == 3
+    assert len(strategy.step_calls) == 3
