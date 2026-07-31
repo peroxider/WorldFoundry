@@ -79,3 +79,36 @@ def test_run_fsdp_training_no_longer_raises_not_implemented():
     with pytest.raises((FileNotFoundError, ValueError)) as exc_info:
         run_fsdp_training(cfg, local_rank=0, global_rank=0, world_size=1, num_steps=1)
     assert "NotImplementedError" not in type(exc_info.value).__name__
+
+
+# --- W16 Checkpoint CLI tests ---
+
+def test_cli_help_includes_checkpoint_flags():
+    r = subprocess.run(
+        [sys.executable, "-m", "worldforge_train.train", "--help"],
+        capture_output=True, text=True,
+        cwd="/mnt/c/WorkSpace/WorldForge",
+    )
+    assert r.returncode == 0
+    assert "--checkpoint-dir" in r.stdout
+    assert "--resume-from" in r.stdout
+    assert "--save-every-n" in r.stdout
+
+
+def test_parse_args_accepts_checkpoint_flags():
+    args = parse_args([
+        "--config", "x.yaml",
+        "--checkpoint-dir", "/tmp/ckpts",
+        "--resume-from", "/tmp/ckpts/step_5.pt",
+        "--save-every-n", "10",
+    ])
+    assert str(args.checkpoint_dir) == "/tmp/ckpts"
+    assert str(args.resume_from) == "/tmp/ckpts/step_5.pt"
+    assert args.save_every_n == 10
+
+
+def test_parse_args_defaults_checkpoint_flags_to_none():
+    args = parse_args(["--config", "x.yaml"])
+    assert args.checkpoint_dir is None
+    assert args.resume_from is None
+    assert args.save_every_n is None
