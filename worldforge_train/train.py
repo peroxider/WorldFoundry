@@ -73,8 +73,9 @@ def run_fsdp_training(cfg: dict, local_rank: int, global_rank: int,
     """Delegates to trainer.run_training with FSDPStrategy.
 
     FSDPStrategy.wrap is identity on single-rank (proven in
-    tests/test_training_loop_cpu.py). Multi-rank FSDP gradient all-reduce
-    in FSDPStrategy.step is a deferred gap (per W13 progress notes).
+    tests/test_training_loop_cpu.py) and FullyShardedDataParallel on
+    multi-rank (proven in tests/test_fsdp_strategy.py +
+    tests/test_fsdp_allreduce_cpu.py).
     """
     from worldforge_train.trainer import make_strategy, run_training
     return run_training(cfg, make_strategy("train"), num_steps=num_steps)

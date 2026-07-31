@@ -3,9 +3,9 @@
 Wires Vjepa2Dataset -> collate_vjepa2_batch -> build_lora_model ->
 strategy.wrap -> AdamW (trainable params only) -> run_training_loop.
 
-CPU single-process by construction. Multi-rank FSDP gradient all-reduce
-in FSDPStrategy.step is a known gap deferred to a future shard-aware
-sub-project (see .superpowers/sdd/progress.md W13 caveats).
+CPU single-process + multi-rank (gloo) by construction. Multi-rank
+all-reduce handled by FSDPStrategy.step (see
+worldforge_train/parallel/fsdp.py:62).
 """
 from __future__ import annotations
 
