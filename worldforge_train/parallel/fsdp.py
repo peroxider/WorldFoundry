@@ -52,8 +52,8 @@ class FSDPStrategy(DistributedStrategy):
         if world_size == 1:
             return model  # single-rank fallback (tests / CPU)
 
-        from torch.distributed.fsdp import FSDPModule
-        return FSDPModule(model, use_orig_params=True)
+        from torch.distributed.fsdp import FullyShardedDataParallel
+        return FullyShardedDataParallel(model, use_orig_params=True)
 
     def backward(self, loss) -> None:
         # FSDP path: backward is a passthrough (engine.step() handles sync).

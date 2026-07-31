@@ -2,8 +2,8 @@ import pytest
 import torch
 
 
-def test_wrap_calls_fsdp_module(monkeypatch):
-    """On multi-rank, wrap() must invoke FSDPModule(model, use_orig_params=True)."""
+def test_wrap_calls_fully_sharded_data_parallel(monkeypatch):
+    """On multi-rank, wrap() must invoke FullyShardedDataParallel(model, use_orig_params=True)."""
     pytest.importorskip("torch.distributed.fsdp")
     import torch.distributed as dist
     from worldforge_train.parallel.fsdp import FSDPStrategy
@@ -15,12 +15,10 @@ def test_wrap_calls_fsdp_module(monkeypatch):
             captured["model"] = model
             captured["kwargs"] = kwargs
 
-    # wrap() does `from torch.distributed.fsdp import FSDPModule` inside the
-    # function, so we patch the symbol on that submodule. Setting it as a
-    # module attribute on torch.distributed.fsdp is what subsequent imports
-    # of the name will resolve to.
+    # wrap() does `from torch.distributed.fsdp import FullyShardedDataParallel`
+    # inside the function, so we patch the symbol on that submodule.
     from torch.distributed import fsdp as torch_fsdp
-    monkeypatch.setattr(torch_fsdp, "FSDPModule", FakeFSDPModule)
+    monkeypatch.setattr(torch_fsdp, "FullyShardedDataParallel", FakeFSDPModule)
 
     monkeypatch.setattr(dist, "is_initialized", lambda: True)
     monkeypatch.setattr(dist, "get_world_size", lambda: 2)
