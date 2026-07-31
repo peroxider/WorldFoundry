@@ -366,3 +366,169 @@ def test_run_training_strategy_backward_called_once_per_step():
         assert len(strategy.backward_calls) == 3
     finally:
         trainer_mod._build_dataset = original_ds
+
+
+# --- W16 Checkpoint tests ---
+
+from pathlib import Path  # noqa: E402  (used by W16 tests below)
+
+
+@pytest.fixture
+def _patch_checkpoint_safe_dist(monkeypatch):
+    """Force torch.distributed.is_initialized() -> False so multi-rank guard does not fire."""
+    import torch.distributed as _dist
+    monkeypatch.setattr(_dist, "is_initialized", lambda: False)
+
+
+def test_run_training_saves_final_checkpoint(tmp_path, _patch_checkpoint_safe_dist):
+    cfg = _cfg()
+    model = _TinyLinearModel()
+    import worldforge_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
+    try:
+        run_training(
+            cfg, _PassthroughStrategy(), base_model=model, num_steps=3,
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, l: None,
+            checkpoint_dir=tmp_path,
+        )
+        saved = tmp_path / "step_3.pt"
+        assert saved.is_file()
+    finally:
+        trainer_mod._build_dataset = original_ds
+
+
+def test_run_training_save_every_n_produces_multiple_files(tmp_path, _patch_checkpoint_safe_dist):
+    cfg = _cfg()
+    model = _TinyLinearModel()
+    import worldforge_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=8)
+    try:
+        run_training(
+            cfg, _PassthroughStrategy(), base_model=model, num_steps=6,
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, l: None,
+            checkpoint_dir=tmp_path,
+            save_every_n=2,
+        )
+        saved_files = sorted(p.name for p in tmp_path.glob("step_*.pt"))
+        assert saved_files == ["step_2.pt", "step_4.pt", "step_6.pt"]
+    finally:
+        trainer_mod._build_dataset = original_ds
+
+
+def test_run_training_save_every_n_without_dir_raises(_patch_checkpoint_safe_dist):
+    cfg = _cfg()
+    model = _TinyLinearModel()
+    import worldforge_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
+    try:
+        with pytest.raises(ValueError, match="save_every_n=2 but checkpoint_dir is None"):
+            run_training(
+                cfg, _PassthroughStrategy(), base_model=model, num_steps=3,
+                batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+                logger=lambda s, l: None,
+                save_every_n=2,
+            )
+    finally:
+        trainer_mod._build_dataset = original_ds
+
+
+def test_run_training_resume_from_checkpoint_continues_losses(tmp_path, _patch_checkpoint_safe_dist):
+    """5 steps + save + fresh cfg + load + 5 more steps should match 10-step run."""
+    def _reset_rng():
+        torch.manual_seed(42)
+        np.random.seed(42)
+
+    cfg = _cfg()
+    import worldforge_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=8)
+    try:
+        _reset_rng()
+        losses_10 = run_training(
+            cfg, _PassthroughStrategy(), base_model=_TinyLinearModel(), num_steps=10,
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, l: None,
+        )
+
+        _reset_rng()
+        losses_first = run_training(
+            cfg, _PassthroughStrategy(), base_model=_TinyLinearModel(), num_steps=5,
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, l: None,
+            checkpoint_dir=tmp_path,
+        )
+        saved = tmp_path / "step_5.pt"
+        assert saved.is_file()
+
+        _reset_rng()
+        losses_second = run_training(
+            cfg, _PassthroughStrategy(), base_model=_TinyLinearModel(), num_steps=10,
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, l: None,
+            resume_from=saved,
+        )
+
+        assert len(losses_first) == 5
+        assert len(losses_second) == 5
+        np.testing.assert_allclose(
+            np.array(losses_first + losses_second),
+            np.array(losses_10),
+            rtol=1e-5,
+            err_msg="resume did not reproduce single-run losses",
+        )
+    finally:
+        trainer_mod._build_dataset = original_ds
+
+
+def test_run_training_resume_with_lora_signature_mismatch_raises(tmp_path, _patch_checkpoint_safe_dist):
+    cfg = _cfg()
+    model = _TinyLinearModel()
+    import worldforge_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
+    try:
+        run_training(
+            cfg, _PassthroughStrategy(), base_model=model, num_steps=3,
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, l: None,
+            checkpoint_dir=tmp_path,
+        )
+        saved = tmp_path / "step_3.pt"
+
+        # Change alpha (not r): r determines LoRA matrix shapes so a different r
+        # would surface as a torch RuntimeError during load_checkpoint before
+        # validate_lora_signature runs. Alpha mismatch keeps shapes intact, so
+        # load succeeds and the signature validator raises the expected ValueError.
+        cfg_changed = _cfg()
+        cfg_changed["lora"]["alpha"] = 999
+        with pytest.raises(ValueError, match="lora_signature.alpha"):
+            run_training(
+                cfg_changed, _PassthroughStrategy(), base_model=_TinyLinearModel(),
+                num_steps=6, batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+                logger=lambda s, l: None, resume_from=saved,
+            )
+    finally:
+        trainer_mod._build_dataset = original_ds
+
+
+def test_run_training_resume_missing_file_raises(_patch_checkpoint_safe_dist):
+    cfg = _cfg()
+    model = _TinyLinearModel()
+    import worldforge_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
+    try:
+        with pytest.raises(FileNotFoundError):
+            run_training(
+                cfg, _PassthroughStrategy(), base_model=model, num_steps=3,
+                batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+                logger=lambda s, l: None,
+                resume_from=Path("/nonexistent/ckpt.pt"),
+            )
+    finally:
+        trainer_mod._build_dataset = original_ds

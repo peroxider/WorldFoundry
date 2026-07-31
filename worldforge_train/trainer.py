@@ -5,15 +5,20 @@ strategy.wrap -> AdamW (trainable params only) -> run_training_loop.
 
 CPU single-process + multi-rank (gloo) by construction. Multi-rank
 all-reduce handled by FSDPStrategy.step (see
-worldforge_train/parallel/fsdp.py:62).
+worldforge_train/parallel/fsdp.py:62). Checkpoint save/load handled by
+worldforge_train.checkpoint (W16).
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
 import torch
 from torch import nn
 
+from worldforge_train.checkpoint import (
+    LoraSignature, load_checkpoint, save_checkpoint, validate_lora_signature,
+)
 from worldforge_train.data.collator import collate_vjepa2_batch
 from worldforge_train.data.dataset import Vjepa2Dataset
 from worldforge_train.data.tubelet_mask import tubelet_mask
@@ -60,6 +65,16 @@ def _build_optimizer(model: nn.Module, lr: float) -> torch.optim.Optimizer:
     )
 
 
+def _make_signature_from_cfg(cfg: dict, lora_result) -> LoraSignature:
+    return LoraSignature(
+        r=int(cfg["lora"]["r"]),
+        alpha=int(cfg["lora"]["alpha"]),
+        dropout=float(cfg["lora"]["dropout"]),
+        target_modules=tuple(lora_result.target_modules),
+        trainable_params=int(lora_result.trainable_params),
+    )
+
+
 def run_training(
     cfg: dict,
     strategy: "DistributedStrategy",
@@ -69,10 +84,27 @@ def run_training(
     loss_fn: "LossFn | None" = None,
     batch_fn: Callable[[int], dict[str, torch.Tensor]] | None = None,
     logger: Callable[[int, float], None] | None = None,
+    checkpoint_dir: Path | None = None,
+    resume_from: Path | None = None,
+    save_every_n: int = 0,
 ) -> list[float]:
     """Run end-to-end training. Returns per-step losses.
 
-    G4: empty dataset -> ValueError; num_steps<=0 -> ValueError.
+    G4: empty dataset -> ValueError; num_steps<=0 -> ValueError;
+    save_every_n>0 without checkpoint_dir -> ValueError;
+    resume_from nonexistent -> FileNotFoundError; corrupted .pt -> IOError;
+    LoRA signature mismatch -> ValueError.
+
+    Args:
+        checkpoint_dir: optional Path. If set, final checkpoint (and intermediate
+            ones at every save_every_n steps) is written here. Parent dirs created.
+        resume_from: optional Path. If set, load this checkpoint before training
+            and continue from its recorded step. LoRA signature is validated.
+        save_every_n: int. 0 = save only at end. >0 = save every N steps.
+            Raises ValueError if >0 and checkpoint_dir is None.
+
+    Returns:
+        Per-step losses for the steps actually executed (post-resume if applicable).
     """
     from worldforge_train.training_loop import default_loss_fn, run_training_loop
 
@@ -111,8 +143,56 @@ def run_training(
 
     optimizer = _build_optimizer(model, lr=float(cfg["training"]["lr"]))
 
+    # --- W16 Checkpoint orchestration ---
+    import torch.distributed as _dist
+    if checkpoint_dir is not None and _dist.is_initialized() and _dist.get_world_size() > 1:
+        raise NotImplementedError(
+            "checkpoint save on multi-rank FSDP is deferred to Phase-2 W9+ "
+            "(FSDP state dict requires FullStateDictConfig + rank-0-only save). "
+            "Use single-rank or set checkpoint_dir=None on multi-rank."
+        )
+    if save_every_n > 0 and checkpoint_dir is None:
+        raise ValueError(
+            f"save_every_n={save_every_n} but checkpoint_dir is None. "
+            f"Either set checkpoint_dir or set save_every_n=0."
+        )
+
+    start_step = 0
+    if resume_from is not None:
+        ckpt_result = load_checkpoint(resume_from, model, optimizer)
+        start_step = int(ckpt_result["step"])
+        sig = _make_signature_from_cfg(cfg, lora_result)
+        validate_lora_signature(ckpt_result["lora_signature"], sig)
+        print(f"[TRAIN] resumed from {resume_from} at step={start_step}")
+
+    if checkpoint_dir is not None:
+        checkpoint_dir = Path(checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        ckpt_sig = _make_signature_from_cfg(cfg, lora_result)
+    else:
+        ckpt_sig = None
+
+    def _step_cb(s: int, loss: float) -> None:
+        if checkpoint_dir is not None and save_every_n > 0 and s % save_every_n == 0:
+            save_checkpoint(
+                checkpoint_dir / f"step_{s}.pt",
+                model, optimizer, s, lora_signature=ckpt_sig,
+            )
+
+    # --- end W16 block ---
+
+    effective_num_steps = num_steps - start_step
+    if effective_num_steps <= 0:
+        raise ValueError(
+            f"effective_num_steps={effective_num_steps} (num_steps={num_steps}, "
+            f"start_step={start_step}); checkpoint step already at/over target. "
+            f"Raise --steps or omit --resume-from."
+        )
+    print(f"[TRAIN] start_step={start_step} target={num_steps} "
+          f"remaining={effective_num_steps}")
+
     if batch_fn is not None:
-        batches = (batch_fn(i) for i in range(num_steps))
+        batches = (batch_fn(i) for i in range(effective_num_steps))
     else:
         def batch_iter():
             n = len(ds)
@@ -124,10 +204,21 @@ def run_training(
         batches = batch_iter()
 
     losses = run_training_loop(
-        model, batches, num_steps=num_steps,
+        model, batches, num_steps=effective_num_steps,
         strategy=strategy, optimizer=optimizer, loss_fn=loss_fn,
+        step_callback=_step_cb,
     )
-    for step, loss in enumerate(losses):
-        if (step + 1) % log_every_n == 0 or step == len(losses) - 1:
-            logger(step + 1, loss)
+
+    if checkpoint_dir is not None:
+        final_step = start_step + effective_num_steps
+        save_checkpoint(
+            checkpoint_dir / f"step_{final_step}.pt",
+            model, optimizer, final_step, lora_signature=ckpt_sig,
+        )
+        print(f"[TRAIN] saved final checkpoint step={final_step}")
+
+    for i, loss in enumerate(losses):
+        actual_step = start_step + i + 1
+        if actual_step % log_every_n == 0 or i == len(losses) - 1:
+            logger(actual_step, loss)
     return losses
