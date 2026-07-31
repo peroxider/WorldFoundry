@@ -15,6 +15,7 @@ class _PassthroughStrategy(DistributedStrategy):
 
     def __init__(self):
         self.backward_calls: list[float] = []
+        self.step_calls: list[int] = []
 
     def wrap(self, model: nn.Module) -> nn.Module:
         return model
@@ -24,6 +25,7 @@ class _PassthroughStrategy(DistributedStrategy):
         loss.backward()
 
     def step(self, optimizer) -> None:
+        self.step_calls.append(len(optimizer.param_groups))
         optimizer.step()
 
 
@@ -87,3 +89,18 @@ def test_run_training_loop_rejects_zero_or_negative_num_steps():
     with pytest.raises(ValueError, match="num_steps must be positive"):
         run_training_loop(model, iter([_fake_batch()]), num_steps=0,
                           strategy=strategy, optimizer=optimizer)
+
+
+def test_run_training_step_calls_strategy_step_once_per_step():
+    """W15 wiring: loop routes optimizer.step through strategy.step."""
+    model = nn.Linear(4, 1)
+    optimizer = SGD(model.parameters(), lr=0.01)
+    strategy = _PassthroughStrategy()
+    batch = {"x": torch.randn(2, 4), "y": torch.randn(2, 1)}
+
+    def loss_fn(m, b):
+        return (m(b["x"]) - b["y"]).pow(2).sum()
+
+    for _ in range(3):
+        run_training_step(model, batch, strategy, optimizer, loss_fn=loss_fn)
+    assert len(strategy.step_calls) == 3

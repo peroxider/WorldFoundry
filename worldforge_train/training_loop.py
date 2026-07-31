@@ -66,7 +66,6 @@ def run_training_step(
     if loss_fn is None:
         loss_fn = default_loss_fn
 
-    optimizer.zero_grad()
     loss = loss_fn(model, batch)
     if not loss.requires_grad:
         raise RuntimeError(
@@ -74,7 +73,7 @@ def run_training_step(
             f"check that the model parameters have requires_grad=True."
         )
     strategy.backward(loss)
-    optimizer.step()
+    strategy.step(optimizer)
     return float(loss.detach().item())
 
 

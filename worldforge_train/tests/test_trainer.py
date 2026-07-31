@@ -17,6 +17,7 @@ class _PassthroughStrategy(DistributedStrategy):
 
     def __init__(self):
         self.backward_calls: list[float] = []
+        self.step_calls: list[int] = []
         self.wrapped_models: list = []
 
     def wrap(self, model):
@@ -28,6 +29,7 @@ class _PassthroughStrategy(DistributedStrategy):
         loss.backward()
 
     def step(self, optimizer):
+        self.step_calls.append(len(optimizer.param_groups))
         optimizer.step()
 
 
