@@ -14,14 +14,14 @@
 
 | Metric | Target | Measured |
 |--------|--------|----------|
-| OM size vs bf16 baseline | ~50% compression | TBD |
-| Downstream feature cosine >= 0.98 | yes | TBD |
+| OM size vs bf16 baseline | ~50% compression | [W17-MEASURED: OM size] |
+| Downstream feature cosine >= 0.98 | yes | [W17-MEASURED: aggregate cosine] |
 | Calibration wall time | <10 min on 8xNPU | TBD |
-| Quantize wall time | <30 min on 8xNPU | TBD |
+| Quantize wall time | <30 min on 8xNPU | [W17-MEASURED: quantize wall time] |
 
 ## Verdict
 
-- **GO** if cosine >= 0.98 and OM compression ~50%
+- **[W17-MEASURED: GO/NO-GO verdict]** (cosine ≥ 0.98 → GO; < 0.98 → NO-GO)
 - **NO-GO** otherwise (deferred to future sub-project)
 
 ## Artifacts
