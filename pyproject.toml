@@ -32,6 +32,7 @@ inf = ["vllm==0.18.0", "vllm-ascend==0.18.0"]
 rl = ["verl==0.5.0"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 quant = ["msmodelslim==26.1.0"]
+video = ["av==14.0.0", "decord==0.6.0"]
 
 [tool.setuptools.packages.find]
 include = ["worldforge_*"]
