@@ -29,6 +29,89 @@ def test_wrap_calls_fully_sharded_data_parallel(monkeypatch):
     assert captured["kwargs"].get("use_orig_params") is True
 
 
+def test_multi_rank_wrap_passes_sharding_and_mixed_precision(monkeypatch):
+    """FSDP kwargs include the requested sharding strategy and mixed precision."""
+    pytest.importorskip("torch.distributed.fsdp")
+    import torch.distributed as dist
+    from worldforge_train.parallel.fsdp import FSDPStrategy
+
+    captured = {}
+
+    class FakeFSDPModule:
+        def __init__(self, model, **kwargs):
+            captured["kwargs"] = kwargs
+
+    from torch.distributed import fsdp as torch_fsdp
+    monkeypatch.setattr(torch_fsdp, "FullyShardedDataParallel", FakeFSDPModule)
+
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+
+    FSDPStrategy(sharding_strategy="HYBRID_SHARD", mixed_precision="bf16").wrap(
+        torch.nn.Linear(4, 4)
+    )
+    kwargs = captured["kwargs"]
+    assert kwargs["use_orig_params"] is True
+    assert kwargs["sharding_strategy"].name == "HYBRID_SHARD"
+    assert kwargs["mixed_precision"].param_dtype == torch.bfloat16
+
+
+def test_unknown_sharding_strategy_raises(monkeypatch):
+    pytest.importorskip("torch.distributed.fsdp")
+    import torch.distributed as dist
+    from worldforge_train.parallel.fsdp import FSDPStrategy
+
+    from torch.distributed import fsdp as torch_fsdp
+    monkeypatch.setattr(torch_fsdp, "FullyShardedDataParallel", lambda *a, **k: a[0])
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+
+    with pytest.raises(ValueError, match="unknown sharding_strategy"):
+        FSDPStrategy(sharding_strategy="INVALID").wrap(torch.nn.Linear(4, 4))
+
+
+def test_unknown_mixed_precision_raises(monkeypatch):
+    pytest.importorskip("torch.distributed.fsdp")
+    import torch.distributed as dist
+    from worldforge_train.parallel.fsdp import FSDPStrategy
+
+    from torch.distributed import fsdp as torch_fsdp
+    monkeypatch.setattr(torch_fsdp, "FullyShardedDataParallel", lambda *a, **k: a[0])
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+
+    with pytest.raises(ValueError, match="unknown mixed_precision"):
+        FSDPStrategy(mixed_precision="int8").wrap(torch.nn.Linear(4, 4))
+
+
+def test_fsdp_wrapped_model_skips_manual_allreduce(monkeypatch):
+    """When wrap() produced an FSDP module, step() must NOT manually all_reduce."""
+    pytest.importorskip("torch.distributed.fsdp")
+    import torch.distributed as dist
+    from worldforge_train.parallel.fsdp import FSDPStrategy
+
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+    all_reduce_calls = []
+    monkeypatch.setattr(dist, "all_reduce", lambda *a, **k: all_reduce_calls.append(True))
+
+    strategy = FSDPStrategy()
+    # Pretend the wrapped model is an FSDP instance (true FSDP requires a GPU/NPU
+    # accelerator, so we stub the type check instead of constructing FSDP on CPU).
+    strategy._wrapped = torch.nn.Linear(4, 4)
+    monkeypatch.setattr(FSDPStrategy, "_is_fsdp_module", staticmethod(lambda *_args: True))
+
+    p = torch.nn.Parameter(torch.ones(1))
+    p.grad = torch.ones(1)
+    class FakeOpt:
+        param_groups = [{"params": [p]}]
+        def step(self): pass
+        def zero_grad(self): pass
+
+    strategy.step(FakeOpt())
+    assert not all_reduce_calls, "manual all_reduce must be skipped for FSDP-wrapped models"
+
+
 def test_step_all_reduces_and_steps(monkeypatch):
     """step() all-reduces gradients before optimizer.step().
 
@@ -90,3 +173,41 @@ def test_equivalent_to_phase1_trainer(monkeypatch):
     b_params = list(model_b.parameters())
     for pa, pb in zip(a_params, b_params):
         assert torch.allclose(pa, pb, atol=1e-6), "FSDPStrategy diverges from Phase-1 trainer"
+
+
+def test_activation_checkpointing_invokes_torch_helper(monkeypatch):
+    """activation_checkpointing=True calls PyTorch's apply_activation_checkpointing."""
+    pytest.importorskip("torch.distributed.fsdp")
+    import torch.distributed as dist
+    from worldforge_train.parallel.fsdp import FSDPStrategy
+
+    captured = {}
+
+    class FakeFSDPModule:
+        def __init__(self, model, **kwargs):
+            captured["wrapped"] = model
+
+    from torch.distributed import fsdp as torch_fsdp
+    monkeypatch.setattr(torch_fsdp, "FullyShardedDataParallel", FakeFSDPModule)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+
+    def fake_apply(model, checkpoint_wrapper_fn, check_fn):
+        captured["apply_called"] = True
+        captured["model"] = model
+        captured["check_fn"] = check_fn
+
+    monkeypatch.setattr(
+        "torch.distributed.algorithms._checkpoint.checkpoint_wrapper.apply_activation_checkpointing",
+        fake_apply,
+    )
+
+    model = torch.nn.TransformerEncoderLayer(
+        d_model=16, nhead=2, dim_feedforward=32, batch_first=True
+    )
+    FSDPStrategy(activation_checkpointing=True).wrap(model)
+
+    assert captured.get("apply_called")
+    assert captured["model"] is not None
+    # The heuristic check_fn should identify transformer encoder layers.
+    assert captured["check_fn"](model) is True

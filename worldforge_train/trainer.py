@@ -144,13 +144,6 @@ def run_training(
     optimizer = _build_optimizer(model, lr=float(cfg["training"]["lr"]))
 
     # --- W16 Checkpoint orchestration ---
-    import torch.distributed as _dist
-    if checkpoint_dir is not None and _dist.is_initialized() and _dist.get_world_size() > 1:
-        raise NotImplementedError(
-            "checkpoint save on multi-rank FSDP is deferred to Phase-2 W9+ "
-            "(FSDP state dict requires FullStateDictConfig + rank-0-only save). "
-            "Use single-rank or set checkpoint_dir=None on multi-rank."
-        )
     if save_every_n > 0 and checkpoint_dir is None:
         raise ValueError(
             f"save_every_n={save_every_n} but checkpoint_dir is None. "

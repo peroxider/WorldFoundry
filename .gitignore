@@ -17,3 +17,4 @@ tb_logs/
 output/
 checkpoints/
 om_cache/
+/.idea/

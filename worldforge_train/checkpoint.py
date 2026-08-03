@@ -67,13 +67,42 @@ _REQUIRED_KEYS: tuple[str, ...] = (
 )
 
 
+def _is_fsdp_module(model: nn.Module) -> bool:
+    """Return True if model is wrapped by FSDP."""
+    try:
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+    except Exception:  # pragma: no cover -- fsdp unavailable on very old torch
+        return False
+    return isinstance(model, FSDP)
+
+
 def _trainable_state_dict(model: nn.Module) -> dict[str, torch.Tensor]:
     """Filter state_dict() to params with requires_grad=True.
 
     For LoRA: keeps only LoRA adapter params (~10MB for ViT-L).
     For full fine-tune: keeps everything (~2.4GB for ViT-L bf16).
+
+    When ``model`` is FSDP-wrapped, this uses FULL_STATE_DICT so the resulting
+    checkpoint is loadable on both single-rank and multi-rank deployments.
     """
     trainable_names = {n for n, p in model.named_parameters() if p.requires_grad}
+
+    if _is_fsdp_module(model):
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        from torch.distributed.fsdp.api import FullStateDictConfig, StateDictType
+
+        with FSDP.state_dict_type(
+            model,
+            StateDictType.FULL_STATE_DICT,
+            FullStateDictConfig(offload_to_cpu=True, rank0_only=True),
+        ):
+            state_dict = model.state_dict()
+        return {
+            k: v.detach().cpu().clone()
+            for k, v in state_dict.items()
+            if k in trainable_names
+        }
+
     return {
         k: v.detach().cpu().clone()
         for k, v in model.state_dict().items()
@@ -99,18 +128,36 @@ def save_checkpoint(
 ) -> Path:
     """Save trainable model state + optimizer state + RNG + step to .pt.
 
-    Returns the resolved path. Parent directories are created.
+    On multi-rank FSDP only rank 0 performs the disk write; other ranks return
+    the resolved path without writing. Parent directories are created.
+
+    Returns the resolved path.
     """
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
+
+    import torch.distributed as dist
+    world_size = dist.get_world_size() if dist.is_initialized() else 1
+    rank = dist.get_rank() if dist.is_initialized() else 0
+
+    if _is_fsdp_module(model):
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        optim_state = FSDP.optim_state_dict(model, optimizer)
+    else:
+        optim_state = optimizer.state_dict()
+
     payload = {
         "step": int(step),
         "model_state": _trainable_state_dict(model),
-        "optimizer_state": optimizer.state_dict(),
+        "optimizer_state": optim_state,
         "rng_state_torch": torch.get_rng_state(),
         "rng_state_numpy": np.random.get_state(),
         "lora_signature": lora_signature.to_dict() if lora_signature else None,
     }
+
+    if world_size > 1 and _is_fsdp_module(model) and rank != 0:
+        return path
+
+    path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_save(payload, path)
     return path
 
@@ -144,18 +191,36 @@ def load_checkpoint(
         raise KeyError(f"checkpoint {path} missing keys: {missing}")
 
     model_state: dict[str, torch.Tensor] = payload["model_state"]
-    named_params = dict(model.named_parameters())
-    for k, v in model_state.items():
-        if k not in named_params:
+
+    if _is_fsdp_module(model):
+        from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+        from torch.distributed.fsdp.api import StateDictType
+
+        with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT):
+            missing, unexpected = model.load_state_dict(model_state, strict=False)
+        if missing:
             raise RuntimeError(
-                f"checkpoint expects param {k!r} not in current model; "
+                f"FSDP checkpoint missing params: {missing}; "
                 f"likely LoRA config changed since save."
             )
-        with torch.no_grad():
-            param = named_params[k]
-            param.copy_(v.to(param.device))
 
-    optimizer.load_state_dict(payload["optimizer_state"])
+        optim_state = FSDP.optim_state_dict_to_load(
+            model, optimizer, payload["optimizer_state"]
+        )
+        optimizer.load_state_dict(optim_state)
+    else:
+        named_params = dict(model.named_parameters())
+        for k, v in model_state.items():
+            if k not in named_params:
+                raise RuntimeError(
+                    f"checkpoint expects param {k!r} not in current model; "
+                    f"likely LoRA config changed since save."
+                )
+            with torch.no_grad():
+                param = named_params[k]
+                param.copy_(v.to(param.device))
+
+        optimizer.load_state_dict(payload["optimizer_state"])
     torch.set_rng_state(payload["rng_state_torch"])
     np.random.set_state(payload["rng_state_numpy"])
 
