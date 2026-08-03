@@ -32,6 +32,12 @@ dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 quant = ["msmodelslim==26.1.0"]
 video = ["av==14.0.0", "decord==0.6.0"]
 
+[project.entry-points."vllm.platform_plugins"]
+worldforge_inf = "worldforge_inf._vllm_ascend_plugin:register"
+
+[project.entry-points."vllm.general_plugins"]
+vjepa2_model = "worldforge_inf._vllm_ascend_plugin:register_model"
+
 [tool.setuptools.packages.find]
 include = ["worldforge_*"]
 
