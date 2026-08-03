@@ -39,7 +39,7 @@ def _make_batch():
     }
 
 
-def test_bridge_to_train_end_to_end(tmp_path):
+def test_bridge_to_train_end_to_end(tmp_path, monkeypatch):
     src = _make_tiny_vjepa2_and_save(tmp_path)
     out_dir = tmp_path / "quant"
     cfg = {
@@ -59,11 +59,13 @@ def test_bridge_to_train_end_to_end(tmp_path):
 
     # Stub out _build_dataset — the trainer calls it before our batch_fn is used,
     # but we provide batch_fn so the dataset is never iterated. The stub returns
-    # a minimal duck-typed object with len() > 0.
+    # a minimal duck-typed object with len() > 0. monkeypatch (not direct
+    # assignment) so the real _build_dataset is restored after this test;
+    # test_train_cli.py relies on it raising FileNotFoundError.
     class _StubDS:
         def __len__(self):
             return 1
-    _trainer_mod._build_dataset = lambda _cfg: _StubDS()
+    monkeypatch.setattr(_trainer_mod, "_build_dataset", lambda _cfg: _StubDS())
 
     base_model = transformers.AutoModel.from_pretrained(cfg["model"]["hf_repo"])
     losses = run_training(
