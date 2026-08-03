@@ -55,6 +55,9 @@ def main() -> int:
     with args.config.open() as f:
         cfg = yaml.safe_load(f)
 
+    from worldforge_train.quantize_bridge import maybe_quantize_first
+    cfg = maybe_quantize_first(cfg)
+
     if args.parallel == "ddp":
         from worldforge_train.parallel.ddp import cleanup_ddp, setup_ddp
         world_size, local_rank, global_rank = setup_ddp()
