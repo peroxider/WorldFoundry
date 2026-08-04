@@ -1,4 +1,4 @@
-# WorldFoundry Phase-2 W9-W10 MindSpeed-MM 切换设计
+# WorldForge Phase-2 W9-W10 MindSpeed-MM 切换设计
 
 **作者**：MiniMax-M3（与 chad 共同设计）
 **日期**：2026-07-28
@@ -11,7 +11,7 @@
 ## 1. 目标与边界
 
 ### 1.1 一句话目标
-通过"评估 + 集成"两阶段，决定是否将 `worldfoundry-train` 的 DP-8 训练从 FSDP 切换到 MindSpeed-MM（TP-1 + DP-8 + ZeRO-1 + Activation Checkpointing），并产出可审计的决策报告。
+通过"评估 + 集成"两阶段，决定是否将 `worldforge-train` 的 DP-8 训练从 FSDP 切换到 MindSpeed-MM（TP-1 + DP-8 + ZeRO-1 + Activation Checkpointing），并产出可审计的决策报告。
 
 ### 1.2 W9 vs W10 职责切分
 
@@ -35,7 +35,7 @@
 ### 2.1 文件结构
 
 ```
-worldfoundry_train/
+worldforge_train/
 ├── parallel/                      ← 新增
 │   ├── __init__.py
 │   ├── strategy.py                # DistributedStrategy 接口 + select_strategy()
@@ -47,9 +47,9 @@ scripts/
 ├── w9_eval.sh                     # W9 端到端评估脚本（生成 W9_EVAL_REPORT.md）
 └── (现有 phase1_smoke.sh / phase1_ac_repro.sh 不动)
 
-worldfoundry_train/bench/            # 新增（评估子包）
+worldforge_train/bench/            # 新增（评估子包）
 ├── __init__.py
-├── __main__.py                    # python -m worldfoundry_train.bench 入口
+├── __main__.py                    # python -m worldforge_train.bench 入口
 ├── runner.py                      # 单 profile 200 步跑批 + warmup
 └── compare.py                     # 两份 JSON 对比 + 写 W9_EVAL_REPORT.md
 
@@ -84,11 +84,11 @@ class DistributedStrategy(ABC):
 ```python
 def select_strategy(profile: str) -> DistributedStrategy:
     if profile == "train":
-        from worldfoundry_train.parallel.fsdp import FSDPStrategy
+        from worldforge_train.parallel.fsdp import FSDPStrategy
         return FSDPStrategy()
     if profile == "train-mmspeed":
         try:
-            from worldfoundry_train.parallel.mindspeed import MMStrategy
+            from worldforge_train.parallel.mindspeed import MMStrategy
         except ImportError as exc:
             raise ImportError(
                 "MindSpeed-MM not installed. Run: pip install -e '.[mindspeed]'"
@@ -99,7 +99,7 @@ def select_strategy(profile: str) -> DistributedStrategy:
 
 ### 2.4 与现有 Trainer 的注入点
 
-`worldfoundry_train/train.py` 仅新增一行（Phase-1 T3 已有结构，注入点位置在 `init_distributed()` 之后、`for batch in dataloader` 之前）：
+`worldforge_train/train.py` 仅新增一行（Phase-1 T3 已有结构，注入点位置在 `init_distributed()` 之后、`for batch in dataloader` 之前）：
 
 ```python
 self.strategy = select_strategy(profile=os.environ["WORLDFORGE_PROFILE"])
@@ -145,17 +145,17 @@ self.model = self.strategy.wrap(self.model)
 
 - **入口**：`bash scripts/w9_eval.sh`
 - **行为**：
-  1. `docker run worldfoundry-base:phase1` 启动容器（复用 Phase-1 镜像，pin V-JEPA 2 commit 已就位）
-  2. 运行两次 `python -m worldfoundry_train.bench --profile <p> --steps 200 --warmup 50 --tag <t>`：
+  1. `docker run worldforge-base:phase1` 启动容器（复用 Phase-1 镜像，pin V-JEPA 2 commit 已就位）
+  2. 运行两次 `python -m worldforge_train.bench --profile <p> --steps 200 --warmup 50 --tag <t>`：
      - `train` → tag `fsdp-baseline` → 写 `bench_results/fsdp-baseline.json`
      - `train-mmspeed` → tag `mindspeed-eval` → 写 `bench_results/mindspeed-eval.json`
-  3. 运行 `python -m worldfoundry_train.bench.compare fsdp-baseline.json mindspeed-eval.json` → 生成 `docs/superpowers/specs/W9_EVAL_REPORT.md`
+  3. 运行 `python -m worldforge_train.bench.compare fsdp-baseline.json mindspeed-eval.json` → 生成 `docs/superpowers/specs/W9_EVAL_REPORT.md`
 - **错误处理**：
   - MM 未安装 → 报告 "GO 项 1: FAIL — mindspeed-mm not installed"，不中断脚本
   - 任一 profile bench 命令退出码非 0 → 标记对应 GO 项 FAIL，stderr 末尾 50 行写入报告
 - **失败路径**：4 项 GO 项全 FAIL 或部分 FAIL → 报告结论 = NO-GO；任一项 PASS → 报告结论 = GO
 
-### 3.5 `worldfoundry_train/bench/runner.py`（单 profile 200 步跑批）
+### 3.5 `worldforge_train/bench/runner.py`（单 profile 200 步跑批）
 
 - **职责**：给定 profile + tag，跑 200 步（warmup 50 + measurement 150），输出 JSON 报告
 - **JSON 字段**：
@@ -172,7 +172,7 @@ self.model = self.strategy.wrap(self.model)
   ```
 - **clips_per_s 定义**：单节点吞吐 = measurement_steps × batch_size × 视频片段数 / measurement 阶段总秒数。固定 batch_size=1、clip_len=16 帧。
 
-### 3.6 `worldfoundry_train/bench/compare.py`（两 JSON 对比 + 写报告）
+### 3.6 `worldforge_train/bench/compare.py`（两 JSON 对比 + 写报告）
 
 - **输入**：两个 JSON 路径（baseline, eval）
 - **算法**：
@@ -220,7 +220,7 @@ for batch in dataloader:           # Phase-1 T5 已实现
 ```
 bash scripts/w9_eval.sh
   │
-  ├── docker run worldfoundry-base:phase1   # 复用 Phase-1 镜像（已 pin V-JEPA 2 commit）
+  ├── docker run worldforge-base:phase1   # 复用 Phase-1 镜像（已 pin V-JEPA 2 commit）
   │
   ├── bench --profile train --tag fsdp-baseline
   │     → bench_results/fsdp-baseline.json
@@ -235,7 +235,7 @@ bash scripts/w9_eval.sh
 ### 4.3 W10 集成数据流（仅 GO 路径）
 
 ```
-WORLDFORGE_PROFILE=train-mmspeed python -m worldfoundry_train.train ...
+WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
   → init_distributed()
   → select_strategy("train-mmspeed") → MMStrategy()
   → strategy.wrap(model) → MM 并行化后的 model
@@ -299,7 +299,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldfoundry_train.train ...
 | 风险 | 等级 | 缓解 |
 |------|------|------|
 | MindSpeed-MM 不支持 V-JEPA 2 ViT-only（spec §6.5 已点名） | 高 | W9 GO/NO-GO 门 4 项条件显式检测；NO-GO 不集成 |
-| W9 评估脚本在 NPU 容器内运行失败（driver/HCCL 问题） | 中 | 复用 Phase-1 `worldfoundry-base:phase1` 镜像（已验证）；失败时退出码非 0 → 报告写 "无法评估：容器启动失败"，W10 推迟 |
+| W9 评估脚本在 NPU 容器内运行失败（driver/HCCL 问题） | 中 | 复用 Phase-1 `worldforge-base:phase1` 镜像（已验证）；失败时退出码非 0 → 报告写 "无法评估：容器启动失败"，W10 推迟 |
 | FSDPStrategy 与 Phase-1 trainer 直接调用 FSDP 行为不一致（导致 W9 baseline 数字不可比） | 中 | FSDPStrategy 实现须与 Phase-1 T3 完全等价；引入对比单元测试 `test_fsdp_strategy_equivalent_to_phase1_trainer`（mock 同一输入验证两路径 loss 数值相同） |
 | MM 版本与 CANN 8.5.1 + torch_npu 2.9.0 矩阵错位（spec §2 锁定） | 中 | `[mindspeed]` extra 在 `pyproject.toml` 锁版本；与 Phase-1 同样的 G2 锁版本纪律 |
 | MM 集成后 W10 smoke 失败（吞吐达标但 loss 不收敛） | 低 | W10 smoke 复用 Phase-1 smoke 同样的 loss 单调下降断言 |
@@ -310,16 +310,16 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldfoundry_train.train ...
 
 ### 8.1 依赖
 
-- **Phase-1 已就位**：`worldfoundry-train`（T1-T3）、WorldLogger、DataLoader、LoRA wrapper
+- **Phase-1 已就位**：`worldforge-train`（T1-T3）、WorldLogger、DataLoader、LoRA wrapper
 - **新增依赖**（`pyproject.toml` 的 `[mindspeed]` extra）：
   - `mindspeed-mm` 精确版本**延后到 W9 评估确定**：W9 评估脚本在容器内跑时记录 MM 实际工作的版本，写入 `W9_EVAL_REPORT.md`，再据此 pin 到 `pyproject.toml` 的 `[mindspeed]` extra。这是设计而非占位——Phase-1 G2 锁版本纪律要求，但我们不能 pin 一个未验证兼容性的版本。
-- **Docker**：复用 `worldfoundry-base:phase1` 镜像；不新增镜像层
+- **Docker**：复用 `worldforge-base:phase1` 镜像；不新增镜像层
 
 ### 8.2 交付物
 
-1. `worldfoundry_train/parallel/` 3 个文件
-2. `worldfoundry_train/train.py` 一行注入
-3. `worldfoundry_train/bench/` 子包（runner + compare）
+1. `worldforge_train/parallel/` 3 个文件
+2. `worldforge_train/train.py` 一行注入
+3. `worldforge_train/bench/` 子包（runner + compare）
 4. `scripts/w9_eval.sh`
 5. `docs/superpowers/specs/W9_EVAL_REPORT.md`（GO 或 NO-GO 均产出）
 6. `pyproject.toml` 新增 `[mindspeed]` extra

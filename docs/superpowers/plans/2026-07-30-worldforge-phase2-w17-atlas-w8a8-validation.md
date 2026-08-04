@@ -23,11 +23,11 @@ This plan has two phases:
 
 W11-W12 shipped the CPU-runnable quantization stack end-to-end on `master`:
 
-- `worldfoundry_inf/compile/quantize.py` — facade dispatching by `quant_type` (`w8a8` supported, `w4a8` registered as deferred).
-- `worldfoundry_inf/compile/quantize_backends/msmodelslim.py` — `W8A8Backend` wrapping `msmodelslim.MSModelSlim(...)` with import-guard so the module stays importable on x86 dev/CI hosts.
-- `worldfoundry_inf/data/calib_videomix22m.py` — fixed 512-sample VideoMix22M loader (seed=42).
-- `worldfoundry_inf/eval/quant_eval.py` — `cosine_similarity(baseline, quantized, threshold=0.98, n_samples=100, seed=123)` gate + CLI exit 0/1.
-- `worldfoundry_inf/tests/test_quant_integration_npu.py` — NPU-gated E2E test (default skip via `WORLDFORGE_RUN_QUANT_E2E`, uses `facebook/dino-vits8` surrogate).
+- `worldforge_inf/compile/quantize.py` — facade dispatching by `quant_type` (`w8a8` supported, `w4a8` registered as deferred).
+- `worldforge_inf/compile/quantize_backends/msmodelslim.py` — `W8A8Backend` wrapping `msmodelslim.MSModelSlim(...)` with import-guard so the module stays importable on x86 dev/CI hosts.
+- `worldforge_inf/data/calib_videomix22m.py` — fixed 512-sample VideoMix22M loader (seed=42).
+- `worldforge_inf/eval/quant_eval.py` — `cosine_similarity(baseline, quantized, threshold=0.98, n_samples=100, seed=123)` gate + CLI exit 0/1.
+- `worldforge_inf/tests/test_quant_integration_npu.py` — NPU-gated E2E test (default skip via `WORLDFORGE_RUN_QUANT_E2E`, uses `facebook/dino-vits8` surrogate).
 - `docs/superpowers/specs/W11_W12_QUANT_REPORT.md` — report template with all metrics TBD.
 
 **W17 closes the gap between "the code is shippable" and "we have evidence it works on production hardware".** Without W17, we have no proof that msModelSlim produces an OM whose downstream features stay within cosine ≥ 0.98 on real Atlas silicon against the real V-JEPA 2 vitl-1.2b (1.2B params, bf16 baseline). The 8×NPU run is the spec §9 row #6 acceptance gate that has been deferred since the W11-W12 merge.
@@ -62,9 +62,9 @@ scripts/w17_preflight.py (new)
 scripts/w17_atlas_w8a8_eval.sh (new)
     |
     +-- preflight (must pass)
-    +-- step 1: python -m worldfoundry_inf.compile.quantize quantize_model(...) →
+    +-- step 1: python -m worldforge_inf.compile.quantize quantize_model(...) →
     |           models/vjepa2-vitl-1.2b-w8a8/  (writes quant_meta.json + *.om)
-    +-- step 2: python -m worldfoundry_inf.eval.quant_eval cosine_similarity(...) →
+    +-- step 2: python -m worldforge_inf.eval.quant_eval cosine_similarity(...) →
     |           bench_results/w17_w8a8_eval.json  (aggregate + per-sample cosines)
     +-- step 3: scripts/w17_populate_report.py → populates
     |           docs/superpowers/specs/W11_W12_QUANT_REPORT.md
@@ -75,7 +75,7 @@ scripts/w17_populate_report.py (new)
     +-- substitutes bracketed [W17-MEASURED: ...] markers in the template
     +-- writes the final report with GO/NO-GO verdict
 
-docs/superpowers/plans/2026-07-30-worldfoundry-phase2-w17-atlas-w8a8-validation.md (new)
+docs/superpowers/plans/2026-07-30-worldforge-phase2-w17-atlas-w8a8-validation.md (new)
     |
     +-- mirror of this plan
 
@@ -85,16 +85,16 @@ docs/superpowers/specs/W11_W12_QUANT_REPORT.md (modified, template)
     |   so the populate script can substitute measured values cleanly
 ```
 
-The existing `worldfoundry_inf/compile/quantize.py` + `quantize_backends/msmodelslim.py` + `eval/quant_eval.py` are NOT modified. W17 is verification + reporting, not new features.
+The existing `worldforge_inf/compile/quantize.py` + `quantize_backends/msmodelslim.py` + `eval/quant_eval.py` are NOT modified. W17 is verification + reporting, not new features.
 
 ## Global Constraints
 
 - **G1**: Atlas 800 A2 / 910B × NPU (single is fine for the cosine gate); CANN 8.5.1 + torch_npu 2.9.0 (already pinned in `pyproject.toml`). NPU driver accessible at `/usr/local/Ascend/driver`.
 - **G2**: `msmodelslim==26.1.0` already pinned in `[quant]` extra (W11-W12 T1). No new deps.
 - **G3 (W17)**:
-  - **Allowed to create**: `scripts/w17_preflight.py`, `scripts/w17_atlas_w8a8_eval.sh`, `scripts/w17_populate_report.py`, `worldfoundry_inf/tests/test_w17_preflight.py`, `worldfoundry_inf/tests/test_w17_populate_report.py`, `docs/superpowers/plans/2026-07-30-worldfoundry-phase2-w17-atlas-w8a8-validation.md`.
+  - **Allowed to create**: `scripts/w17_preflight.py`, `scripts/w17_atlas_w8a8_eval.sh`, `scripts/w17_populate_report.py`, `worldforge_inf/tests/test_w17_preflight.py`, `worldforge_inf/tests/test_w17_populate_report.py`, `docs/superpowers/plans/2026-07-30-worldforge-phase2-w17-atlas-w8a8-validation.md`.
   - **Allowed to modify**: `docs/superpowers/specs/W11_W12_QUANT_REPORT.md` (add field markers only), `.superpowers/sdd/progress.md` (W17 launch note).
-  - **NOT TOUCHED**: `worldfoundry_inf/compile/*`, `worldfoundry_inf/data/*`, `worldfoundry_inf/eval/*`, `pyproject.toml`, the existing `test_quant_*` suite, anything in `worldfoundry_train/*`, `worldfoundry_common/*`.
+  - **NOT TOUCHED**: `worldforge_inf/compile/*`, `worldforge_inf/data/*`, `worldforge_inf/eval/*`, `pyproject.toml`, the existing `test_quant_*` suite, anything in `worldforge_train/*`, `worldforge_common/*`.
 - **G4**: No silent failures. Pre-flight exits non-zero with actionable hint on any missing dep; shell driver captures per-step stderr to log; final report records actual measured values (not "TBD").
 - **G5**: Calibration seed=42, eval seed=123 — already fixed in `calib_videomix22m.py` and `quant_eval.py`.
 - **G6**: Single source of truth for dispatch is `quantize_backends/__init__.py:get_backend(quant_type)`. W17 does not introduce new dispatch paths.
@@ -104,11 +104,11 @@ The existing `worldfoundry_inf/compile/quantize.py` + `quantize_backends/msmodel
 
 ## Critical Files (read before implementation)
 
-- `worldfoundry_inf/compile/quantize.py:28-69` — facade; what `quantize_model(...)` does on success and failure.
-- `worldfoundry_inf/compile/quantize_backends/msmodelslim.py:81-114` — what the W8A8 backend actually runs (msModelSlim call + sidecar write).
-- `worldfoundry_inf/eval/quant_eval.py:33-95` — `cosine_similarity` signature + threshold logic + report shape.
-- `worldfoundry_inf/data/calib_videomix22m.py:21-49` — loader signature + yield shape.
-- `worldfoundry_inf/tests/test_quant_integration_npu.py:24-45` — NPU-gated integration test pattern (template for pre-flight).
+- `worldforge_inf/compile/quantize.py:28-69` — facade; what `quantize_model(...)` does on success and failure.
+- `worldforge_inf/compile/quantize_backends/msmodelslim.py:81-114` — what the W8A8 backend actually runs (msModelSlim call + sidecar write).
+- `worldforge_inf/eval/quant_eval.py:33-95` — `cosine_similarity` signature + threshold logic + report shape.
+- `worldforge_inf/data/calib_videomix22m.py:21-49` — loader signature + yield shape.
+- `worldforge_inf/tests/test_quant_integration_npu.py:24-45` — NPU-gated integration test pattern (template for pre-flight).
 - `scripts/w9_eval.sh:1-82` — shell driver pattern: `run_step` helper, Docker NPU device mapping, `|| true` for soft coupling, compare-then-report.
 - `docs/superpowers/specs/W11_W12_QUANT_REPORT.md` — the template to be enriched + populated.
 
@@ -117,10 +117,10 @@ The existing `worldfoundry_inf/compile/quantize.py` + `quantize_backends/msmodel
 ## Task 1 — W17 plan + shell driver + pre-flight check (CPU-doable)
 
 **Files:**
-- Create: `docs/superpowers/plans/2026-07-30-worldfoundry-phase2-w17-atlas-w8a8-validation.md` (this plan, mirrored)
+- Create: `docs/superpowers/plans/2026-07-30-worldforge-phase2-w17-atlas-w8a8-validation.md` (this plan, mirrored)
 - Create: `scripts/w17_preflight.py` (~70 lines)
 - Create: `scripts/w17_atlas_w8a8_eval.sh` (~100 lines, mirrors `w9_eval.sh`)
-- Create: `worldfoundry_inf/tests/test_w17_preflight.py` (~10 CPU tests, monkeypatch-based)
+- Create: `worldforge_inf/tests/test_w17_preflight.py` (~10 CPU tests, monkeypatch-based)
 - Modify: `docs/superpowers/specs/W11_W12_QUANT_REPORT.md` (add explicit `[W17-MEASURED: ...]` field markers)
 - Modify: `.superpowers/sdd/progress.md` (note W17 launch)
 
@@ -166,7 +166,7 @@ def _have_torch_npu() -> tuple[bool, str]:
 
 def _have_msmodelslim() -> tuple[bool, str]:
     if importlib.util.find_spec("msmodelslim") is None:
-        return False, "msmodelslim not installed (pip install worldfoundry[quant])"
+        return False, "msmodelslim not installed (pip install worldforge[quant])"
     return True, ""
 
 
@@ -230,7 +230,7 @@ if __name__ == "__main__":
 # Usage:
 #     bash scripts/w17_atlas_w8a8_eval.sh
 #
-# Runs in worldfoundry-base:phase1 Docker container on Atlas 8x NPU host.
+# Runs in worldforge-base:phase1 Docker container on Atlas 8x NPU host.
 # Produces docs/superpowers/specs/W11_W12_QUANT_REPORT.md populated with
 # measured metrics + GO/NO-GO verdict.
 #
@@ -276,7 +276,7 @@ run_w17() {
 
     # Step 1: W8A8 quantize
     run_step "QUANTIZE: bf16 -> W8A8" "w17-quantize" \
-        python -m worldfoundry_inf.compile.quantize \
+        python -m worldforge_inf.compile.quantize \
             "$MODEL_DIR" "$OUTPUT_DIR" \
             --quant-type w8a8 \
             --calibration-dataset videomix22m-512 || return $?
@@ -286,7 +286,7 @@ run_w17() {
         python -c "
 from pathlib import Path
 import json
-from worldfoundry_inf.eval.quant_eval import cosine_similarity
+from worldforge_inf.eval.quant_eval import cosine_similarity
 report = cosine_similarity(
     baseline_path=Path('$MODEL_DIR'),
     quantized_path=Path('$OUTPUT_DIR'),
@@ -318,7 +318,7 @@ else
         -v "$ROOT:/workspace" -v /data:/data \
         -e WORLDFORGE_QUANT_MODEL="$MODEL_DIR" \
         -e WORLDFORGE_QUANT_OUTPUT="$OUTPUT_DIR" \
-        worldfoundry-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_w17) && run_w17"
+        worldforge-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_w17) && run_w17"
 fi
 
 # Step 3: report populate (separate Python script — see T2)
@@ -333,7 +333,7 @@ echo "==== W17 eval complete; see docs/superpowers/specs/W11_W12_QUANT_REPORT.md
 
 Note: the shell driver calls `scripts/w17_populate_report.py` which is created in Task 2.
 
-### Step 1.4: Write `worldfoundry_inf/tests/test_w17_preflight.py`
+### Step 1.4: Write `worldforge_inf/tests/test_w17_preflight.py`
 
 ```python
 """CPU smoke for scripts/w17_preflight (mock-free, no real NPU).
@@ -385,7 +385,7 @@ def test_preflight_fails_on_missing_torch_npu(w17_preflight, monkeypatch):
 def test_preflight_fails_on_missing_msmodelslim(w17_preflight, monkeypatch):
     monkeypatch.setattr(w17_preflight, "_have_torch_npu", lambda: (True, ""))
     monkeypatch.setattr(w17_preflight, "_have_msmodelslim",
-                        lambda: (False, "pip install worldfoundry[quant]"))
+                        lambda: (False, "pip install worldforge[quant]"))
     monkeypatch.setattr(w17_preflight, "_have_weights", lambda: (True, ""))
     monkeypatch.setattr(w17_preflight, "_have_cann_driver", lambda: (True, ""))
     ok, failures = w17_preflight.preflight()
@@ -477,7 +477,7 @@ def test_main_exits_1_on_failure(w17_preflight, monkeypatch, capsys):
 
 ### Step 1.5: Enrich `W11_W12_QUANT_REPORT.md` template
 
-Edit `/mnt/c/WorkSpace/WorldFoundry/docs/superpowers/specs/W11_W12_QUANT_REPORT.md` to replace TBD placeholders with explicit bracketed field markers like `[W17-MEASURED: OM size vs bf16 baseline]`. This makes the substitute step unambiguous when `scripts/w17_populate_report.py` runs. Specifically:
+Edit `/mnt/c/WorkSpace/WorldForge/docs/superpowers/specs/W11_W12_QUANT_REPORT.md` to replace TBD placeholders with explicit bracketed field markers like `[W17-MEASURED: OM size vs bf16 baseline]`. This makes the substitute step unambiguous when `scripts/w17_populate_report.py` runs. Specifically:
 - Replace `| OM size vs bf16 baseline | ~50% compression | TBD |` row's TBD with `[W17-MEASURED: OM size]`.
 - Replace `| Downstream feature cosine >= 0.98 | yes | TBD |` row's TBD with `[W17-MEASURED: aggregate cosine]`.
 - Replace `| Quantize wall time | <30 min on 8xNPU | TBD |` row's TBD with `[W17-MEASURED: quantize wall time]`.
@@ -487,13 +487,13 @@ Edit `/mnt/c/WorkSpace/WorldFoundry/docs/superpowers/specs/W11_W12_QUANT_REPORT.
 
 ```bash
 git checkout -b phase2/w17-atlas-w8a8-validation
-python3 -m pytest worldfoundry_inf/tests/test_w17_preflight.py -v
+python3 -m pytest worldforge_inf/tests/test_w17_preflight.py -v
 # expected: 10 tests pass
 chmod +x scripts/w17_atlas_w8a8_eval.sh
-git add docs/superpowers/plans/2026-07-30-worldfoundry-phase2-w17-atlas-w8a8-validation.md \
+git add docs/superpowers/plans/2026-07-30-worldforge-phase2-w17-atlas-w8a8-validation.md \
         scripts/w17_preflight.py \
         scripts/w17_atlas_w8a8_eval.sh \
-        worldfoundry_inf/tests/test_w17_preflight.py \
+        worldforge_inf/tests/test_w17_preflight.py \
         docs/superpowers/specs/W11_W12_QUANT_REPORT.md \
         .superpowers/sdd/progress.md
 git commit -m "feat(w17): plan + shell driver + pre-flight check (W17 T1)"
@@ -505,7 +505,7 @@ git commit -m "feat(w17): plan + shell driver + pre-flight check (W17 T1)"
 
 **Files:**
 - Create: `scripts/w17_populate_report.py` (~50 lines)
-- Create: `worldfoundry_inf/tests/test_w17_populate_report.py` (~5 CPU tests)
+- Create: `worldforge_inf/tests/test_w17_populate_report.py` (~5 CPU tests)
 
 **Why:** Step 3 of the shell driver calls this. It substitutes measured values from `quant_meta.json` + `bench_results/w17_w8a8_eval.json` into the enriched template's bracketed field markers, producing the final GO/NO-GO report. Doing this with a Python script (not sed) keeps the substitution logic unit-testable.
 
@@ -707,10 +707,10 @@ def test_compute_om_size_handles_missing_om(populate_module, tmp_path):
 ### Step 2.3: Run tests + commit
 
 ```bash
-python3 -m pytest worldfoundry_inf/tests/test_w17_preflight.py \
-                   worldfoundry_inf/tests/test_w17_populate_report.py -v
+python3 -m pytest worldforge_inf/tests/test_w17_preflight.py \
+                   worldforge_inf/tests/test_w17_populate_report.py -v
 # expected: 10 + 5 = 15 tests pass
-git add scripts/w17_populate_report.py worldfoundry_inf/tests/test_w17_populate_report.py
+git add scripts/w17_populate_report.py worldforge_inf/tests/test_w17_populate_report.py
 git commit -m "feat(w17): populate_report.py + tests (W17 T2)"
 ```
 
@@ -755,7 +755,7 @@ git commit -m "feat(w17): populate_report.py + tests (W17 T2)"
 **Operator steps:**
 
 - [ ] Re-run the shell driver OR run the eval step standalone:
-      `python -c "from pathlib import Path; from worldfoundry_inf.eval.quant_eval import cosine_similarity; r = cosine_similarity(Path('models/vjepa2-vitl-1.2b'), Path('models/vjepa2-vitl-1.2b-w8a8'), threshold=0.98); print(r.aggregate_cosine, r.passed)"`
+      `python -c "from pathlib import Path; from worldforge_inf.eval.quant_eval import cosine_similarity; r = cosine_similarity(Path('models/vjepa2-vitl-1.2b'), Path('models/vjepa2-vitl-1.2b-w8a8'), threshold=0.98); print(r.aggregate_cosine, r.passed)"`
 - [ ] Confirm `bench_results/w17_w8a8_eval.json` is written with `aggregate_cosine`, `per_sample_cosine`, `passed`.
 - [ ] Note: the eval requires loading the quantized model. On NPU, `transformers.AutoModel.from_pretrained(...)` returns a torch NPU model. The cosine eval already runs on whatever device the model is loaded onto; no explicit `.npu()` needed.
 
@@ -765,7 +765,7 @@ git commit -m "feat(w17): populate_report.py + tests (W17 T2)"
 
 **Operator steps:**
 
-- [ ] `WORLDFORGE_RUN_QUANT_E2E=1 WORLDFORGE_QUANT_TEST_MODEL=models/vjepa2-vitl-1.2b python -m pytest worldfoundry_inf/tests/test_quant_integration_npu.py -v`
+- [ ] `WORLDFORGE_RUN_QUANT_E2E=1 WORLDFORGE_QUANT_TEST_MODEL=models/vjepa2-vitl-1.2b python -m pytest worldforge_inf/tests/test_quant_integration_npu.py -v`
 - [ ] Confirm `test_w8a8_quantization_end_to_end` passes with `cosine >= 0.95` (the test uses a more permissive threshold; production target is 0.98 from the report).
 
 ---
@@ -817,7 +817,7 @@ git commit -m "feat(w17): populate_report.py + tests (W17 T2)"
 | Failure mode | Behavior | Caught by |
 |---|---|---|
 | `torch_npu` not installed | preflight exits 1 with `pip install torch_npu==2.9.0` | `test_preflight_fails_on_missing_torch_npu` |
-| `msmodelslim` not installed | preflight exits 1 with `pip install worldfoundry[quant]` | `test_preflight_fails_on_missing_msmodelslim` |
+| `msmodelslim` not installed | preflight exits 1 with `pip install worldforge[quant]` | `test_preflight_fails_on_missing_msmodelslim` |
 | V-JEPA 2 weights missing | preflight exits 1 with `huggingface-cli download ...` | `test_preflight_fails_on_missing_weights_dir` |
 | CANN driver not mounted | preflight exits 1 | `test_preflight_fails_on_missing_cann_driver` |
 | Multiple missing deps | preflight lists all of them | `test_preflight_aggregates_multiple_failures` |

@@ -8,14 +8,14 @@
 
 **Tech Stack:** Python 3.11, msModelSlim (Huawei official Ascend quant tool), transformers 4.55.0, torch 2.9.0 + torch_npu 2.9.0, datasets 3.6.0, pytest 8.x.
 
-**Spec:** `docs/superpowers/specs/2026-07-29-worldfoundry-phase2-w11-w12-quantization-design.md`
+**Spec:** `docs/superpowers/specs/2026-07-29-worldforge-phase2-w11-w12-quantization-design.md`
 
 ## Global Constraints
 
 - **G1**: CANN 8.5.1 + torch_npu 2.9.0 locked (already pinned in env) — only matters for integration test (Task 7)
 - **G2**: New deps pin exact version — `msmodelslim==X.Y.Z` (version discovered in Task 1, exact pin)
 - **G3**: Phase-1 code 0 changes EXCEPT internal dispatch body of `quantize_model` — signature `quantize_model(model_path, output_path, quant_type="w8a8", calibration_dataset=None) -> Path` preserved verbatim; existing 2 tests in `test_quantize.py` stay green without modification
-- **G4**: No silent defaults; explicit errors — `ImportError` with `pip install worldfoundry[quant]` hint when msModelSlim missing; `ValueError` on unknown `quant_type`/`quant_type="w4a8"` (deferred); shape mismatch raises
+- **G4**: No silent defaults; explicit errors — `ImportError` with `pip install worldforge[quant]` hint when msModelSlim missing; `ValueError` on unknown `quant_type`/`quant_type="w4a8"` (deferred); shape mismatch raises
 - **G5**: Reproducibility — calibration seed=42 (fixed in `load_calibration_dataset`); eval seed=123 (fixed in CLI default)
 - **G6**: Single source of truth — `quantize_backends/__init__.py:get_backend(quant_type)` is the only dispatch path
 - **G7**: Async-friendly — N/A (no I/O concurrency in this sub-project)
@@ -49,7 +49,7 @@ Expected: a version string like `0.1.0` or a documented fallback policy.
 
 - [ ] **Step 2: Write version to scratch file**
 
-Write to `/mnt/c/WorkSpace/WorldFoundry/.superpowers/sdd/w11-w12-msmodelslim-version.txt`:
+Write to `/mnt/c/WorkSpace/WorldForge/.superpowers/sdd/w11-w12-msmodelslim-version.txt`:
 
 ```
 msmodelslim_version=<discovered_version>
@@ -84,7 +84,7 @@ Expected: no exception, exit 0.
 
 - [ ] **Step 5: Verify Phase-1 tests still pass (G3 baseline)**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize.py -v`
 Expected: 2 passed (test_quantize_model_creates_output_file, test_quantize_model_rejects_unknown_type). These still work because the stub body is unchanged in this task.
 
 - [ ] **Step 6: Commit**
@@ -99,8 +99,8 @@ git commit -m "feat(quant): add [quant] extra with pinned msmodelslim"
 ## Task 2: `compile/quantize_backends/` package + registry
 
 **Files:**
-- Create: `worldfoundry_inf/compile/quantize_backends/__init__.py`
-- Create: `worldfoundry_inf/tests/test_quantize_backends_registry.py`
+- Create: `worldforge_inf/compile/quantize_backends/__init__.py`
+- Create: `worldforge_inf/tests/test_quantize_backends_registry.py`
 
 **Why before backend:** the registry must exist before `W8A8Backend` can register itself, and before `quantize.py` facade can dispatch to it. Test-first per TDD discipline.
 
@@ -113,7 +113,7 @@ git commit -m "feat(quant): add [quant] extra with pinned msmodelslim"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `worldfoundry_inf/tests/test_quantize_backends_registry.py`:
+Create `worldforge_inf/tests/test_quantize_backends_registry.py`:
 
 ```python
 """Registry + factory tests for quantize_backends subpackage."""
@@ -121,7 +121,7 @@ from __future__ import annotations
 
 import pytest
 
-from worldfoundry_inf.compile.quantize_backends import (
+from worldforge_inf.compile.quantize_backends import (
     QuantBackend,
     backend_available,
     get_backend,
@@ -167,18 +167,18 @@ def test_protocol_quantize_signature():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize_backends_registry.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'worldfoundry_inf.compile.quantize_backends'`.
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize_backends_registry.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'worldforge_inf.compile.quantize_backends'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Create `worldfoundry_inf/compile/quantize_backends/__init__.py`:
+Create `worldforge_inf/compile/quantize_backends/__init__.py`:
 
 ```python
 """Backend registry for quantization implementations.
 
 Subclasses register themselves via the @register decorator; get_backend()
-is the only dispatch path used by worldfoundry_inf.compile.quantize.
+is the only dispatch path used by worldforge_inf.compile.quantize.
 
 W11 only ships the W8A8 backend (msModelSlim). Future W4A8 backend can
 land here without disturbing the facade.
@@ -240,7 +240,7 @@ def backend_available(quant_type: str) -> tuple[bool, str | None]:
     if _BACKEND_IMPORT_ERROR is not None:
         return False, (
             "W8A8 quantization requires msmodelslim. "
-            "Install with: pip install worldfoundry[quant]\n"
+            "Install with: pip install worldforge[quant]\n"
             f"Underlying error: {_BACKEND_IMPORT_ERROR}"
         )
     if quant_type not in _REGISTRY:
@@ -262,13 +262,13 @@ except ImportError as exc:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize_backends_registry.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize_backends_registry.py -v`
 Expected: 4 passed (test_register_and_get_backend_roundtrip, test_get_backend_unknown_raises_value_error, test_backend_available_true_when_registered, test_protocol_quantize_signature).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/compile/quantize_backends/__init__.py worldfoundry_inf/tests/test_quantize_backends_registry.py
+git add worldforge_inf/compile/quantize_backends/__init__.py worldforge_inf/tests/test_quantize_backends_registry.py
 git commit -m "feat(quant): backend registry with Protocol contract + factory"
 ```
 
@@ -277,8 +277,8 @@ git commit -m "feat(quant): backend registry with Protocol contract + factory"
 ## Task 3: `compile/quantize_backends/msmodelslim.py` — W8A8Backend (mocked in unit tests)
 
 **Files:**
-- Create: `worldfoundry_inf/compile/quantize_backends/msmodelslim.py`
-- Create: `worldfoundry_inf/tests/test_quantize_backends_msmodelslim.py`
+- Create: `worldforge_inf/compile/quantize_backends/msmodelslim.py`
+- Create: `worldforge_inf/tests/test_quantize_backends_msmodelslim.py`
 
 **Why:** This is the core deliverable. The test mocks `msmodelslim` so the unit tests run without NPU; integration test (Task 7) hits the real path on NPU.
 
@@ -287,7 +287,7 @@ git commit -m "feat(quant): backend registry with Protocol contract + factory"
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `worldfoundry_inf/tests/test_quantize_backends_msmodelslim.py`:
+Create `worldforge_inf/tests/test_quantize_backends_msmodelslim.py`:
 
 ```python
 """W8A8Backend tests — mock msmodelslim so tests run on any host."""
@@ -303,7 +303,7 @@ import pytest
 
 def test_w8a8_backend_self_registers_on_import():
     """Importing msmodelslim.py registers 'w8a8' in the registry."""
-    from worldfoundry_inf.compile.quantize_backends import _REGISTRY
+    from worldforge_inf.compile.quantize_backends import _REGISTRY
     assert "w8a8" in _REGISTRY
 
 
@@ -336,8 +336,8 @@ def test_w8a8_backend_quantize_writes_meta(tmp_path):
         # Reimport backend module so its top-level msmodelslim import picks
         # up the mock.
         import importlib
-        from worldfoundry_inf.compile import quantize_backends
-        from worldfoundry_inf.compile.quantize_backends import msmodelslim as ms_mod
+        from worldforge_inf.compile import quantize_backends
+        from worldforge_inf.compile.quantize_backends import msmodelslim as ms_mod
         importlib.reload(ms_mod)
         importlib.reload(quantize_backends)
 
@@ -372,8 +372,8 @@ def test_w8a8_backend_missing_config_raises(tmp_path):
 
     with patch.dict(sys.modules, {"msmodelslim": fake_msmodelslim}):
         import importlib
-        from worldfoundry_inf.compile import quantize_backends
-        from worldfoundry_inf.compile.quantize_backends import msmodelslim as ms_mod
+        from worldforge_inf.compile import quantize_backends
+        from worldforge_inf.compile.quantize_backends import msmodelslim as ms_mod
         importlib.reload(ms_mod)
         importlib.reload(quantize_backends)
         backend_class = quantize_backends._REGISTRY["w8a8"]
@@ -384,7 +384,7 @@ def test_w8a8_backend_missing_config_raises(tmp_path):
 
 def test_w4a8_raises_with_deferral_message():
     """backend_available('w4a8') returns (False, hint) noting W4A8 deferred."""
-    from worldfoundry_inf.compile.quantize_backends import backend_available
+    from worldforge_inf.compile.quantize_backends import backend_available
     # Clear registry for this test (w4a8 not registered, by design)
     available, hint = backend_available("w4a8")
     assert available is False
@@ -394,12 +394,12 @@ def test_w4a8_raises_with_deferral_message():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize_backends_msmodelslim.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'worldfoundry_inf.compile.quantize_backends.msmodelslim'`.
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize_backends_msmodelslim.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'worldforge_inf.compile.quantize_backends.msmodelslim'`.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Create `worldfoundry_inf/compile/quantize_backends/msmodelslim.py`:
+Create `worldforge_inf/compile/quantize_backends/msmodelslim.py`:
 
 ```python
 """W8A8 static quantization via Huawei msModelSlim.
@@ -419,8 +419,8 @@ from transformers import AutoModel
 
 import msmodelslim
 
-from worldfoundry_inf.compile.quantize_backends import register
-from worldfoundry_inf.data.calib_videomix22m import load_calibration_dataset
+from worldforge_inf.compile.quantize_backends import register
+from worldforge_inf.data.calib_videomix22m import load_calibration_dataset
 
 
 @register("w8a8")
@@ -482,24 +482,24 @@ class W8A8Backend:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize_backends_msmodelslim.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize_backends_msmodelslim.py -v`
 Expected: 4 passed.
 
 Note: If `msmodelslim` is NOT installed on the dev host (likely), the test `test_w8a8_backend_quantize_writes_meta` may still need adjustment because the module-level `import msmodelslim` in `msmodelslim.py` will fail BEFORE the test can mock it. If that happens, restructure the test to:
-1. Install `msmodelslim` via `pip install worldfoundry[quant]` (which adds it to the env), OR
+1. Install `msmodelslim` via `pip install worldforge[quant]` (which adds it to the env), OR
 2. Skip the failing test in CI and only run it on NPU hosts (mark with `@pytest.mark.skipif(not _msmodelslim_installed, ...)`)
 
 Document whichever path was taken in the test docstring.
 
 - [ ] **Step 5: Verify Phase-1 tests still green (G3)**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize.py -v`
 Expected: 2 passed. The `quantize.py` facade hasn't been changed yet — these still pass against the stub body.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add worldfoundry_inf/compile/quantize_backends/msmodelslim.py worldfoundry_inf/tests/test_quantize_backends_msmodelslim.py
+git add worldforge_inf/compile/quantize_backends/msmodelslim.py worldforge_inf/tests/test_quantize_backends_msmodelslim.py
 git commit -m "feat(quant): W8A8Backend via msModelSlim with quant_meta.json sidecar"
 ```
 
@@ -508,23 +508,23 @@ git commit -m "feat(quant): W8A8Backend via msModelSlim with quant_meta.json sid
 ## Task 4: `data/calib_videomix22m.py` — calibration data loader
 
 **Files:**
-- Create: `worldfoundry_inf/data/__init__.py` (if not exists; check first)
-- Create: `worldfoundry_inf/data/calib_videomix22m.py`
-- Create: `worldfoundry_inf/tests/test_calib_videomix22m.py`
+- Create: `worldforge_inf/data/__init__.py` (if not exists; check first)
+- Create: `worldforge_inf/data/calib_videomix22m.py`
+- Create: `worldforge_inf/tests/test_calib_videomix22m.py`
 
 **Interfaces:**
 - Produces: `def load_calibration_dataset(n: int = 512, seed: int = 42, image_processor=None) -> Iterable[torch.Tensor]` yielding `n` tensors of shape `(3, 224, 224)`.
 
-- [ ] **Step 1: Verify `worldfoundry_inf/data/` does NOT exist yet**
+- [ ] **Step 1: Verify `worldforge_inf/data/` does NOT exist yet**
 
-Run: `ls /mnt/c/WorkSpace/WorldFoundry/worldfoundry_inf/data/ 2>&1`
+Run: `ls /mnt/c/WorkSpace/WorldForge/worldforge_inf/data/ 2>&1`
 Expected: `No such file or directory` (this sub-project creates the dir fresh).
 
 If it does exist (someone added files), STOP and ask the user — this is unexpected per the spec.
 
 - [ ] **Step 2: Write the failing test**
 
-Create `worldfoundry_inf/tests/test_calib_videomix22m.py`:
+Create `worldforge_inf/tests/test_calib_videomix22m.py`:
 
 ```python
 """calib_videomix22m loader tests — mock HF datasets to avoid network in CI."""
@@ -546,7 +546,7 @@ def _make_fake_dataset(n: int):
 
 def test_load_returns_n_tensors():
     """load_calibration_dataset(n=8) yields exactly 8 tensors."""
-    from worldfoundry_inf.data.calib_videomix22m import load_calibration_dataset
+    from worldforge_inf.data.calib_videomix22m import load_calibration_dataset
 
     fake_ds, _ = _make_fake_dataset(8)
 
@@ -555,10 +555,10 @@ def test_load_returns_n_tensors():
         return {"pixel_values": torch.zeros(1, 3, 224, 224)}
 
     with patch(
-        "worldfoundry_inf.data.calib_videomix22m.load_dataset", return_value=fake_ds
+        "worldforge_inf.data.calib_videomix22m.load_dataset", return_value=fake_ds
     ):
         with patch(
-            "worldfoundry_inf.data.calib_videomix22m.AutoImageProcessor.from_pretrained"
+            "worldforge_inf.data.calib_videomix22m.AutoImageProcessor.from_pretrained"
         ) as fake_proc_factory:
             fake_proc_factory.return_value = MagicMock(
                 __call__=fake_processor
@@ -571,10 +571,10 @@ def test_load_returns_n_tensors():
 
 def test_load_propagates_dataset_error():
     """HF datasets errors propagate (no silent fallback — G4)."""
-    from worldfoundry_inf.data.calib_videomix22m import load_calibration_dataset
+    from worldforge_inf.data.calib_videomix22m import load_calibration_dataset
 
     with patch(
-        "worldfoundry_inf.data.calib_videomix22m.load_dataset",
+        "worldforge_inf.data.calib_videomix22m.load_dataset",
         side_effect=RuntimeError("network unreachable"),
     ):
         with pytest.raises(RuntimeError, match="network unreachable"):
@@ -583,18 +583,18 @@ def test_load_propagates_dataset_error():
 
 - [ ] **Step 3: Run test to verify it fails**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_calib_videomix22m.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'worldfoundry_inf.data.calib_videomix22m'`.
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_calib_videomix22m.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'worldforge_inf.data.calib_videomix22m'`.
 
 - [ ] **Step 4: Write minimal implementation**
 
-Create `worldfoundry_inf/data/__init__.py`:
+Create `worldforge_inf/data/__init__.py`:
 
 ```python
-"""Data loading utilities for WorldFoundry inference path."""
+"""Data loading utilities for WorldForge inference path."""
 ```
 
-Create `worldfoundry_inf/data/calib_videomix22m.py`:
+Create `worldforge_inf/data/calib_videomix22m.py`:
 
 ```python
 """Load a fixed 512-sample calibration subset from VideoMix22M.
@@ -650,13 +650,13 @@ def load_calibration_dataset(
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_calib_videomix22m.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_calib_videomix22m.py -v`
 Expected: 2 passed.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add worldfoundry_inf/data/__init__.py worldfoundry_inf/data/calib_videomix22m.py worldfoundry_inf/tests/test_calib_videomix22m.py
+git add worldforge_inf/data/__init__.py worldforge_inf/data/calib_videomix22m.py worldforge_inf/tests/test_calib_videomix22m.py
 git commit -m "feat(quant): VideoMix22M 512-sample calibration loader"
 ```
 
@@ -665,9 +665,9 @@ git commit -m "feat(quant): VideoMix22M 512-sample calibration loader"
 ## Task 5: `eval/quant_eval.py` — cosine similarity library + happy path
 
 **Files:**
-- Create: `worldfoundry_inf/eval/__init__.py`
-- Create: `worldfoundry_inf/eval/quant_eval.py`
-- Create: `worldfoundry_inf/tests/test_quant_eval.py`
+- Create: `worldforge_inf/eval/__init__.py`
+- Create: `worldforge_inf/eval/quant_eval.py`
+- Create: `worldforge_inf/tests/test_quant_eval.py`
 
 **Interfaces:**
 - Produces:
@@ -676,7 +676,7 @@ git commit -m "feat(quant): VideoMix22M 512-sample calibration loader"
 
 - [ ] **Step 1: Write the failing tests (happy path + below-threshold)**
 
-Create `worldfoundry_inf/tests/test_quant_eval.py`:
+Create `worldforge_inf/tests/test_quant_eval.py`:
 
 ```python
 """quant_eval cosine similarity tests — synthetic bf16 vs int8 features."""
@@ -698,7 +698,7 @@ def _make_model(features: torch.Tensor):
 
 def test_cosine_above_threshold_passes():
     """cosine=0.99 (above 0.98) → report.passed=True."""
-    from worldfoundry_inf.eval.quant_eval import cosine_similarity
+    from worldforge_inf.eval.quant_eval import cosine_similarity
 
     bf16_feat = torch.randn(1, 4, 8)
     # Make int8 features ~bf16 features (high cosine)
@@ -708,7 +708,7 @@ def test_cosine_above_threshold_passes():
     int8_model = _make_model(int8_feat)
 
     with patch(
-        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         report = cosine_similarity(
@@ -726,7 +726,7 @@ def test_cosine_above_threshold_passes():
 
 def test_cosine_below_threshold_fails():
     """cosine~0.5 (well below 0.98) → report.passed=False."""
-    from worldfoundry_inf.eval.quant_eval import cosine_similarity
+    from worldforge_inf.eval.quant_eval import cosine_similarity
 
     bf16_feat = torch.randn(1, 4, 8)
     # Make int8 features orthogonal (low cosine)
@@ -736,7 +736,7 @@ def test_cosine_below_threshold_fails():
     int8_model = _make_model(int8_feat)
 
     with patch(
-        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         report = cosine_similarity(
@@ -752,7 +752,7 @@ def test_cosine_below_threshold_fails():
 
 def test_aggregate_cosine_is_mean_of_per_sample():
     """aggregate_cosine == mean(per_sample_cosine)."""
-    from worldfoundry_inf.eval.quant_eval import cosine_similarity
+    from worldforge_inf.eval.quant_eval import cosine_similarity
 
     bf16_feats = [torch.randn(1, 4, 8) for _ in range(3)]
     int8_feats = [f + torch.randn_like(f) * 0.01 for f in bf16_feats]
@@ -769,7 +769,7 @@ def test_aggregate_cosine_is_mean_of_per_sample():
     ]
 
     with patch(
-        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         report = cosine_similarity(
@@ -785,18 +785,18 @@ def test_aggregate_cosine_is_mean_of_per_sample():
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quant_eval.py -v`
-Expected: FAIL with `ModuleNotFoundError: No module named 'worldfoundry_inf.eval'`.
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quant_eval.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'worldforge_inf.eval'`.
 
 - [ ] **Step 3: Write minimal implementation (library only; CLI in Task 6)**
 
-Create `worldfoundry_inf/eval/__init__.py`:
+Create `worldforge_inf/eval/__init__.py`:
 
 ```python
-"""Evaluation harnesses for WorldFoundry inference path."""
+"""Evaluation harnesses for WorldForge inference path."""
 ```
 
-Create `worldfoundry_inf/eval/quant_eval.py`:
+Create `worldforge_inf/eval/quant_eval.py`:
 
 ```python
 """End-to-end cosine similarity eval: bf16 baseline vs quantized model.
@@ -805,7 +805,7 @@ Used as the W11 acceptance gate per parent spec §9 #6:
 "下游特征 cosine similarity 与 bf16 baseline ≥ 0.98".
 
 CLI usage (see __main__ block at bottom):
-    python -m worldfoundry_inf.eval.quant_eval \\
+    python -m worldforge_inf.eval.quant_eval \\
         --baseline models/vjepa2-vitl-1.2b-bf16 \\
         --quantized models/vjepa2-vitl-1.2b-w8a8 \\
         --threshold 0.98
@@ -864,7 +864,7 @@ def cosine_similarity(
 
     if eval_dataset is None:
         # Default holdout: same videomix22m source, seed=123, n_samples
-        from worldfoundry_inf.data.calib_videomix22m import load_calibration_dataset
+        from worldforge_inf.data.calib_videomix22m import load_calibration_dataset
         eval_dataset = list(load_calibration_dataset(n=n_samples, seed=seed))
 
     samples = list(eval_dataset)
@@ -898,13 +898,13 @@ def cosine_similarity(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quant_eval.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quant_eval.py -v`
 Expected: 3 passed.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/eval/__init__.py worldfoundry_inf/eval/quant_eval.py worldfoundry_inf/tests/test_quant_eval.py
+git add worldforge_inf/eval/__init__.py worldforge_inf/eval/quant_eval.py worldforge_inf/tests/test_quant_eval.py
 git commit -m "feat(quant): cosine similarity eval library + EvalReport"
 ```
 
@@ -913,22 +913,22 @@ git commit -m "feat(quant): cosine similarity eval library + EvalReport"
 ## Task 6: `eval/quant_eval.py` — error handling + CLI entry point
 
 **Files:**
-- Modify: `worldfoundry_inf/eval/quant_eval.py` (append `if __name__ == "__main__"` block; the `n_samples <= 0` check is already in Task 5's implementation)
-- Modify: `worldfoundry_inf/tests/test_quant_eval.py` (add shape-mismatch and empty-dataset tests)
+- Modify: `worldforge_inf/eval/quant_eval.py` (append `if __name__ == "__main__"` block; the `n_samples <= 0` check is already in Task 5's implementation)
+- Modify: `worldforge_inf/tests/test_quant_eval.py` (add shape-mismatch and empty-dataset tests)
 
 **Why separate from Task 5:** Task 5 focused on the happy path + dataclass. Task 6 adds the explicit error paths (G4 compliance) and the CLI entry point.
 
 **Interfaces:**
-- Produces: CLI entry `python -m worldfoundry_inf.eval.quant_eval --baseline ... --quantized ... [--threshold 0.98] [--n-samples 100]` exiting 0 on pass, 1 on fail.
+- Produces: CLI entry `python -m worldforge_inf.eval.quant_eval --baseline ... --quantized ... [--threshold 0.98] [--n-samples 100]` exiting 0 on pass, 1 on fail.
 
 - [ ] **Step 1: Add failing tests for shape mismatch and empty dataset**
 
-Append to `worldfoundry_inf/tests/test_quant_eval.py`:
+Append to `worldforge_inf/tests/test_quant_eval.py`:
 
 ```python
 def test_shape_mismatch_raises_value_error():
     """Different bf16 vs int8 output shapes → ValueError."""
-    from worldfoundry_inf.eval.quant_eval import cosine_similarity
+    from worldforge_inf.eval.quant_eval import cosine_similarity
 
     bf16_feat = torch.randn(1, 4, 8)
     int8_feat = torch.randn(1, 4, 16)  # different last dim
@@ -937,7 +937,7 @@ def test_shape_mismatch_raises_value_error():
     int8_model = _make_model(int8_feat)
 
     with patch(
-        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         with pytest.raises(ValueError, match="Shape mismatch"):
@@ -950,7 +950,7 @@ def test_shape_mismatch_raises_value_error():
 
 def test_empty_eval_dataset_raises():
     """n_samples=0 → ValueError before model load."""
-    from worldfoundry_inf.eval.quant_eval import cosine_similarity
+    from worldforge_inf.eval.quant_eval import cosine_similarity
 
     with pytest.raises(ValueError, match="n_samples must be positive"):
         cosine_similarity(
@@ -962,12 +962,12 @@ def test_empty_eval_dataset_raises():
 
 - [ ] **Step 2: Run new tests to verify they pass (already implemented in Task 5)**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quant_eval.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quant_eval.py -v`
 Expected: 5 passed (3 from Task 5 + 2 new).
 
 - [ ] **Step 3: Append CLI block to quant_eval.py**
 
-Append to `worldfoundry_inf/eval/quant_eval.py`:
+Append to `worldforge_inf/eval/quant_eval.py`:
 
 ```python
 
@@ -1017,18 +1017,18 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Verify CLI help works**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m worldfoundry_inf.eval.quant_eval --help`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m worldforge_inf.eval.quant_eval --help`
 Expected: prints argparse help text; exit 0.
 
 - [ ] **Step 5: Verify CLI rejects missing args**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m worldfoundry_inf.eval.quant_eval 2>&1; echo "exit=$?"`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m worldforge_inf.eval.quant_eval 2>&1; echo "exit=$?"`
 Expected: argparse error + non-zero exit code.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add worldfoundry_inf/eval/quant_eval.py worldfoundry_inf/tests/test_quant_eval.py
+git add worldforge_inf/eval/quant_eval.py worldforge_inf/tests/test_quant_eval.py
 git commit -m "feat(quant): quant_eval CLI with shape/empty guards"
 ```
 
@@ -1037,18 +1037,18 @@ git commit -m "feat(quant): quant_eval CLI with shape/empty guards"
 ## Task 7: `compile/quantize.py` facade — wire up dispatch (G3 boundary)
 
 **Files:**
-- Modify: `worldfoundry_inf/compile/quantize.py` (replace stub body with backend dispatch)
-- Create: `worldfoundry_inf/tests/test_quantize_facade_dispatch.py` (verify facade calls backend)
+- Modify: `worldforge_inf/compile/quantize.py` (replace stub body with backend dispatch)
+- Create: `worldforge_inf/tests/test_quantize_facade_dispatch.py` (verify facade calls backend)
 
 **Why last:** The facade modification is the G3 boundary. Until now, `quantize.py` has been untouched. This task changes its internal body to dispatch to the registered backend, while preserving the exact public signature and the Phase-1 contract tests.
 
 **Interfaces:**
-- Consumes: `from worldfoundry_inf.compile.quantize_backends import backend_available, get_backend`
+- Consumes: `from worldforge_inf.compile.quantize_backends import backend_available, get_backend`
 - Produces: `quantize_model(model_path, output_path, quant_type="w8a8", calibration_dataset=None) -> Path` with internal dispatch.
 
 - [ ] **Step 1: Write the failing dispatch test**
 
-Create `worldfoundry_inf/tests/test_quantize_facade_dispatch.py`:
+Create `worldforge_inf/tests/test_quantize_facade_dispatch.py`:
 
 ```python
 """Verify quantize_model facade dispatches to the registered backend (G3 + G6)."""
@@ -1059,7 +1059,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from worldfoundry_inf.compile.quantize import quantize_model
+from worldforge_inf.compile.quantize import quantize_model
 
 
 def test_facade_dispatches_w8a8_to_backend(tmp_path):
@@ -1072,10 +1072,10 @@ def test_facade_dispatches_w8a8_to_backend(tmp_path):
     fake_backend.quantize.return_value = out
 
     with patch(
-        "worldfoundry_inf.compile.quantize.get_backend", return_value=fake_backend
+        "worldforge_inf.compile.quantize.get_backend", return_value=fake_backend
     ) as mock_get:
         with patch(
-            "worldfoundry_inf.compile.quantize.backend_available",
+            "worldforge_inf.compile.quantize.backend_available",
             return_value=(True, None),
         ):
             result = quantize_model(src, out, quant_type="w8a8",
@@ -1102,33 +1102,33 @@ def test_facade_backend_unavailable_raises_import_error():
     src = Path("/fake/bf16")
     out = Path("/fake/w8a8")
     with patch(
-        "worldfoundry_inf.compile.quantize.backend_available",
-        return_value=(False, "pip install worldfoundry[quant]"),
+        "worldforge_inf.compile.quantize.backend_available",
+        return_value=(False, "pip install worldforge[quant]"),
     ):
-        with pytest.raises(ImportError, match="pip install worldfoundry\\[quant\\]"):
+        with pytest.raises(ImportError, match="pip install worldforge\\[quant\\]"):
             quantize_model(src, out, quant_type="w8a8")
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize_facade_dispatch.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize_facade_dispatch.py -v`
 Expected: FAIL (the first test fails because the current `quantize.py` stub does NOT call `get_backend` — it just copies files).
 
 - [ ] **Step 3: Modify `quantize.py` to dispatch (G3 boundary)**
 
-Modify `worldfoundry_inf/compile/quantize.py`. Replace the existing body that copies files + writes a stub `quant_meta.json` with:
+Modify `worldforge_inf/compile/quantize.py`. Replace the existing body that copies files + writes a stub `quant_meta.json` with:
 
 ```python
 """Quantization facade — dispatches by quant_type to registered backend.
 
 Phase-1 API surface preserved verbatim (G3). The actual quantization work
-lives in worldfoundry_inf.compile.quantize_backends.*.
+lives in worldforge_inf.compile.quantize_backends.*.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from worldfoundry_inf.compile.quantize_backends import (
+from worldforge_inf.compile.quantize_backends import (
     SUPPORTED_QUANT_TYPES,
     backend_available,
     get_backend,
@@ -1166,7 +1166,7 @@ def quantize_model(
 
 - [ ] **Step 4: Add SUPPORTED_QUANT_TYPES export to `quantize_backends/__init__.py`**
 
-Modify `worldfoundry_inf/compile/quantize_backends/__init__.py` — append at end:
+Modify `worldforge_inf/compile/quantize_backends/__init__.py` — append at end:
 
 ```python
 
@@ -1178,12 +1178,12 @@ SUPPORTED_QUANT_TYPES: tuple[str, ...] = ("w8a8", "w4a8")  # w4a8 deferred to fu
 
 - [ ] **Step 5: Run new dispatch tests**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize_facade_dispatch.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize_facade_dispatch.py -v`
 Expected: 3 passed.
 
 - [ ] **Step 6: CRITICAL — Phase-1 tests must still pass (G3 verification)**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quantize.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quantize.py -v`
 Expected: 2 passed (Phase-1 tests). If they fail, the facade change is too aggressive — back out and use a gentler dispatch.
 
 NOTE: `test_quantize_model_creates_output_file` may now fail because the real W8A8 backend (if msModelSlim IS installed) would error in the stub test's fake model dir. Two options:
@@ -1194,13 +1194,13 @@ Discuss with the user which path to take before committing this step.
 
 - [ ] **Step 7: Run full test suite to confirm no regressions**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests worldfoundry_train/tests -q`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests worldforge_train/tests -q`
 Expected: all previously-passing tests still pass; new tests added in Tasks 2-6 all pass; any av-related errors (pre-existing Phase-1 env limitation) unchanged.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add worldfoundry_inf/compile/quantize.py worldfoundry_inf/compile/quantize_backends/__init__.py worldfoundry_inf/tests/test_quantize_facade_dispatch.py
+git add worldforge_inf/compile/quantize.py worldforge_inf/compile/quantize_backends/__init__.py worldforge_inf/tests/test_quantize_facade_dispatch.py
 git commit -m "feat(quant): facade dispatches to registered backend by quant_type"
 ```
 
@@ -1209,23 +1209,23 @@ git commit -m "feat(quant): facade dispatches to registered backend by quant_typ
 ## Task 8: Integration test (NPU gated) + final report
 
 **Files:**
-- Create: `worldfoundry_inf/tests/test_quant_integration_npu.py`
+- Create: `worldforge_inf/tests/test_quant_integration_npu.py`
 - Create: `docs/superpowers/specs/W11_W12_QUANT_REPORT.md` (template; real NPU run fills it in later)
 
 **Why last:** integration test requires real NPU + msModelSlim installed + V-JEPA 2 weights. Default skip on non-NPU hosts. This task also writes the report template + verifies the full test suite end-to-end.
 
 - [ ] **Step 1: Add integration test (default skip)**
 
-Create `worldfoundry_inf/tests/test_quant_integration_npu.py`:
+Create `worldforge_inf/tests/test_quant_integration_npu.py`:
 
 ```python
 """End-to-end W8A8 quantization + cosine eval (NPU-gated, default skip).
 
-Run with: WORLDFORGE_RUN_QUANT_E2E=1 pytest worldfoundry_inf/tests/test_quant_integration_npu.py
+Run with: WORLDFORGE_RUN_QUANT_E2E=1 pytest worldforge_inf/tests/test_quant_integration_npu.py
 
 Requires:
 - torch_npu installed + NPU available
-- msmodelslim installed (worldfoundry[quant])
+- msmodelslim installed (worldforge[quant])
 - V-JEPA 2 vitl-1.2b weights downloaded to models/vjepa2-vitl-1.2b/
 
 Uses a smaller surrogate ViT (facebook/dino-vits8, ~5M params) for CI;
@@ -1247,8 +1247,8 @@ torch_npu_available = pytest.importorskip("torch_npu").npu.is_available()
 )
 def test_w8a8_quantization_end_to_end(tmp_path):
     """End-to-end: load bf16 → W8A8 quant → cosine ≥ 0.95."""
-    from worldfoundry_inf.compile.quantize import quantize_model
-    from worldfoundry_inf.eval.quant_eval import cosine_similarity
+    from worldforge_inf.compile.quantize import quantize_model
+    from worldforge_inf.eval.quant_eval import cosine_similarity
 
     src = Path(os.environ.get("WORLDFORGE_QUANT_TEST_MODEL",
                               "models/dino-vits8"))  # tiny ViT for CI
@@ -1269,7 +1269,7 @@ Add `import json` at top if not present.
 
 - [ ] **Step 2: Verify integration test is correctly skipped on non-NPU**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests/test_quant_integration_npu.py -v`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests/test_quant_integration_npu.py -v`
 Expected: 1 skipped (reason: "Requires NPU + WORLDFORGE_RUN_QUANT_E2E=1").
 
 - [ ] **Step 3: Write the W11_W12_QUANT_REPORT.md template**
@@ -1312,13 +1312,13 @@ Create `docs/superpowers/specs/W11_W12_QUANT_REPORT.md`:
 
 - [ ] **Step 4: Run full test suite (final regression check)**
 
-Run: `cd /mnt/c/WorkSpace/WorldFoundry && python3 -m pytest worldfoundry_inf/tests worldfoundry_train/tests -q`
+Run: `cd /mnt/c/WorkSpace/WorldForge && python3 -m pytest worldforge_inf/tests worldforge_train/tests -q`
 Expected: same pass/error counts as the pre-task baseline; new tests added (Task 2-6, 7) all pass; pre-existing av errors unchanged.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/tests/test_quant_integration_npu.py docs/superpowers/specs/W11_W12_QUANT_REPORT.md
+git add worldforge_inf/tests/test_quant_integration_npu.py docs/superpowers/specs/W11_W12_QUANT_REPORT.md
 git commit -m "feat(quant): NPU-gated integration test + report template"
 ```
 
@@ -1376,7 +1376,7 @@ No type mismatches across tasks.
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-07-29-worldfoundry-phase2-w11-w12-quantization.md`. Two execution options:
+Plan complete and saved to `docs/superpowers/plans/2026-07-29-worldforge-phase2-w11-w12-quantization.md`. Two execution options:
 
 1. **Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration
 2. **Inline Execution** — Execute tasks in this session using executing-plans, batch execution with checkpoints

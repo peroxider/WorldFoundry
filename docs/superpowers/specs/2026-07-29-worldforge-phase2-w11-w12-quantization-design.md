@@ -21,7 +21,7 @@ W11-W12 是 Phase-2 的第二个 sub-project，承接 W9-W10 之后的性能优�
 | 后端 | 华为官方 **msModelSlim** (`msmodelslim==X.Y.Z`) | 生产级、硬件感知、支持 ViT block；与 vLLM-Ascend ModelSlimConfig 路径一致（父规格 §4.4） |
 | 校准数据 | VideoMix22M 512-sample 子集，seed=42 | 与 V-JEPA 2 预训练分布对齐（父规格 §4.4 `videomix22m_calib_512`）；可重复 |
 | 评价指标 | End-to-end cosine ≥ 0.98（bf16 baseline vs W8A8）on 100-sample holdout（seed=123） | 父规格 §9 #6 原文："下游特征 cosine similarity 与 bf16 baseline ≥ 0.98" |
-| 打包 | 新增 `[quant]` optional extra（pyproject.toml），msModelSlim 精确 pin | G2 保护；推理路径不被强制安装量化栈；msModelSlim 仅在 NPU 主机显式 `pip install worldfoundry[quant]` |
+| 打包 | 新增 `[quant]` optional extra（pyproject.toml），msModelSlim 精确 pin | G2 保护；推理路径不被强制安装量化栈；msModelSlim 仅在 NPU 主机显式 `pip install worldforge[quant]` |
 | 架构 | Sub-package 拆分（quantize_backends/ + data/ + eval/） | 与 W9-W10 bench/、parallel/ 模式一致；每个文件单一职责；便于未来 W4A8 backend 复用接口 |
 | Phase-1 兼容性 | `quantize_model()` facade 签名 0 改动；只替换内部实现 | G3 保护；下游 W3-W4 MindIE-SD 集成不需改动 |
 
@@ -39,7 +39,7 @@ W11-W12 是 Phase-2 的第二个 sub-project，承接 W9-W10 之后的性能优�
 ### 2.1 文件结构（Sub-package 拆分）
 
 ```
-worldfoundry_inf/
+worldforge_inf/
 ├── compile/
 │   ├── quantize.py                       # [MODIFIED] facade — 保留 Phase-1 API
 │   ├── quantize_backends/                # [NEW] 子包
@@ -53,7 +53,7 @@ worldfoundry_inf/
     └── quant_eval.py                     # [NEW] cosine ≥ 0.98 评估 CLI + library
 
 pyproject.toml                            # [MODIFIED] 新增 [quant] extra
-worldfoundry_inf/tests/
+worldforge_inf/tests/
 ├── test_quantize.py                      # [unchanged] 保留 2 个 Phase-1 测试
 ├── test_quantize_backends_msmodelslim.py # [NEW] backend dispatch + 错误处理
 ├── test_calib_videomix22m.py             # [NEW] 校准数据集加载
@@ -71,7 +71,7 @@ worldfoundry_inf/tests/
 
 ## 3. 组件设计
 
-### 3.1 `worldfoundry_inf/compile/quantize.py`（facade）
+### 3.1 `worldforge_inf/compile/quantize.py`（facade）
 
 **职责**：保留 Phase-1 公开 API；按 `quant_type` 路由到 backend。
 
@@ -90,9 +90,9 @@ def quantize_model(
 - 其他值：维持 Phase-1 的 `ValueError(f"Unsupported quant_type={...}. Supported: ...")`
 - 返回 `output_path`（目录）
 
-**依赖**：从 `quantize_backends` import；import 失败时（未安装 `[quant]` extra）抛 ImportError 并含 `pip install worldfoundry[quant]` hint。
+**依赖**：从 `quantize_backends` import；import 失败时（未安装 `[quant]` extra）抛 ImportError 并含 `pip install worldforge[quant]` hint。
 
-### 3.2 `worldfoundry_inf/compile/quantize_backends/__init__.py`
+### 3.2 `worldforge_inf/compile/quantize_backends/__init__.py`
 
 **职责**：backend registry + factory。
 
@@ -130,13 +130,13 @@ def backend_available(quant_type: str) -> tuple[bool, str | None]:
     if _BACKEND_IMPORT_ERROR is not None:
         return False, (
             f"W8A8 quantization requires msmodelslim. "
-            f"Install with: pip install worldfoundry[quant]\n"
+            f"Install with: pip install worldforge[quant]\n"
             f"Underlying error: {_BACKEND_IMPORT_ERROR}"
         )
     return quant_type in _REGISTRY, None
 ```
 
-### 3.3 `worldfoundry_inf/compile/quantize_backends/msmodelslim.py`
+### 3.3 `worldforge_inf/compile/quantize_backends/msmodelslim.py`
 
 **职责**：调用 msModelSlim 完成 W8A8 静态量化。
 
@@ -184,7 +184,7 @@ class W8A8Backend:
                          f"Supported: None | 'videomix22m-512'")
 ```
 
-### 3.4 `worldfoundry_inf/data/calib_videomix22m.py`
+### 3.4 `worldforge_inf/data/calib_videomix22m.py`
 
 **职责**：从 HuggingFace `datasets` 加载 VideoMix22M 的 512-sample 子集，预处理为 V-JEPA 2 image processor 输入格式。
 
@@ -211,7 +211,7 @@ def load_calibration_dataset(
 
 **注意**：VideoMix22M 在 HuggingFace 上的 dataset ID 需在 plan 阶段确认（可能是 `lmms-lab/videomix22m` 或私有）。plan 阶段需要实测确认可用 ID；若不可用，则降级到 `hf-internal-testing/tiny-videomix` 子集用于 CI 测试，文档明确说明生产校准仍需真实 VideoMix22M。
 
-### 3.5 `worldfoundry_inf/eval/quant_eval.py`
+### 3.5 `worldforge_inf/eval/quant_eval.py`
 
 **职责**：cosine similarity 评估 + CLI。
 
@@ -238,7 +238,7 @@ def cosine_similarity(
 
 **CLI**：
 ```bash
-python -m worldfoundry_inf.eval.quant_eval \
+python -m worldforge_inf.eval.quant_eval \
     --baseline models/vjepa2-vitl-1.2b-bf16 \
     --quantized models/vjepa2-vitl-1.2b-w8a8 \
     --threshold 0.98 \
@@ -266,7 +266,7 @@ Input:  models/vjepa2-vitl-1.2b-bf16/
             ├── config.json
             └── pytorch_model.bin (bf16 weights)
 
-CLI:    python -c "from worldfoundry_inf.compile.quantize import quantize_model; \
+CLI:    python -c "from worldforge_inf.compile.quantize import quantize_model; \
                    quantize_model('models/...bf16', 'models/...w8a8', 'w8a8')"
 
 Flow:
@@ -310,7 +310,7 @@ Flow:
 
 | 失败模式 | 抛出位置 | 错误类型 + 消息 |
 |----------|---------|-----------------|
-| msModelSlim 未安装 | `quantize_backends/__init__.py` import 失败 → `backend_available()` 返回 False | `ImportError("W8A8 quantization requires msmodelslim. Install with: pip install worldfoundry[quant]\nUnderlying error: {ImportError msg}")` |
+| msModelSlim 未安装 | `quantize_backends/__init__.py` import 失败 → `backend_available()` 返回 False | `ImportError("W8A8 quantization requires msmodelslim. Install with: pip install worldforge[quant]\nUnderlying error: {ImportError msg}")` |
 | `quant_type` 未知 | `quantize_model` facade | `ValueError(f"Unsupported quant_type={...!r}. Supported: {SUPPORTED_QUANT_TYPES}")`（与 Phase-1 一致） |
 | `quant_type="w4a8"` 调用但 backend 未注册 | `quantize_model` → `get_backend("w4a8")` | `ValueError(f"No backend registered for quant_type='w4a8'. Available: ['w8a8']. (W4A8 deferred to future sub-project.)")` |
 | bf16 model dir 缺 `config.json` | `W8A8Backend.quantize` | `FileNotFoundError(f"Model dir {model_path} missing config.json")` |
@@ -333,7 +333,7 @@ Flow:
 | `test_quantize.py` (Phase-1 保留) | `test_quantize_model_creates_output_file` | 输出目录 + quant_meta.json 存在（不依赖具体 backend，因为 stub 仍可工作当 backend 不可用） |
 | `test_quantize.py` (Phase-1 保留) | `test_quantize_model_rejects_unknown_type` | ValueError on unknown quant_type |
 | `test_quantize_backends_msmodelslim.py` (新) | `test_facade_dispatches_to_w8a8` | mock W8A8Backend，验证 facade 调用 |
-| `test_quantize_backends_msmodelslim.py` (新) | `test_backend_unavailable_raises_import_error_with_hint` | 模拟 msmodelslim ImportError，验证 hint 含 "pip install worldfoundry[quant]" |
+| `test_quantize_backends_msmodelslim.py` (新) | `test_backend_unavailable_raises_import_error_with_hint` | 模拟 msmodelslim ImportError，验证 hint 含 "pip install worldforge[quant]" |
 | `test_quantize_backends_msmodelslim.py` (新) | `test_w4a8_raises_with_deferral_message` | quant_type="w4a8" → ValueError 含 "W4A8 deferred to future sub-project" |
 | `test_calib_videomix22m.py` (新) | `test_load_calibration_dataset_returns_n_tensors` | mock HF datasets；返回 512 个 (3, 224, 224) tensor |
 | `test_calib_videomix22m.py` (新) | `test_load_calibration_dataset_propagates_dataset_error` | HF datasets 抛错时透传 |
@@ -383,7 +383,7 @@ def test_w8a8_quantization_end_to_end():
 | 1 | `quantize_model("w8a8")` 调用真实 msModelSlim（不再是 stub 拷贝） | 单元测试 + 集成测试验证 save_pretrained 调用真实 msModelSlim 输出 |
 | 2 | 量化产出与 Phase-1 文件契约兼容 | 输出目录含 config.json + quant_meta.json；quant_meta.json 含 backend + msmodelslim_version 字段 |
 | 3 | Cosine ≥ 0.98（end-to-end） | 集成测试在 V-JEPA 2 vitl-1.2b 真实模型 + 100-sample holdout 上 cosine ≥ 0.98 |
-| 4 | `[quant]` extra 可独立安装 | `pip install worldfoundry[quant]` 在 NPU 主机成功；非 NPU 主机可 `pip install worldfoundry`（不带 quant）正常使用其他功能 |
+| 4 | `[quant]` extra 可独立安装 | `pip install worldforge[quant]` 在 NPU 主机成功；非 NPU 主机可 `pip install worldforge`（不带 quant）正常使用其他功能 |
 | 5 | Phase-1 API 0 改动 | `test_quantize.py` 两个 Phase-1 测试保持绿色；`quantize_model()` 签名一致 |
 | 6 | G2/G3/G4 约束满足 | msmodelslim 精确 pin；Phase-1 0 改动；错误显式抛出 + hint |
 
@@ -393,16 +393,16 @@ def test_w8a8_quantization_end_to_end():
 
 ### 8.1 交付物
 
-- `worldfoundry_inf/compile/quantize.py`（修改 facade 内部 dispatch）
-- `worldfoundry_inf/compile/quantize_backends/__init__.py`（registry + factory）
-- `worldfoundry_inf/compile/quantize_backends/msmodelslim.py`（W8A8Backend 实现）
-- `worldfoundry_inf/data/calib_videomix22m.py`（校准数据加载）
-- `worldfoundry_inf/eval/__init__.py`（包标记）
-- `worldfoundry_inf/eval/quant_eval.py`（cosine eval library + CLI）
+- `worldforge_inf/compile/quantize.py`（修改 facade 内部 dispatch）
+- `worldforge_inf/compile/quantize_backends/__init__.py`（registry + factory）
+- `worldforge_inf/compile/quantize_backends/msmodelslim.py`（W8A8Backend 实现）
+- `worldforge_inf/data/calib_videomix22m.py`（校准数据加载）
+- `worldforge_inf/eval/__init__.py`（包标记）
+- `worldforge_inf/eval/quant_eval.py`（cosine eval library + CLI）
 - `pyproject.toml`（新增 `[quant]` extra）
-- `worldfoundry_inf/tests/test_quantize_backends_msmodelslim.py`
-- `worldfoundry_inf/tests/test_calib_videomix22m.py`
-- `worldfoundry_inf/tests/test_quant_eval.py`
+- `worldforge_inf/tests/test_quantize_backends_msmodelslim.py`
+- `worldforge_inf/tests/test_calib_videomix22m.py`
+- `worldforge_inf/tests/test_quant_eval.py`
 - `docs/superpowers/specs/W11_W12_QUANT_REPORT.md`（W11 真实 NPU 评估产出；本子项目在本地 laptop 不产出）
 
 ### 8.2 依赖（精确 pin，G2）
@@ -420,7 +420,7 @@ def test_w8a8_quantization_end_to_end():
 
 ### 8.3 风险与未来工作
 
-- **W11 评估执行需 NPU 主机**：本地 WSL2 无 NPU，本子项目的 plan 仅在 laptop 完成 7 单元测试 + 1 集成测试 skip；真实 8×NPU 评估在 `worldfoundry-base:phase1` Docker 容器中执行，产出 `W11_W12_QUANT_REPORT.md`
+- **W11 评估执行需 NPU 主机**：本地 WSL2 无 NPU，本子项目的 plan 仅在 laptop 完成 7 单元测试 + 1 集成测试 skip；真实 8×NPU 评估在 `worldforge-base:phase1` Docker 容器中执行，产出 `W11_W12_QUANT_REPORT.md`
 - **VideoMix22M dataset ID 需 plan 阶段确认**：若 HF 无 `videomix22m` 公开 ID，需用 `hf-internal-testing/tiny-videomix` 兜底用于 CI
 - **msModelSlim API 可能在 plan/实施期间变化**：plan 阶段需对照当时最新 msModelSlim 文档；若 API 大改，调整 `W8A8Backend.quantize()` 内实现，接口契约不变
 - **W4A8 延后**：作为独立 future sub-project；W4A8 threshold 推测 ≥ 0.95（更激进的压缩）
@@ -469,7 +469,7 @@ def test_w8a8_quantization_end_to_end():
 4. 实现 `data/calib_videomix22m.py`（校准加载 + HF datasets mock）
 5. 实现 `eval/quant_eval.py`（cosine library + CLI）
 6. 添加 7 个新单元测试 + 1 个集成测试
-7. 验证 Phase-1 测试保持绿色（`pytest worldfoundry_inf/tests`）
+7. 验证 Phase-1 测试保持绿色（`pytest worldforge_inf/tests`）
 8. 提交 + 写最终评审报告
 
 每个任务结尾独立 commit；SDD 循环执行。

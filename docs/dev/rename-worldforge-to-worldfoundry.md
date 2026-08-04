@@ -1,4 +1,4 @@
-# Rename: WorldFoundry → WorldFoundry
+# Rename: WorldForge → WorldFoundry
 
 > **Date:** 2026-08-04
 > **Scope:** Phase-1 / Phase-2 transition window (before any external publish)
@@ -6,7 +6,7 @@
 
 ## Motivation
 
-The project is positioned as an Ascend NPU **world-model 渲训推 (render / train / infer) framework** that orchestrates open-source components (vllm-ascend, mindspeed, verl / RLinf, msmodelslim). The old name `WorldFoundry` carried two limitations:
+The project is positioned as an Ascend NPU **world-model 渲训推 (render / train / infer) framework** that orchestrates open-source components (vllm-ascend, mindspeed, verl / RLinf, msmodelslim). The old name `WorldForge` carried two limitations:
 
 1. **"Forge"** suggests a single-point act of crafting. The project is an industrial pipeline + multi-component orchestrator — closer to **Foundry** than **Forge**.
 2. **No semantic room for 渲 (frame rendering / Phase-5 W40+) or 实机运行 (real-machine execution, post-Phase-5) in the brand.
@@ -17,7 +17,7 @@ The project is positioned as an Ascend NPU **world-model 渲训推 (render / tra
 
 - 4 Python packages: `worldforge_{common,train,inf,rl}` → `worldfoundry_{common,train,inf,rl}`
 - Docker image tag: `worldforge-base:*` → `worldfoundry-base:*`
-- vLLM plugin entry-point: `worldfoundry_inf` → `worldfoundry_inf`
+- vLLM plugin entry-point: `worldforge_inf` → `worldfoundry_inf`
 - Description in `pyproject.toml` updated to reflect "渲训推 + 实机后续 + 开源编排" long-term positioning.
 
 ## What is NOT renamed

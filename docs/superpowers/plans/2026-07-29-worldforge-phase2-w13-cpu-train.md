@@ -5,7 +5,7 @@
 **Goal:** Wire a real (forward + loss + backward + optimizer-step) training loop on CPU that uses an existing `DistributedStrategy` (FSDP default) and the existing LoRA wrapper. Add a CPU-runnable integration test that runs 3 real training steps on a tiny VJEPA2Model and verifies loss is computed, gradients propagate, and weights actually change.
 
 **Architecture:**
-- New module `worldfoundry_train/training_loop.py` — pure-Python training step + multi-step loop, no `distributed.init_process_group` call, no `accelerate.prepare`. CPU-native, multi-process-safe by construction (single-process semantics; FSDPStrategy's `world_size==1: return model` branch is the natural entry).
+- New module `worldforge_train/training_loop.py` — pure-Python training step + multi-step loop, no `distributed.init_process_group` call, no `accelerate.prepare`. CPU-native, multi-process-safe by construction (single-process semantics; FSDPStrategy's `world_size==1: return model` branch is the natural entry).
 - `DistributedStrategy` is invoked for `wrap()` + `backward()` + `step()` so the same loop works on DDP/FSDP/MM (`MMStrategy` is still a stub, but the loop is correct against its contract).
 - LoRA wrapping is the caller's responsibility (matches existing `lora_wrapper.py` contract). The test wires `lora_wrapper.build_lora_model` → training loop.
 - Loss is a small V-JEPA-style masked-feature MSE: given `(frames, mask)`, predict the encoder output and compute MSE on masked positions vs. the same encoder's unmasked output at the same positions. This is a stand-in for the production V-JEPA 2 self-supervised loss, sufficient for proving the training path works on CPU.
@@ -15,7 +15,7 @@
 ## Global Constraints
 
 - **G2:** No new dependency pins; existing pins preserved
-- **G3:** Phase-1 code (`worldfoundry_train/train.py`, `worldfoundry_train/parallel/*`, `worldfoundry_train/data/*`, `worldfoundry_train/model/*`, `worldfoundry_inf/compile/mindie_sd.py`, `worldfoundry_train/tests/test_*` existing) **0 changes**. This sub-project only **adds** new files in `worldfoundry_train/` (`training_loop.py`, `tests/test_training_loop.py`, `tests/test_training_loop_cpu.py`)
+- **G3:** Phase-1 code (`worldforge_train/train.py`, `worldforge_train/parallel/*`, `worldforge_train/data/*`, `worldforge_train/model/*`, `worldforge_inf/compile/mindie_sd.py`, `worldforge_train/tests/test_*` existing) **0 changes**. This sub-project only **adds** new files in `worldforge_train/` (`training_loop.py`, `tests/test_training_loop.py`, `tests/test_training_loop_cpu.py`)
 - **G4:** Explicit errors — wrong batch keys → ValueError; empty dataset → ValueError; optimizer with no `.step` → TypeError
 - **G5:** Seeded reproducibility — `seed=42` default for synthetic tensor batches
 - **G6:** Single dispatch path — `run_training_step(...)` is the only public function; multi-step is sugar on top
@@ -24,10 +24,10 @@
 
 ---
 
-## Task 1: `worldfoundry_train/training_loop.py` — real forward + backward + step
+## Task 1: `worldforge_train/training_loop.py` — real forward + backward + step
 
 **Files:**
-- Create: `worldfoundry_train/training_loop.py` (~70 lines)
+- Create: `worldforge_train/training_loop.py` (~70 lines)
 
 **Interfaces:**
 - `run_training_step(model, batch, strategy, optimizer, loss_fn=None) -> float`
@@ -48,7 +48,7 @@ CPU-runnable because `FSDPStrategy.wrap(model)` returns the model unchanged when
 """Real CPU-runnable training loop (forward + loss + backward + step).
 
 Wires the existing ``DistributedStrategy`` contract
-(``worldfoundry_train.parallel.strategy.DistributedStrategy``) to a real
+(``worldforge_train.parallel.strategy.DistributedStrategy``) to a real
 forward/loss/backward/step cycle. Works in single-rank mode (the
 ``world_size == 1`` path used in unit/CPU tests) without needing
 ``dist.init_process_group``; ``FSDPStrategy.wrap`` returns the model
@@ -71,7 +71,7 @@ import torch
 from torch import nn
 from torch.optim import Optimizer
 
-from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldforge_train.parallel.strategy import DistributedStrategy
 
 LossFn = Callable[[nn.Module, Mapping[str, torch.Tensor]], torch.Tensor]
 
@@ -151,29 +151,29 @@ __all__ = ["run_training_step", "run_training_loop", "default_loss_fn"]
 
 ### Step 1.2: Smoke-check the module loads
 
-Run: `python3 -c "from worldfoundry_train.training_loop import run_training_step, run_training_loop, default_loss_fn; print('imports OK')"`
+Run: `python3 -c "from worldforge_train.training_loop import run_training_step, run_training_loop, default_loss_fn; print('imports OK')"`
 Expected: `imports OK`
 
 ### Step 1.3: Commit
 
 ```bash
-git add worldfoundry_train/training_loop.py
+git add worldforge_train/training_loop.py
 git commit -m "feat(train): real CPU-runnable training loop via DistributedStrategy"
 ```
 
 ---
 
-## Task 2: Unit tests `worldfoundry_train/tests/test_training_loop.py`
+## Task 2: Unit tests `worldforge_train/tests/test_training_loop.py`
 
 **Files:**
-- Create: `worldfoundry_train/tests/test_training_loop.py` (~80 lines, 4 tests)
+- Create: `worldforge_train/tests/test_training_loop.py` (~80 lines, 4 tests)
 
 **Why:** Verify the loop's mechanics with mocked model + mocked batch (no real VJEPA 2 forward). Cheap to run; catches regression in backward/optimizer call ordering.
 
 ### Step 2.1: Write the 4 unit tests
 
 ```python
-"""Unit tests for worldfoundry_train.training_loop (mock-based, fast)."""
+"""Unit tests for worldforge_train.training_loop (mock-based, fast)."""
 from __future__ import annotations
 
 from unittest.mock import MagicMock
@@ -183,8 +183,8 @@ import torch
 import torch.nn as nn
 from torch.optim import SGD
 
-from worldfoundry_train.parallel.strategy import DistributedStrategy
-from worldfoundry_train.training_loop import run_training_step, run_training_loop
+from worldforge_train.parallel.strategy import DistributedStrategy
+from worldforge_train.training_loop import run_training_step, run_training_loop
 
 
 class _PassthroughStrategy(DistributedStrategy):
@@ -268,18 +268,18 @@ def test_run_training_loop_rejects_zero_or_negative_num_steps():
 
 ### Step 2.2: Run unit tests
 
-Run: `python3 -m pytest worldfoundry_train/tests/test_training_loop.py -v`
+Run: `python3 -m pytest worldforge_train/tests/test_training_loop.py -v`
 Expected: 4 passed
 
 ### Step 2.3: Verify G3 still clean
 
-Run: `git diff --stat 27b828f..HEAD -- worldfoundry_train/train.py worldfoundry_train/parallel/ worldfoundry_train/data/ worldfoundry_train/model/`
+Run: `git diff --stat 27b828f..HEAD -- worldforge_train/train.py worldforge_train/parallel/ worldforge_train/data/ worldforge_train/model/`
 Expected: empty (no changes)
 
 ### Step 2.4: Commit
 
 ```bash
-git add worldfoundry_train/tests/test_training_loop.py
+git add worldforge_train/tests/test_training_loop.py
 git commit -m "test(train): unit tests for run_training_step + run_training_loop"
 ```
 
@@ -288,7 +288,7 @@ git commit -m "test(train): unit tests for run_training_step + run_training_loop
 ## Task 3: CPU integration test `test_training_loop_cpu.py`
 
 **Files:**
-- Create: `worldfoundry_train/tests/test_training_loop_cpu.py` (~70 lines, 1 test)
+- Create: `worldforge_train/tests/test_training_loop_cpu.py` (~70 lines, 1 test)
 
 **Why:** End-to-end CPU proof: tiny VJEPA 2 forward + LoRA wrap + real MSE loss + 3 steps + loss finite + trainable params > 0 + weight actually changes.
 
@@ -310,9 +310,9 @@ import pytest
 import torch
 from transformers import VJEPA2Config, VJEPA2Model
 
-from worldfoundry_train.model.lora_wrapper import build_lora_model
-from worldfoundry_train.parallel.fsdp import FSDPStrategy
-from worldfoundry_train.training_loop import run_training_loop
+from worldforge_train.model.lora_wrapper import build_lora_model
+from worldforge_train.parallel.fsdp import FSDPStrategy
+from worldforge_train.training_loop import run_training_loop
 
 
 def _build_real_tiny_vjepa2() -> VJEPA2Model:
@@ -376,21 +376,21 @@ def test_real_vjepa2_lora_three_step_training_loop_on_cpu():
 
 ### Step 3.2: Run the CPU integration test
 
-Run: `python3 -m pytest worldfoundry_train/tests/test_training_loop_cpu.py -v`
+Run: `python3 -m pytest worldforge_train/tests/test_training_loop_cpu.py -v`
 Expected: 1 passed (~10-15s on CPU)
 
 ### Step 3.3: Run full test suite for G3 verification
 
-Run: `python3 -m pytest worldfoundry_inf/tests worldfoundry_train/tests -q`
+Run: `python3 -m pytest worldforge_inf/tests worldforge_train/tests -q`
 Expected: same pre-existing pass count + 5 new tests (4 unit + 1 CPU integration).
 
-G3: `git diff --stat 27b828f..HEAD -- worldfoundry_train/train.py worldfoundry_train/parallel/ worldfoundry_train/data/ worldfoundry_train/model/ worldfoundry_inf/compile/mindie_sd.py`
+G3: `git diff --stat 27b828f..HEAD -- worldforge_train/train.py worldforge_train/parallel/ worldforge_train/data/ worldforge_train/model/ worldforge_inf/compile/mindie_sd.py`
 Expected: empty.
 
 ### Step 3.4: Commit
 
 ```bash
-git add worldfoundry_train/tests/test_training_loop_cpu.py
+git add worldforge_train/tests/test_training_loop_cpu.py
 git commit -m "test(train): CPU e2e integration test -- real VJEPA 2 + LoRA + 3-step loop"
 ```
 

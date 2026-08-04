@@ -1,8 +1,8 @@
-# WorldFoundry Phase-2 W9-W10 MindSpeed-MM 切换实施计划
+# WorldForge Phase-2 W9-W10 MindSpeed-MM 切换实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 通过"评估 + 集成"两阶段，决定是否将 `worldfoundry-train` 的 DP-8 训练从 FSDP 切换到 MindSpeed-MM，产出可审计的决策报告。
+**Goal:** 通过"评估 + 集成"两阶段，决定是否将 `worldforge-train` 的 DP-8 训练从 FSDP 切换到 MindSpeed-MM，产出可审计的决策报告。
 
 **Architecture:** 引入 `DistributedStrategy` 抽象（`wrap()` + `step()` 两个方法），通过 `WORLDFORGE_PROFILE` 环境变量选择 `FSDPStrategy` 或 `MMStrategy`。W9 评估脚本跑两遍（baseline + eval），通过 4 项 GO/NO-GO 门决定是否进入 W10 集成。NO-GO 路径保留 FSDP，MMStrategy 永远 stub。
 
@@ -18,18 +18,18 @@
 | G4 | 严禁 silent default / silent fallback；所有错误必须显式抛出 | spec §5（继承自 Phase-1 G8） |
 | G5 | 不重写 facebookresearch/vjepa2 上游；不 fork vllm-ascend | spec §1.3 |
 | G6 | MindSpeed-MM 对 ViT-only 支持待评估（W9 GO/NO-GO 门验证），不达标保留 FSDP | spec §6.5、§7 |
-| G7 | 复用 `worldfoundry-base:phase1` Docker 镜像，不新增镜像层 | spec §8.1 |
+| G7 | 复用 `worldforge-base:phase1` Docker 镜像，不新增镜像层 | spec §8.1 |
 | G8 | 每个 task 结束需有 green test + commit | writing-plans |
-| G9 | 测试沿用 Phase-1 风格：短函数、`monkeypatch`、`subprocess` 调用 CLI 验证 | worldfoundry_train/tests/test_ddp_smoke.py 等 |
+| G9 | 测试沿用 Phase-1 风格：短函数、`monkeypatch`、`subprocess` 调用 CLI 验证 | worldforge_train/tests/test_ddp_smoke.py 等 |
 
 ---
 
 ## Task 1: `parallel/strategy.py` 接口 + 选择器 + `mindspeed.py` 桩
 
 **Files:**
-- Create: `worldfoundry_train/parallel/strategy.py`
-- Create: `worldfoundry_train/parallel/mindspeed.py`（仅桩）
-- Test: `worldfoundry_train/tests/test_strategy_select.py`
+- Create: `worldforge_train/parallel/strategy.py`
+- Create: `worldforge_train/parallel/mindspeed.py`（仅桩）
+- Test: `worldforge_train/tests/test_strategy_select.py`
 
 **Interfaces:**
 - Consumes: 无（首个 task）
@@ -40,31 +40,31 @@
 **Step 1.1: 写失败测试**
 
 ```python
-# worldfoundry_train/tests/test_strategy_select.py
+# worldforge_train/tests/test_strategy_select.py
 import pytest
 
 
 def test_train_returns_fsdp():
-    from worldfoundry_train.parallel.strategy import select_strategy
-    from worldfoundry_train.parallel.fsdp import FSDPStrategy
+    from worldforge_train.parallel.strategy import select_strategy
+    from worldforge_train.parallel.fsdp import FSDPStrategy
     s = select_strategy("train")
     assert isinstance(s, FSDPStrategy)
 
 
 def test_train_mmspeed_returns_mm(monkeypatch):
-    from worldfoundry_train.parallel import mindspeed
+    from worldforge_train.parallel import mindspeed
     class FakeMMStrategy:
         def wrap(self, model): return model
         def backward(self, loss): pass
         def step(self, optimizer): pass
     monkeypatch.setattr(mindspeed, "MMStrategy", FakeMMStrategy)
-    from worldfoundry_train.parallel.strategy import select_strategy
+    from worldforge_train.parallel.strategy import select_strategy
     s = select_strategy("train-mmspeed")
     assert isinstance(s, FakeMMStrategy)
 
 
 def test_unknown_raises():
-    from worldfoundry_train.parallel.strategy import select_strategy
+    from worldforge_train.parallel.strategy import select_strategy
     with pytest.raises(ValueError, match="foo"):
         select_strategy("foo")
 
@@ -74,11 +74,11 @@ def test_mm_missing_dep_raises(monkeypatch):
     import builtins
     real_import = builtins.__import__
     def fake_import(name, *args, **kwargs):
-        if name == "worldfoundry_train.parallel.mindspeed":
+        if name == "worldforge_train.parallel.mindspeed":
             raise ImportError("simulated missing")
         return real_import(name, *args, **kwargs)
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    from worldfoundry_train.parallel.strategy import select_strategy
+    from worldforge_train.parallel.strategy import select_strategy
     with pytest.raises(ImportError, match=r"pip install"):
         select_strategy("train-mmspeed")
 ```
@@ -86,11 +86,11 @@ def test_mm_missing_dep_raises(monkeypatch):
 **Step 1.2: 跑测试确认失败**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_strategy_select.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_strategy_select.py -v
 ```
 
-Expected: 4 failures. The first 3 fail with `ImportError: No module named 'worldfoundry_train.parallel.strategy'`; the 4th (`test_train_returns_fsdp`) fails with `ImportError: cannot import name 'FSDPStrategy'` because `FSDPStrategy` is created in Task 2. This is expected — Task 1 alone cannot make that test pass.
+Expected: 4 failures. The first 3 fail with `ImportError: No module named 'worldforge_train.parallel.strategy'`; the 4th (`test_train_returns_fsdp`) fails with `ImportError: cannot import name 'FSDPStrategy'` because `FSDPStrategy` is created in Task 2. This is expected — Task 1 alone cannot make that test pass.
 
 **Step 1.3: 实现 `strategy.py`**
 
@@ -138,12 +138,12 @@ def select_strategy(profile: str) -> DistributedStrategy:
         ImportError: train-mmspeed selected but mindspeed-mm not installed
     """
     if profile == "train":
-        from worldfoundry_train.parallel.fsdp import FSDPStrategy
+        from worldforge_train.parallel.fsdp import FSDPStrategy
         return FSDPStrategy()
 
     if profile == "train-mmspeed":
         try:
-            from worldfoundry_train.parallel.mindspeed import MMStrategy
+            from worldforge_train.parallel.mindspeed import MMStrategy
         except ImportError as exc:
             raise ImportError(
                 "MindSpeed-MM not installed. Run: pip install -e '.[mindspeed]'"
@@ -162,7 +162,7 @@ from __future__ import annotations
 from torch import nn
 from torch.optim import Optimizer
 
-from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldforge_train.parallel.strategy import DistributedStrategy
 
 
 class MMStrategy(DistributedStrategy):
@@ -187,8 +187,8 @@ class MMStrategy(DistributedStrategy):
 **Step 1.5: 跑测试确认通过**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_strategy_select.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_strategy_select.py -v
 ```
 
 Expected: 3 passed. `test_train_returns_fsdp` remains failing (needs `FSDPStrategy` from Task 2); it will pass after Task 2 completes.
@@ -196,7 +196,7 @@ Expected: 3 passed. `test_train_returns_fsdp` remains failing (needs `FSDPStrate
 **Step 1.6: Commit**
 
 ```bash
-git add worldfoundry_train/parallel/strategy.py worldfoundry_train/parallel/mindspeed.py worldfoundry_train/tests/test_strategy_select.py
+git add worldforge_train/parallel/strategy.py worldforge_train/parallel/mindspeed.py worldforge_train/tests/test_strategy_select.py
 git commit -m "feat(train): DistributedStrategy interface + MMStrategy stub"
 ```
 
@@ -207,8 +207,8 @@ git commit -m "feat(train): DistributedStrategy interface + MMStrategy stub"
 ## Task 2: `FSDPStrategy` 实现（扩展 Phase-1 桩）
 
 **Files:**
-- Modify: `worldfoundry_train/parallel/fsdp.py`（现有 Phase-1 桩，仅 setup_fsdp/cleanup_fsdp）
-- Test: `worldfoundry_train/tests/test_fsdp_strategy.py`
+- Modify: `worldforge_train/parallel/fsdp.py`（现有 Phase-1 桩，仅 setup_fsdp/cleanup_fsdp）
+- Test: `worldforge_train/tests/test_fsdp_strategy.py`
 
 **Interfaces:**
 - Consumes: `DistributedStrategy` from Task 1
@@ -217,7 +217,7 @@ git commit -m "feat(train): DistributedStrategy interface + MMStrategy stub"
 **Step 2.1: 写失败测试**
 
 ```python
-# worldfoundry_train/tests/test_fsdp_strategy.py
+# worldforge_train/tests/test_fsdp_strategy.py
 import pytest
 import torch
 
@@ -257,7 +257,7 @@ def test_step_all_reduces_and_steps(monkeypatch):
     use the same primitives Phase-1 used (all_reduce -> step -> zero_grad) so
     W9 baseline numbers stay comparable to Phase-1 (spec §3.2 equivalence).
     """
-    from worldfoundry_train.parallel.fsdp import FSDPStrategy
+    from worldforge_train.parallel.fsdp import FSDPStrategy
     import torch.distributed as dist
     calls = []
     monkeypatch.setattr(dist, "is_initialized", lambda: True)
@@ -282,7 +282,7 @@ def test_equivalent_to_phase1_trainer(monkeypatch):
     Proves W9 baseline numbers (from FSDPStrategy) are comparable to Phase-1.
     """
     import torch
-    from worldfoundry_train.parallel.fsdp import FSDPStrategy
+    from worldforge_train.parallel.fsdp import FSDPStrategy
 
     model = torch.nn.Linear(4, 1)
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -311,19 +311,19 @@ def test_equivalent_to_phase1_trainer(monkeypatch):
 **Step 2.2: 跑测试确认失败**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_fsdp_strategy.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_fsdp_strategy.py -v
 ```
 
 Expected: 3 failures (FSDPStrategy doesn't exist yet).
 
 **Step 2.3: 在 `parallel/fsdp.py` 末尾添加 `FSDPStrategy` 类**
 
-Append to existing `/mnt/c/WorkSpace/WorldFoundry/worldfoundry_train/parallel/fsdp.py`. The existing file already has `import warnings`; ensure the appended `FSDPStrategy` block has access to these imports at module scope by adding them if missing:
+Append to existing `/mnt/c/WorkSpace/WorldForge/worldforge_train/parallel/fsdp.py`. The existing file already has `import warnings`; ensure the appended `FSDPStrategy` block has access to these imports at module scope by adding them if missing:
 
 ```python
 from torch import nn
-from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldforge_train.parallel.strategy import DistributedStrategy
 ```
 
 Then append the class:
@@ -372,8 +372,8 @@ Also update the file header docstring to remove the "FSDP path is a Phase-1 stub
 **Step 2.4: 跑测试确认通过**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_fsdp_strategy.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_fsdp_strategy.py -v
 ```
 
 Expected: 3 passed.
@@ -381,8 +381,8 @@ Expected: 3 passed.
 **Step 2.5: 确认 Phase-1 现有测试不退化**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_ddp_smoke.py worldfoundry_train/tests/ -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_ddp_smoke.py worldforge_train/tests/ -v
 ```
 
 Expected: all existing tests still pass (FSDPStrategy is additive; `setup_fsdp()` unchanged).
@@ -390,7 +390,7 @@ Expected: all existing tests still pass (FSDPStrategy is additive; `setup_fsdp()
 **Step 2.6: Commit**
 
 ```bash
-git add worldfoundry_train/parallel/fsdp.py worldfoundry_train/tests/test_fsdp_strategy.py
+git add worldforge_train/parallel/fsdp.py worldforge_train/tests/test_fsdp_strategy.py
 git commit -m "feat(train): FSDPStrategy implementation (extends Phase-1 stub)"
 ```
 
@@ -399,10 +399,10 @@ git commit -m "feat(train): FSDPStrategy implementation (extends Phase-1 stub)"
 ## Task 3: `bench/` 子包 — runner + `__main__`
 
 **Files:**
-- Create: `worldfoundry_train/bench/__init__.py`
-- Create: `worldfoundry_train/bench/__main__.py`
-- Create: `worldfoundry_train/bench/runner.py`
-- Test: `worldfoundry_train/tests/test_bench_runner.py`
+- Create: `worldforge_train/bench/__init__.py`
+- Create: `worldforge_train/bench/__main__.py`
+- Create: `worldforge_train/bench/runner.py`
+- Test: `worldforge_train/tests/test_bench_runner.py`
 
 **Interfaces:**
 - Consumes: `select_strategy()` from Task 1
@@ -411,14 +411,14 @@ git commit -m "feat(train): FSDPStrategy implementation (extends Phase-1 stub)"
 **Step 3.1: 写失败测试**
 
 ```python
-# worldfoundry_train/tests/test_bench_runner.py
+# worldforge_train/tests/test_bench_runner.py
 import json
 import torch
 
 
 def test_run_bench_writes_json(tmp_path, monkeypatch):
     """runner must write <tag>.json with clips_per_s + loss_curve."""
-    from worldfoundry_train.bench import runner
+    from worldforge_train.bench import runner
 
     # Stub model: a single Linear that outputs scalar loss.
     class TinyModel(torch.nn.Module):
@@ -457,8 +457,8 @@ def test_run_bench_writes_json(tmp_path, monkeypatch):
 **Step 3.2: 跑测试确认失败**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_bench_runner.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_bench_runner.py -v
 ```
 
 Expected: ImportError.
@@ -487,7 +487,7 @@ from typing import Any
 
 import torch
 
-from worldfoundry_train.parallel.strategy import select_strategy
+from worldforge_train.parallel.strategy import select_strategy
 
 
 class _TinyBenchModel(torch.nn.Module):
@@ -571,17 +571,17 @@ def run_bench(
 **Step 3.5: 实现 `bench/__main__.py`**
 
 ```python
-"""CLI: python -m worldfoundry_train.bench --profile <p> --steps N --warmup W --tag <t>"""
+"""CLI: python -m worldforge_train.bench --profile <p> --steps N --warmup W --tag <t>"""
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from worldfoundry_train.bench.runner import run_bench
+from worldforge_train.bench.runner import run_bench
 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="WorldFoundry benchmark runner")
+    p = argparse.ArgumentParser(description="WorldForge benchmark runner")
     p.add_argument("--profile", required=True, choices=["train", "train-mmspeed"])
     p.add_argument("--steps", type=int, default=200)
     p.add_argument("--warmup", type=int, default=50)
@@ -610,8 +610,8 @@ if __name__ == "__main__":
 **Step 3.6: 跑测试确认通过**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_bench_runner.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_bench_runner.py -v
 ```
 
 Expected: 1 passed.
@@ -619,8 +619,8 @@ Expected: 1 passed.
 **Step 3.7: 手动验证 CLI**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-WORLDFORGE_PROFILE=train python -m worldfoundry_train.bench --profile train --steps 10 --warmup 2 --tag smoke --output-dir /tmp/bench_smoke
+cd /mnt/c/WorkSpace/WorldForge
+WORLDFORGE_PROFILE=train python -m worldforge_train.bench --profile train --steps 10 --warmup 2 --tag smoke --output-dir /tmp/bench_smoke
 cat /tmp/bench_smoke/smoke.json
 ```
 
@@ -629,7 +629,7 @@ Expected: JSON file with profile=train, tag=smoke, loss_curve of length 8.
 **Step 3.8: Commit**
 
 ```bash
-git add worldfoundry_train/bench/ worldfoundry_train/tests/test_bench_runner.py
+git add worldforge_train/bench/ worldforge_train/tests/test_bench_runner.py
 git commit -m "feat(train): bench subpackage (runner + CLI)"
 ```
 
@@ -638,8 +638,8 @@ git commit -m "feat(train): bench subpackage (runner + CLI)"
 ## Task 4: `bench/compare.py` + W9 报告生成
 
 **Files:**
-- Create: `worldfoundry_train/bench/compare.py`
-- Test: `worldfoundry_train/tests/test_bench_compare.py`
+- Create: `worldforge_train/bench/compare.py`
+- Test: `worldforge_train/tests/test_bench_compare.py`
 
 **Interfaces:**
 - Consumes: two JSON files (baseline, eval) from `runner.run_bench`
@@ -648,7 +648,7 @@ git commit -m "feat(train): bench subpackage (runner + CLI)"
 **Step 4.1: 写失败测试**
 
 ```python
-# worldfoundry_train/tests/test_bench_compare.py
+# worldforge_train/tests/test_bench_compare.py
 import json
 from pathlib import Path
 
@@ -673,7 +673,7 @@ def _good_payload(clips_per_s: float = 10.0, loss: float = 0.5) -> dict:
 
 
 def test_all_pass_writes_go(tmp_path):
-    from worldfoundry_train.bench.compare import compare
+    from worldforge_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(10.0))
     ev = _write_json(tmp_path / "eval.json", _good_payload(8.0))  # ratio 0.8 >= 0.7
     out = tmp_path / "report.md"
@@ -683,7 +683,7 @@ def test_all_pass_writes_go(tmp_path):
 
 
 def test_throughput_fail_writes_nogo(tmp_path):
-    from worldfoundry_train.bench.compare import compare
+    from worldforge_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(10.0))
     ev = _write_json(tmp_path / "eval.json", _good_payload(5.0))  # ratio 0.5 < 0.7
     out = tmp_path / "report.md"
@@ -696,7 +696,7 @@ def test_throughput_fail_writes_nogo(tmp_path):
 
 def test_loss_curve_atol_boundary(tmp_path):
     """Loss curve max abs diff == 0.005 passes (atol=1e-2); == 0.02 fails."""
-    from worldfoundry_train.bench.compare import compare
+    from worldforge_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(loss=0.5))
     near = _write_json(tmp_path / "near.json", {**_good_payload(loss=0.5), "loss_curve": [0.505] * 8})
     out_near = tmp_path / "near.md"
@@ -710,8 +710,8 @@ def test_loss_curve_atol_boundary(tmp_path):
 **Step 4.2: 跑测试确认失败**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_bench_compare.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_bench_compare.py -v
 ```
 
 Expected: ImportError.
@@ -805,8 +805,8 @@ Ratio：{ratio}
 **Step 4.4: 跑测试确认通过**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_bench_compare.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_bench_compare.py -v
 ```
 
 Expected: 3 passed.
@@ -814,7 +814,7 @@ Expected: 3 passed.
 **Step 4.5: Commit**
 
 ```bash
-git add worldfoundry_train/bench/compare.py worldfoundry_train/tests/test_bench_compare.py
+git add worldforge_train/bench/compare.py worldforge_train/tests/test_bench_compare.py
 git commit -m "feat(train): bench compare with 4-condition GO/NO-GO gate"
 ```
 
@@ -834,7 +834,7 @@ git commit -m "feat(train): bench compare with 4-condition GO/NO-GO gate"
 # Usage:
 #     bash scripts/w9_eval.sh
 #
-# Runs in worldfoundry-base:phase1 Docker container on 8x NPU host.
+# Runs in worldforge-base:phase1 Docker container on 8x NPU host.
 # Produces docs/superpowers/specs/W9_EVAL_REPORT.md with GO/NO-GO verdict.
 set -uo pipefail  # NOTE: not -e: we want to continue past bench failures to write report
 
@@ -855,12 +855,12 @@ run_step() {
 run_benches() {
     # 1. FSDP baseline (always succeeds)
     run_step "BENCH: FSDP baseline (train profile)" \
-        python -m worldfoundry_train.bench \
+        python -m worldforge_train.bench \
             --profile train --steps 200 --warmup 50 --tag fsdp-baseline || true
 
     # 2. MM eval (may fail — that's the point)
     run_step "BENCH: MM eval (train-mmspeed profile)" \
-        python -m worldfoundry_train.bench \
+        python -m worldforge_train.bench \
             --profile train-mmspeed --steps 200 --warmup 50 --tag mindspeed-eval || true
 }
 
@@ -869,14 +869,14 @@ if [[ "${WORLDFORGE_NO_DOCKER:-0}" == "1" ]]; then
 else
     docker run --rm --device /dev/davinci0:/dev/davinci0 --device /dev/davinci_manager \
         -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro -v "$ROOT:/workspace" -v /data:/data \
-        -e WORLDFORGE_PROFILE=train-mmspeed worldfoundry-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_benches) && run_benches"
+        -e WORLDFORGE_PROFILE=train-mmspeed worldforge-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_benches) && run_benches"
 fi
 
 # 3. Compare + write report
 echo "==== COMPARE: writing W9_EVAL_REPORT.md ===="
 python -c "
 from pathlib import Path
-from worldfoundry_train.bench.compare import compare
+from worldforge_train.bench.compare import compare
 verdict = compare(
     Path('bench_results/fsdp-baseline.json'),
     Path('bench_results/mindspeed-eval.json'),
@@ -891,7 +891,7 @@ echo "==== W9 eval complete; see docs/superpowers/specs/W9_EVAL_REPORT.md ===="
 **Step 5.2: 标记可执行**
 
 ```bash
-chmod +x /mnt/c/WorkSpace/WorldFoundry/scripts/w9_eval.sh
+chmod +x /mnt/c/WorkSpace/WorldForge/scripts/w9_eval.sh
 ```
 
 **Step 5.3: Commit**
@@ -911,7 +911,7 @@ git commit -m "feat(scripts): W9 MindSpeed-MM evaluation driver"
 **Step 6.1: 在 8×NPU 主机上跑评估**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 docker run --rm \
     --device /dev/davinci0:/dev/davinci0 \
     --device /dev/davinci1:/dev/davinci1 \
@@ -925,7 +925,7 @@ docker run --rm \
     -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
     -v "$(pwd):/workspace" \
     -v /data:/data \
-    worldfoundry-base:phase1 \
+    worldforge-base:phase1 \
     bash /workspace/scripts/w9_eval.sh
 ```
 
@@ -934,7 +934,7 @@ Expected: script runs both bench commands, produces JSON files in `bench_results
 **Step 6.2: 检查报告**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 cat docs/superpowers/specs/W9_EVAL_REPORT.md
 ```
 
@@ -943,7 +943,7 @@ Look at: `**结论**：GO` or `**结论**：NO-GO`. Note which items failed.
 **Step 6.3: 记录决策**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 echo "W9 decision: $(grep '**结论**' docs/superpowers/specs/W9_EVAL_REPORT.md)" \
     >> .superpowers/sdd/progress.md
 ```
@@ -951,7 +951,7 @@ echo "W9 decision: $(grep '**结论**' docs/superpowers/specs/W9_EVAL_REPORT.md)
 **Step 6.4: 提交报告**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 git add docs/superpowers/specs/W9_EVAL_REPORT.md bench_results/
 git commit -m "docs(eval): W9 MindSpeed-MM evaluation report"
 ```
@@ -963,7 +963,7 @@ git commit -m "docs(eval): W9 MindSpeed-MM evaluation report"
 **Step 7.1: 读取报告结论**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 VERDICT=$(grep '**结论**' docs/superpowers/specs/W9_EVAL_REPORT.md | grep -oE 'GO|NO-GO')
 echo "W9 verdict: $VERDICT"
 ```
@@ -987,20 +987,20 @@ echo "W9 verdict: $VERDICT"
 > **执行条件**：Task 7 verdict = GO。
 
 **Files:**
-- Modify: `worldfoundry_train/parallel/mindspeed.py`（替换 stub）
-- Test: `worldfoundry_train/tests/test_mm_strategy.py`
+- Modify: `worldforge_train/parallel/mindspeed.py`（替换 stub）
+- Test: `worldforge_train/tests/test_mm_strategy.py`
 
 **Step 8.1: 写失败测试**
 
 ```python
-# worldfoundry_train/tests/test_mm_strategy.py
+# worldforge_train/tests/test_mm_strategy.py
 import pytest
 import torch
 
 
 def test_wrap_configures_tp_dp_zero_grad_ckpt(monkeypatch):
     """wrap() must invoke MSTrainEngine with tp=1, dp=8, zero=1, grad_ckpt=True."""
-    from worldfoundry_train.parallel import mindspeed as mm_mod
+    from worldforge_train.parallel import mindspeed as mm_mod
     captured = {}
 
     class FakeMSTrainEngine:
@@ -1020,12 +1020,12 @@ def test_wrap_configures_tp_dp_zero_grad_ckpt(monkeypatch):
 
 def test_wrap_failure_surfaces_clear_error(monkeypatch):
     """wrap() failure must surface "V-JEPA 2" ValueError (spec §3.3)."""
-    from worldfoundry_train.parallel.mindspeed import MMStrategy
+    from worldforge_train.parallel.mindspeed import MMStrategy
 
     def fake_build_engine(model):
         raise RuntimeError("unknown submodule: vision_encoder.layers.0")
 
-    monkeypatch.setattr("worldfoundry_train.parallel.mindspeed._build_engine", fake_build_engine)
+    monkeypatch.setattr("worldforge_train.parallel.mindspeed._build_engine", fake_build_engine)
     model = torch.nn.Linear(4, 4)
     with pytest.raises(ValueError, match="V-JEPA 2"):
         MMStrategy().wrap(model)
@@ -1034,8 +1034,8 @@ def test_wrap_failure_surfaces_clear_error(monkeypatch):
 **Step 8.2: 跑测试确认失败**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_mm_strategy.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_mm_strategy.py -v
 ```
 
 Expected: failures (stub raises NotImplementedError).
@@ -1061,7 +1061,7 @@ import torch
 from torch import nn
 from torch.optim import Optimizer
 
-from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldforge_train.parallel.strategy import DistributedStrategy
 
 _engine: Any = None  # module-level reference for tests
 
@@ -1122,8 +1122,8 @@ class MMStrategy(DistributedStrategy):
 **Step 8.4: 跑测试确认通过**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests/test_mm_strategy.py -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests/test_mm_strategy.py -v
 ```
 
 Expected: 2 passed.
@@ -1131,7 +1131,7 @@ Expected: 2 passed.
 **Step 8.5: Commit**
 
 ```bash
-git add worldfoundry_train/parallel/mindspeed.py worldfoundry_train/tests/test_mm_strategy.py
+git add worldforge_train/parallel/mindspeed.py worldforge_train/tests/test_mm_strategy.py
 git commit -m "feat(train): MMStrategy real implementation (W9 = GO)"
 ```
 
@@ -1142,20 +1142,20 @@ git commit -m "feat(train): MMStrategy real implementation (W9 = GO)"
 > **执行条件**：Task 8 完成（verdict = GO）。
 
 **Files:**
-- Modify: `worldfoundry_train/train.py`（1 行变更 + 1 个分支）
+- Modify: `worldforge_train/train.py`（1 行变更 + 1 个分支）
 - Modify: `pyproject.toml`（新增 `[mindspeed]` extra）
 
 **Step 9.1: 在 `train.py` 注入 `WORLDFORGE_PROFILE` 分支**
 
-Find this block in `worldfoundry_train/train.py`:
+Find this block in `worldforge_train/train.py`:
 
 ```python
 if args.parallel == "ddp":
-    from worldfoundry_train.parallel.ddp import cleanup_ddp, setup_ddp
+    from worldforge_train.parallel.ddp import cleanup_ddp, setup_ddp
     world_size, local_rank, global_rank = setup_ddp()
     print(f"[DDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
 else:
-    from worldfoundry_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
+    from worldforge_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
     world_size, local_rank, global_rank = setup_fsdp()
     print(f"[FSDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
 ```
@@ -1165,7 +1165,7 @@ Replace with an early-return MM path, and leave the existing DDP/FSDP dispatch u
 ```python
 profile = os.environ.get("WORLDFORGE_PROFILE")
 if profile == "train-mmspeed":
-    from worldfoundry_train.parallel.mindspeed import MMStrategy
+    from worldforge_train.parallel.mindspeed import MMStrategy
     print("[MM] profile=train-mmspeed")
     return run_mm_training(cfg, strategy=MMStrategy())
 
@@ -1228,7 +1228,7 @@ mindspeed = ["mindspeed-mm==<W9_PINNED_VERSION>"]
 **Step 9.3: 跑 W10 smoke 验证集成**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 docker run --rm \
     --device /dev/davinci0:/dev/davinci0 \
     --device /dev/davinci_manager \
@@ -1236,8 +1236,8 @@ docker run --rm \
     -v "$(pwd):/workspace" \
     -v /data:/data \
     -e WORLDFORGE_PROFILE=train-mmspeed \
-    worldfoundry-base:phase1 \
-    bash -c "cd /workspace && pip install -e '.[mindspeed]' && python -m worldfoundry_train.train --config worldfoundry_train/configs/vjepa2_vitl_1.2b.yaml"
+    worldforge-base:phase1 \
+    bash -c "cd /workspace && pip install -e '.[mindspeed]' && python -m worldforge_train.train --config worldforge_train/configs/vjepa2_vitl_1.2b.yaml"
 ```
 
 Expected: training starts without error, prints `[MM] profile=train-mmspeed`.
@@ -1245,8 +1245,8 @@ Expected: training starts without error, prints `[MM] profile=train-mmspeed`.
 **Step 9.4: 跑全部单元测试确认无回归**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests -v
 ```
 
 Expected: all tests pass (13 new + Phase-1 existing).
@@ -1254,7 +1254,7 @@ Expected: all tests pass (13 new + Phase-1 existing).
 **Step 9.5: Commit**
 
 ```bash
-git add worldfoundry_train/train.py pyproject.toml
+git add worldforge_train/train.py pyproject.toml
 git commit -m "feat(train): WORLDFORGE_PROFILE=train-mmspeed injection + mindspeed extra"
 ```
 
@@ -1266,7 +1266,7 @@ git commit -m "feat(train): WORLDFORGE_PROFILE=train-mmspeed injection + mindspe
 
 **Files:**
 - Modify: `docs/superpowers/specs/2026-07-27-ascend-world-model-design.md`（§9 验收项 #5 标注）
-- Modify: `docs/superpowers/specs/2026-07-28-worldfoundry-phase2-w9-w10-mindspeed-design.md`（§9 标记 deferred）
+- Modify: `docs/superpowers/specs/2026-07-28-worldforge-phase2-w9-w10-mindspeed-design.md`（§9 标记 deferred）
 
 **Step 10.1: 在父 spec §9 验收项 #5 加 deferred 标记**
 
@@ -1300,8 +1300,8 @@ Already covers NO-GO path; just append:
 **Step 10.5: 跑全部测试确认无回归**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-pytest worldfoundry_train/tests -v
+cd /mnt/c/WorkSpace/WorldForge
+pytest worldforge_train/tests -v
 ```
 
 Expected: all tests pass (11 new from Tasks 1-5; Tasks 8-9 跳过；`mindspeed.py` 桩存在).

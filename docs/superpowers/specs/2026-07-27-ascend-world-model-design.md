@@ -1,4 +1,4 @@
-# WorldFoundry — 昇腾 NPU 世界模型训练 + 推理平台设计
+# WorldForge — 昇腾 NPU 世界模型训练 + 推理平台设计
 
 **作者**：MiniMax-M3（与 chad 共同设计）
 **日期**：2026-07-27
@@ -38,13 +38,13 @@
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│              WorldFoundry — 昇腾世界模型训练+推理平台                        │
+│              WorldForge — 昇腾世界模型训练+推理平台                        │
 │         (基于 V-JEPA 2 / V-JEPA 2.1 / V-JEPA 2-AC)                        │
 ├──────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
 │  ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────────┐    │
 │  │ 训练子系统        │  │ RL 后训练子系统   │  │ 推理引擎              │    │
-│  │ WorldFoundry-Train │  │ WorldFoundry-RL    │  │ WorldFoundry-Inf       │    │
+│  │ WorldForge-Train │  │ WorldForge-RL    │  │ WorldForge-Inf       │    │
 │  │                  │  │                  │  │                      │    │
 │  │ • Data Pipeline  │  │ • verl/trl +     │  │ • vLLM-Ascend        │    │
 │  │   (DVPP decode,  │  │   torch_npu      │  │   插件挂载 V-JEPA 2  │    │
@@ -86,7 +86,7 @@
 
 ---
 
-## 3. 训练子系统（WorldFoundry-Train）
+## 3. 训练子系统（WorldForge-Train）
 
 ### 3.1 数据流水线
 
@@ -154,7 +154,7 @@ model.print_trainable_parameters()
 ```bash
 # 默认走 DDP（LoRA + 1.2B 模型大小 + 8×64GB 不需要分片）
 torchrun --nproc_per_node=8 \
-  worldfoundry_train/train.py \
+  worldforge_train/train.py \
   --model facebook/vjepa2-vitl-1.2b \
   --dataset /data/videomix22m \
   --parallel ddp \
@@ -193,7 +193,7 @@ models/
 
 ---
 
-## 4. 推理引擎（WorldFoundry-Inf）
+## 4. 推理引擎（WorldForge-Inf）
 
 ### 4.1 核心问题：V-JEPA 不是 LLM
 
@@ -203,7 +203,7 @@ V-JEPA 2 是**非自回归 ViT 编码器**（一次 forward 输出全部特征�
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  WorldFoundry-Inf Service (gRPC :50051 / HTTP :8080)          │
+│  WorldForge-Inf Service (gRPC :50051 / HTTP :8080)          │
 ├────────────────────────────────────────────────────────────┤
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
 │  │  REST/gRPC   │  │  Batcher     │  │  Scheduler   │    │
@@ -284,7 +284,7 @@ OpenAI 兼容层只是薄壳，**核心数据格式对齐 HF transformers.VJEPA2
 - **认证**：Phase-1 部署在内网，HMAC 签名 token（共享密钥 + timestamp + 路径）；Phase-2 引入 mTLS（双向证书）
 - **限速**：每 adapter 每分钟 token 桶限速；推理 QPS > 1000 时返回 429
 - **输入校验**：video URL 白名单 / 文件大小 ≤ 200MB / 时长 ≤ 60s
-- **可观测**：Prometheus 指标（`worldfoundry_rps`, `worldfoundry_latency_ms`, `worldfoundry_om_load_errors`）+ OpenTelemetry trace
+- **可观测**：Prometheus 指标（`worldforge_rps`, `worldforge_latency_ms`, `worldforge_om_load_errors`）+ OpenTelemetry trace
 - **失败处理**：
   - OM 加载失败 → 降级到原始 bf16 + 标记降级状态
   - 单 batch DVPP 解码失败 → 回退到 decord
@@ -292,7 +292,7 @@ OpenAI 兼容层只是薄壳，**核心数据格式对齐 HF transformers.VJEPA2
 
 ---
 
-## 5. RL 后训练子系统（WorldFoundry-RL）
+## 5. RL 后训练子系统（WorldForge-RL）
 
 ### 5.1 三种 RL 范式（在 V-JEPA 2 上的应用）
 
@@ -308,7 +308,7 @@ OpenAI 兼容层只是薄壳，**核心数据格式对齐 HF transformers.VJEPA2
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                       WorldFoundry-RL                               │
+│                       WorldForge-RL                               │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐       │
@@ -341,7 +341,7 @@ OpenAI 兼容层只是薄壳，**核心数据格式对齐 HF transformers.VJEPA2
 ```python
 # 基于 facebookresearch/vjepa2 官方 evals/ 目录的 AC 训练脚本改编
 # （Phase-1 W7 任务：先打开该仓库 evals/ 目录确认实际脚本名再 fill in）
-from worldfoundry_rl import VJEPAActor, DroidEnv, PPOTrainer
+from worldforge_rl import VJEPAActor, DroidEnv, PPOTrainer
 
 actor = VJEPAActor.from_pretrained(
     "facebook/vjepa2-vitl-1.2b",   # 起点：原 V-JEPA 2 权重
@@ -412,7 +412,7 @@ trainer.fit(epochs=100, batch_size=32)
 > **Phase-1 起始基线**：CANN 8.5.1 + torch 2.9.0 + vllm-ascend 0.18.0（保守兼容）。Phase-2 评估升级到 v0.22.1+。
 
 ```yaml
-# docker/worldfoundry-base/Dockerfile (基于 ascend-docker-image/ascend-pytorch)
+# docker/worldforge-base/Dockerfile (基于 ascend-docker-image/ascend-pytorch)
 FROM ascend-pytorch:2.9.0-cann8.5.1-ubuntu22.04
 RUN pip install \
     transformers==4.55.0 \
@@ -450,19 +450,19 @@ Phase-1 (W1-W8) ─ 原型闭环
   └─ W7-W8: V-JEPA 2-AC 复现（Meta 62h Droid）
 
   交付物：
-    • worldfoundry-train (FSDP LoRA 跑通)
-    • worldfoundry-inf (vLLM-Ascend + V-JEPA 2 Worker)
+    • worldforge-train (FSDP LoRA 跑通)
+    • worldforge-inf (vLLM-Ascend + V-JEPA 2 Worker)
     • V-JEPA 2-AC 复现报告
 
 Phase-2 (W9-W16) ─ 性能优化 + RL 闭环
   ├─ W9-W10: 评估并切换 MindSpeed-MM (TP+DP 混合并行)
   ├─ W11-W12: 量化 (W8A8 → W4A8) + 编译优化
-  ├─ W13-W14: WorldFoundry-RL 完整 verl 集成
+  ├─ W13-W14: WorldForge-RL 完整 verl 集成
   └─ W15-W16: 自定义具身任务验证（自建仿真环境）
 
   交付物：
-    • worldfoundry-train Phase-2 (MindSpeed-MM 提速 30%+, 不达标则保留 FSDP)
-    • worldfoundry-rl (PPO/GRPO 跑通)
+    • worldforge-train Phase-2 (MindSpeed-MM 提速 30%+, 不达标则保留 FSDP)
+    • worldforge-rl (PPO/GRPO 跑通)
     • 性能 benchmark 报告
 
 Phase-3 (W17-W24) ─ 通用化 & 上游回馈
@@ -523,7 +523,7 @@ Phase-3 (W17-W24) ─ 通用化 & 上游回馈
 | 4 | V-JEPA 2-AC 复现 W7-W8 | **仅复现 AC 微调阶段**：latent action prediction loss 在 Droid 验证集上 ≤ Meta 公开值 × 1.2 倍（不要求完整 80% 复现） |
 | 5 | MindSpeed 切换 W9-W10 | 训练吞吐 > DDP baseline 30%+（**Phase-2 W9 = NO-GO; deferred pending future MindSpeed re-evaluation. W11-W12 quantization is a separate workstream.**） |
 | 6 | W8A8 量化 W11-W12 | 模型 OM 大小压缩 ~50%，下游特征 cosine similarity 与 bf16 baseline ≥ 0.98 |
-| 7 | WorldFoundry-RL PPO W13-W14 | Droid pick_place 任务成功率 ≥ 50%（100 episode 平均，meta 公开值 ~75%） |
+| 7 | WorldForge-RL PPO W13-W14 | Droid pick_place 任务成功率 ≥ 50%（100 episode 平均，meta 公开值 ~75%） |
 | 8 | 自定义具身任务 W15-W16 | 与 DDP LoRA baseline 在 eval suite 上 ±2% 内 |
 | 9 | V-JEPA 2.1 升级 W17-W18 | Dense Predictive Loss 在 VideoMix22M 1k 子集上 100 步内 loss 单调下降 |
 | 10 | AD benchmark W19-W20 | CARLA Town01 直行场景闭环跑通：100 episode 平均 episode_return ≥ Meta GAIA-1 公开 baseline × 0.9 |

@@ -1,10 +1,10 @@
-# WorldFoundry Phase-1 (Prototype Loop) Implementation Plan
+# WorldForge Phase-1 (Prototype Loop) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a working Ascend NPU training + inference loop for Meta V-JEPA 2 (1.2B) — DDP LoRA fine-tuning, vLLM-Ascend plugin inference, end-to-end smoke test, V-JEPA 2-AC finetuning phase reproduction.
 
-**Architecture:** Three Python packages (`worldfoundry_train`, `worldfoundry_inf`, `worldfoundry_rl`) on a shared `worldfoundry_common` base. Phase-1 ships against the locked version matrix (CANN 8.5.1 + torch_npu 2.9.0 + vllm-ascend 0.18.0). No upstream forks; all adaptation lives in our packages. HuggingFace `transformers.VJEPA2Model` is wrapped with PEFT LoRA (target_modules verified at runtime).
+**Architecture:** Three Python packages (`worldforge_train`, `worldforge_inf`, `worldforge_rl`) on a shared `worldforge_common` base. Phase-1 ships against the locked version matrix (CANN 8.5.1 + torch_npu 2.9.0 + vllm-ascend 0.18.0). No upstream forks; all adaptation lives in our packages. HuggingFace `transformers.VJEPA2Model` is wrapped with PEFT LoRA (target_modules verified at runtime).
 
 **Tech Stack:** Python 3.11 · CANN 8.5.1 · torch_npu 2.9.0 · transformers 4.55.0 · peft 0.18.0 · vllm 0.18.0 · vllm-ascend 0.18.0 · decord 0.6.0 · datasets 3.6.0 · accelerate 1.10.0 · verl 0.5.0 · pytest 8.x · FastAPI + uvicorn · Prometheus client · OpenTelemetry SDK
 
@@ -19,7 +19,7 @@ These rules apply to every task. The implementer reads them once, not per-task.
 | G3 | **Default parallel = DDP for LoRA on 1.2B model**; FSDP only for full-finetune or long-seq | Spec §3.3 |
 | G4 | **Every LoRA config must pass `model.print_trainable_parameters()` > 0** before training starts; if matches=0, abort | Spec §3.2 + risk row |
 | G5 | **All file paths absolute** (no relative imports beyond package-internal) | User feedback rule |
-| G6 | **Naming**: packages `worldfoundry_<subsystem>`; modules `snake_case`; classes `PascalCase`; constants `UPPER_SNAKE` | Consistency rule |
+| G6 | **Naming**: packages `worldforge_<subsystem>`; modules `snake_case`; classes `PascalCase`; constants `UPPER_SNAKE` | Consistency rule |
 | G7 | **No upstream forks**: never modify files under `/opt/vjepa2/`, `site-packages/transformers/`, `site-packages/vllm*`; all adaptation in our packages | Spec §1.3 |
 | G8 | **No silent defaults**: any failure (DVPP, OM load, LoRA miss) must raise or return explicit 4xx; never silently substitute | Spec §4.7 |
 | G9 | **DRY / YAGNI / TDD**: write failing test first; minimal impl to pass; commit each task | Writing-plans skill |
@@ -30,18 +30,18 @@ These rules apply to every task. The implementer reads them once, not per-task.
 ## File Structure
 
 ```
-WorldFoundry/
+WorldForge/
 ├── docker/
-│   └── worldfoundry-base/
+│   └── worldforge-base/
 │       ├── Dockerfile                     # T1
 │       └── README.md                      # T1
-├── worldfoundry_common/                     # shared base
+├── worldforge_common/                     # shared base
 │   ├── __init__.py                        # T2
 │   ├── npu_env.py                         # T2 — torch_npu setup & version guard
 │   ├── model_registry.py                  # T2 — paths to upstream models
 │   ├── metrics.py                         # T18 — Prometheus counters
 │   └── exceptions.py                      # T2 — domain errors
-├── worldfoundry_train/
+├── worldforge_train/
 │   ├── __init__.py                        # T2
 │   ├── data/
 │   │   ├── __init__.py                    # T2
@@ -68,7 +68,7 @@ WorldFoundry/
 │       ├── test_module_names.py           # T6
 │       ├── test_ddp_smoke.py              # T7
 │       └── test_fsdp_smoke.py             # T8
-├── worldfoundry_inf/
+├── worldforge_inf/
 │   ├── __init__.py                        # T2
 │   ├── security.py                        # T13 — HMAC token
 │   ├── batcher.py                         # T12 — video stream buffer
@@ -92,7 +92,7 @@ WorldFoundry/
 │       ├── test_mindie_sd.py              # T11
 │       ├── test_batcher.py                # T12
 │       └── test_api_endpoints.py          # T14/15/16
-├── worldfoundry_rl/                         # W7-W8 only (AC finetuning phase)
+├── worldforge_rl/                         # W7-W8 only (AC finetuning phase)
 │   ├── __init__.py                        # T2
 │   ├── actor.py                           # T19 — VJEPAActor (port V-JEPA 2-AC)
 │   ├── env_droid.py                       # T19 — DroidEnv stub (offline data only)
@@ -109,7 +109,7 @@ WorldFoundry/
 │   │   ├── specs/
 │   │   │   └── 2026-07-27-ascend-world-model-design.md  # already exists
 │   │   └── plans/
-│   │       └── 2026-07-27-worldfoundry-phase1.md          # this file
+│   │       └── 2026-07-27-worldforge-phase1.md          # this file
 │   ├── user/
 │   │   └── quickstart.md                  # T1
 │   └── dev/
@@ -127,13 +127,13 @@ WorldFoundry/
 ### Task 1: Project skeleton + Docker base + pyproject.toml
 
 **Files:**
-- Create: `/mnt/c/WorkSpace/WorldFoundry/pyproject.toml`
-- Create: `/mnt/c/WorkSpace/WorldFoundry/.gitignore`
-- Create: `/mnt/c/WorkSpace/WorldFoundry/README.md`
-- Create: `/mnt/c/WorkSpace/WorldFoundry/docker/worldfoundry-base/Dockerfile`
-- Create: `/mnt/c/WorkSpace/WorldFoundry/docker/worldfoundry-base/README.md`
-- Create: `/mnt/c/WorkSpace/WorldFoundry/docs/user/quickstart.md`
-- Create: `/mnt/c/WorkSpace/WorldFoundry/docs/dev/environment.md`
+- Create: `/mnt/c/WorkSpace/WorldForge/pyproject.toml`
+- Create: `/mnt/c/WorkSpace/WorldForge/.gitignore`
+- Create: `/mnt/c/WorkSpace/WorldForge/README.md`
+- Create: `/mnt/c/WorkSpace/WorldForge/docker/worldforge-base/Dockerfile`
+- Create: `/mnt/c/WorkSpace/WorldForge/docker/worldforge-base/README.md`
+- Create: `/mnt/c/WorkSpace/WorldForge/docs/user/quickstart.md`
+- Create: `/mnt/c/WorkSpace/WorldForge/docs/dev/environment.md`
 
 **Interfaces:** None (skeleton task).
 
@@ -145,7 +145,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "worldfoundry"
+name = "worldforge"
 version = "0.1.0"
 description = "Ascend NPU world model training + inference platform (Phase-1: V-JEPA 2)"
 requires-python = "==3.11.*"
@@ -175,10 +175,10 @@ rl = ["verl==0.5.0"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
-include = ["worldfoundry_*"]
+include = ["worldforge_*"]
 
 [tool.pytest.ini_options]
-testpaths = ["worldfoundry_train/tests", "worldfoundry_inf/tests", "worldfoundry_rl/tests"]
+testpaths = ["worldforge_train/tests", "worldforge_inf/tests", "worldforge_rl/tests"]
 addopts = "-v --tb=short"
 ```
 
@@ -209,22 +209,22 @@ om_cache/
 - [ ] **Step 3: Write top-level `README.md`**
 
 ```markdown
-# WorldFoundry
+# WorldForge
 
 Ascend NPU world model training + inference platform. **Phase-1** prototype ships
 training + inference for Meta V-JEPA 2 (1.2B).
 
 See:
 - `docs/superpowers/specs/2026-07-27-ascend-world-model-design.md` — design spec
-- `docs/superpowers/plans/2026-07-27-worldfoundry-phase1.md` — Phase-1 implementation plan
+- `docs/superpowers/plans/2026-07-27-worldforge-phase1.md` — Phase-1 implementation plan
 - `docs/user/quickstart.md` — end-user quickstart (added in Task 1)
 - `docs/dev/environment.md` — dev environment setup (added in Task 1)
 ```
 
-- [ ] **Step 4: Write `docker/worldfoundry-base/Dockerfile`**
+- [ ] **Step 4: Write `docker/worldforge-base/Dockerfile`**
 
 ```dockerfile
-# WorldFoundry Phase-1 base image
+# WorldForge Phase-1 base image
 # Locked version matrix (spec §6.2):
 #   CANN 8.5.1 + torch_npu 2.9.0 + vllm-ascend 0.18.0
 FROM ascend-pytorch:2.9.0-cann8.5.1-ubuntu22.04
@@ -267,10 +267,10 @@ RUN git clone https://github.com/facebookresearch/vjepa2 /opt/vjepa2
 # Project source
 WORKDIR /workspace
 COPY pyproject.toml .
-COPY worldfoundry_common/ worldfoundry_common/
-COPY worldfoundry_train/ worldfoundry_train/
-COPY worldfoundry_inf/ worldfoundry_inf/
-COPY worldfoundry_rl/ worldfoundry_rl/
+COPY worldforge_common/ worldforge_common/
+COPY worldforge_train/ worldforge_train/
+COPY worldforge_inf/ worldforge_inf/
+COPY worldforge_rl/ worldforge_rl/
 
 RUN pip install -e .
 
@@ -280,10 +280,10 @@ RUN mkdir -p /workspace/models && touch /workspace/models/.gitkeep
 CMD ["/bin/bash"]
 ```
 
-- [ ] **Step 5: Write `docker/worldfoundry-base/README.md`**
+- [ ] **Step 5: Write `docker/worldforge-base/README.md`**
 
 ```markdown
-# WorldFoundry base image
+# WorldForge base image
 
 Locked version matrix per spec §6.2:
 
@@ -296,12 +296,12 @@ Locked version matrix per spec §6.2:
 
 Build:
 ```bash
-docker build -t worldfoundry-base:phase1 -f docker/worldfoundry-base/Dockerfile .
+docker build -t worldforge-base:phase1 -f docker/worldforge-base/Dockerfile .
 ```
 
 Run smoke (CPU fallback — NPU required for real tests):
 ```bash
-docker run --rm -it worldfoundry-base:phase1 bash
+docker run --rm -it worldforge-base:phase1 bash
 ```
 ```
 
@@ -319,9 +319,9 @@ docker run --rm -it worldfoundry-base:phase1 bash
 ## Run training (DDP LoRA)
 
 ```bash
-docker run --rm -it --device /dev/davinci0 .../worldfoundry-base:phase1 \
+docker run --rm -it --device /dev/davinci0 .../worldforge-base:phase1 \
     torchrun --nproc_per_node=8 \
-        worldfoundry_train/train.py \
+        worldforge_train/train.py \
         --model facebook/vjepa2-vitl-1.2b \
         --dataset /data/videomix22m \
         --parallel ddp \
@@ -333,8 +333,8 @@ docker run --rm -it --device /dev/davinci0 .../worldfoundry-base:phase1 \
 ## Run inference service
 
 ```bash
-docker run --rm -it -p 8080:8080 .../worldfoundry-base:phase1 \
-    python -m worldfoundry_inf.server \
+docker run --rm -it -p 8080:8080 .../worldforge-base:phase1 \
+    python -m worldforge_inf.server \
         --model models/vjepa2-vitl-1.2b \
         --port 8080
 
@@ -356,77 +356,77 @@ curl -X POST http://localhost:8080/v1/world/encode \
 ```bash
 # CPU-only install; NPU ops stubbed in unit tests
 pip install -e ".[dev]"
-pytest worldfoundry_train/tests worldfoundry_inf/tests worldfoundry_rl/tests
+pytest worldforge_train/tests worldforge_inf/tests worldforge_rl/tests
 ```
 
 ## With NPU
 
 ```bash
 # Build base image (Task 1)
-docker build -t worldfoundry-base:phase1 -f docker/worldfoundry-base/Dockerfile .
+docker build -t worldforge-base:phase1 -f docker/worldforge-base/Dockerfile .
 
 # Run tests inside container
 docker run --rm --device /dev/davinci0:/dev/davinci0 --device /dev/davinci_manager \
     -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
     -v $(pwd):/workspace \
-    worldfoundry-base:phase1 \
-    pytest worldfoundry_train/tests worldfoundry_inf/tests
+    worldforge-base:phase1 \
+    pytest worldforge_train/tests worldforge_inf/tests
 ```
 
 ## Version matrix enforcement
 
 Any deviation from the pinned versions must be:
 1. Discussed in a PR with explicit Versioning Policy link
-2. Updated in `pyproject.toml`, `docker/.../Dockerfile`, and `worldfoundry_common/npu_env.py`
+2. Updated in `pyproject.toml`, `docker/.../Dockerfile`, and `worldforge_common/npu_env.py`
 ```
 
 - [ ] **Step 8: Commit**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 git add pyproject.toml .gitignore README.md docker/ docs/
 git commit -m "chore: Phase-1 project skeleton, Dockerfile, docs"
 ```
 
 ---
 
-### Task 2: Shared base (worldfoundry_common)
+### Task 2: Shared base (worldforge_common)
 
 **Files:**
-- Create: `worldfoundry_common/__init__.py`
-- Create: `worldfoundry_common/npu_env.py`
-- Create: `worldfoundry_common/model_registry.py`
-- Create: `worldfoundry_common/exceptions.py`
-- Create: `worldfoundry_common/tests/__init__.py`
-- Create: `worldfoundry_common/tests/test_npu_env.py`
-- Create: `worldfoundry_common/tests/test_model_registry.py`
-- Create: `worldfoundry_common/tests/test_exceptions.py`
+- Create: `worldforge_common/__init__.py`
+- Create: `worldforge_common/npu_env.py`
+- Create: `worldforge_common/model_registry.py`
+- Create: `worldforge_common/exceptions.py`
+- Create: `worldforge_common/tests/__init__.py`
+- Create: `worldforge_common/tests/test_npu_env.py`
+- Create: `worldforge_common/tests/test_model_registry.py`
+- Create: `worldforge_common/tests/test_exceptions.py`
 - Create: `models/.gitkeep`
-- Create: `worldfoundry_train/__init__.py`
-- Create: `worldfoundry_train/data/__init__.py`
-- Create: `worldfoundry_train/model/__init__.py`
-- Create: `worldfoundry_train/parallel/__init__.py`
-- Create: `worldfoundry_train/tests/__init__.py`
-- Create: `worldfoundry_inf/__init__.py`
-- Create: `worldfoundry_inf/compile/__init__.py`
-- Create: `worldfoundry_inf/api/__init__.py`
-- Create: `worldfoundry_inf/tests/__init__.py`
-- Create: `worldfoundry_rl/__init__.py`
-- Create: `worldfoundry_rl/tests/__init__.py`
+- Create: `worldforge_train/__init__.py`
+- Create: `worldforge_train/data/__init__.py`
+- Create: `worldforge_train/model/__init__.py`
+- Create: `worldforge_train/parallel/__init__.py`
+- Create: `worldforge_train/tests/__init__.py`
+- Create: `worldforge_inf/__init__.py`
+- Create: `worldforge_inf/compile/__init__.py`
+- Create: `worldforge_inf/api/__init__.py`
+- Create: `worldforge_inf/tests/__init__.py`
+- Create: `worldforge_rl/__init__.py`
+- Create: `worldforge_rl/tests/__init__.py`
 
 **Interfaces:**
 - Consumes: nothing
 - Produces:
-  - `worldfoundry_common.npu_env.check_versions()` → `None` (raises `VersionMismatchError`)
-  - `worldfoundry_common.npu_env.is_npu_available()` → `bool`
-  - `worldfoundry_common.model_registry.MODEL_REGISTRY: dict[str, ModelEntry]`
-  - `worldfoundry_common.exceptions.{VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError, MaskingError}`
+  - `worldforge_common.npu_env.check_versions()` → `None` (raises `VersionMismatchError`)
+  - `worldforge_common.npu_env.is_npu_available()` → `bool`
+  - `worldforge_common.model_registry.MODEL_REGISTRY: dict[str, ModelEntry]`
+  - `worldforge_common.exceptions.{VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError, MaskingError}`
 
-- [ ] **Step 1: Write `worldfoundry_common/__init__.py`**
+- [ ] **Step 1: Write `worldforge_common/__init__.py`**
 
 ```python
-"""Shared base for WorldFoundry Phase-1."""
-from worldfoundry_common.exceptions import (
+"""Shared base for WorldForge Phase-1."""
+from worldforge_common.exceptions import (
     VersionMismatchError,
     ModelNotFoundError,
     OMCompileError,
@@ -443,38 +443,38 @@ __all__ = [
 ]
 ```
 
-- [ ] **Step 2: Write `worldfoundry_common/exceptions.py`**
+- [ ] **Step 2: Write `worldforge_common/exceptions.py`**
 
 ```python
-"""Domain-specific exception types for WorldFoundry."""
+"""Domain-specific exception types for WorldForge."""
 from __future__ import annotations
 
 
-class WorldFoundryError(Exception):
-    """Base exception for all WorldFoundry errors."""
+class WorldForgeError(Exception):
+    """Base exception for all WorldForge errors."""
 
 
-class VersionMismatchError(WorldFoundryError):
+class VersionMismatchError(WorldForgeError):
     """Raised when the installed package version does not match the locked matrix."""
 
 
-class ModelNotFoundError(WorldFoundryError):
+class ModelNotFoundError(WorldForgeError):
     """Raised when a model path / HF repo is not found."""
 
 
-class OMCompileError(WorldFoundryError):
+class OMCompileError(WorldForgeError):
     """Raised when MindIE-SD compile of a model fails."""
 
 
-class AdapterNotFoundError(WorldFoundryError):
+class AdapterNotFoundError(WorldForgeError):
     """Raised when a LoRA adapter name is not registered."""
 
 
-class MaskingError(WorldFoundryError):
+class MaskingError(WorldForgeError):
     """Raised when a masking objective cannot reach its target ratio."""
 ```
 
-- [ ] **Step 3: Write `worldfoundry_common/npu_env.py`**
+- [ ] **Step 3: Write `worldforge_common/npu_env.py`**
 
 ```python
 """NPU environment setup and version guard.
@@ -487,7 +487,7 @@ from __future__ import annotations
 import importlib.metadata
 from typing import Tuple
 
-from worldfoundry_common.exceptions import VersionMismatchError
+from worldforge_common.exceptions import VersionMismatchError
 
 LOCKED_VERSIONS: dict[str, str] = {
     "torch": "2.9.0",
@@ -552,7 +552,7 @@ def init_distributed(backend: str = "hccl") -> None:
         dist.init_process_group(backend="gloo")
 ```
 
-- [ ] **Step 4: Write `worldfoundry_common/model_registry.py`**
+- [ ] **Step 4: Write `worldforge_common/model_registry.py`**
 
 ```python
 """Central registry of upstream models and weights."""
@@ -594,36 +594,36 @@ def resolve_model_path(name: str) -> Path:
 - [ ] **Step 5: Write `tests/__init__.py` files (empty)**
 
 ```bash
-for d in worldfoundry_common/tests worldfoundry_train/tests worldfoundry_train/data worldfoundry_train/model worldfoundry_train/parallel worldfoundry_inf/tests worldfoundry_inf/api worldfoundry_inf/compile worldfoundry_rl/tests; do
+for d in worldforge_common/tests worldforge_train/tests worldforge_train/data worldforge_train/model worldforge_train/parallel worldforge_inf/tests worldforge_inf/api worldforge_inf/compile worldforge_rl/tests; do
   touch "$d/__init__.py"
 done
 ```
 
-- [ ] **Step 6: Write `worldfoundry_common/tests/test_exceptions.py`**
+- [ ] **Step 6: Write `worldforge_common/tests/test_exceptions.py`**
 
 ```python
-from worldfoundry_common.exceptions import (
+from worldforge_common.exceptions import (
     AdapterNotFoundError,
     MaskingError,
     ModelNotFoundError,
     OMCompileError,
     VersionMismatchError,
-    WorldFoundryError,
+    WorldForgeError,
 )
 
 
 def test_all_inherit_from_base():
     for cls in (VersionMismatchError, ModelNotFoundError, OMCompileError, AdapterNotFoundError, MaskingError):
-        assert issubclass(cls, WorldFoundryError)
+        assert issubclass(cls, WorldForgeError)
 ```
 
-- [ ] **Step 7: Write `worldfoundry_common/tests/test_npu_env.py`**
+- [ ] **Step 7: Write `worldforge_common/tests/test_npu_env.py`**
 
 ```python
 import pytest
 
-from worldfoundry_common import npu_env
-from worldfoundry_common.exceptions import VersionMismatchError
+from worldforge_common import npu_env
+from worldforge_common.exceptions import VersionMismatchError
 
 
 def test_check_versions_non_strict_returns_list():
@@ -649,14 +649,14 @@ def test_npu_device_count_returns_int():
     assert count >= 0
 ```
 
-- [ ] **Step 8: Write `worldfoundry_common/tests/test_model_registry.py`**
+- [ ] **Step 8: Write `worldforge_common/tests/test_model_registry.py`**
 
 ```python
 from pathlib import Path
 
 import pytest
 
-from worldfoundry_common.model_registry import MODEL_REGISTRY, resolve_model_path
+from worldforge_common.model_registry import MODEL_REGISTRY, resolve_model_path
 
 
 def test_vjepa2_registered():
@@ -674,8 +674,8 @@ def test_resolve_unknown_raises():
 - [ ] **Step 9: Run tests**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_common/tests -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_common/tests -v
 ```
 
 Expected: all pass (CPU-only is fine for these).
@@ -683,7 +683,7 @@ Expected: all pass (CPU-only is fine for these).
 - [ ] **Step 10: Commit**
 
 ```bash
-git add worldfoundry_common/ worldfoundry_train/__init__.py worldfoundry_train/data/__init__.py worldfoundry_train/model/__init__.py worldfoundry_train/parallel/__init__.py worldfoundry_train/tests/__init__.py worldfoundry_inf/__init__.py worldfoundry_inf/compile/__init__.py worldfoundry_inf/api/__init__.py worldfoundry_inf/tests/__init__.py worldfoundry_rl/__init__.py worldfoundry_rl/tests/__init__.py models/.gitkeep
+git add worldforge_common/ worldforge_train/__init__.py worldforge_train/data/__init__.py worldforge_train/model/__init__.py worldforge_train/parallel/__init__.py worldforge_train/tests/__init__.py worldforge_inf/__init__.py worldforge_inf/compile/__init__.py worldforge_inf/api/__init__.py worldforge_inf/tests/__init__.py worldforge_rl/__init__.py worldforge_rl/tests/__init__.py models/.gitkeep
 git commit -m "feat(common): shared base, NPU env, model registry, exceptions"
 ```
 
@@ -692,23 +692,23 @@ git commit -m "feat(common): shared base, NPU env, model registry, exceptions"
 ### Task 3: Video source with DVPP / decord backend
 
 **Files:**
-- Create: `worldfoundry_train/data/video_source.py`
-- Create: `worldfoundry_train/tests/test_video_source.py`
+- Create: `worldforge_train/data/video_source.py`
+- Create: `worldforge_train/tests/test_video_source.py`
 
 **Interfaces:**
 - Consumes: nothing
 - Produces:
-  - `worldfoundry_train.data.video_source.VideoSource` (abstract)
-  - `worldfoundry_train.data.video_source.DecordVideoSource(path) -> ndarray[T, H, W, 3] uint8`
-  - `worldfoundry_train.data.video_source.build_video_source(path, prefer_dvpp=True) -> VideoSource`
+  - `worldforge_train.data.video_source.VideoSource` (abstract)
+  - `worldforge_train.data.video_source.DecordVideoSource(path) -> ndarray[T, H, W, 3] uint8`
+  - `worldforge_train.data.video_source.build_video_source(path, prefer_dvpp=True) -> VideoSource`
 
-- [ ] **Step 1: Write failing test `worldfoundry_train/tests/test_video_source.py`**
+- [ ] **Step 1: Write failing test `worldforge_train/tests/test_video_source.py`**
 
 ```python
 import numpy as np
 import pytest
 
-from worldfoundry_train.data.video_source import (
+from worldforge_train.data.video_source import (
     DecordVideoSource,
     build_video_source,
 )
@@ -753,7 +753,7 @@ def test_build_video_source_default_returns_decord(sample_mp4):
 
 def test_build_video_source_dvpp_unavailable_falls_back(sample_mp4, monkeypatch):
     monkeypatch.setattr(
-        "worldfoundry_train.data.video_source._dvpp_available",
+        "worldforge_train.data.video_source._dvpp_available",
         lambda: False,
     )
     src = build_video_source(sample_mp4, prefer_dvpp=True)
@@ -768,13 +768,13 @@ def test_build_video_source_raises_for_missing_file(tmp_path):
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_video_source.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_video_source.py -v
 ```
 
 Expected: ImportError or AttributeError (module does not exist yet).
 
-- [ ] **Step 3: Implement `worldfoundry_train/data/video_source.py`**
+- [ ] **Step 3: Implement `worldforge_train/data/video_source.py`**
 
 ```python
 """Video source abstraction with DVPP (hardware) and decord (software) backends.
@@ -864,8 +864,8 @@ def build_video_source(path: PathLike, prefer_dvpp: bool = True) -> VideoSource:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_video_source.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_video_source.py -v
 ```
 
 Expected: 4 tests pass.
@@ -873,7 +873,7 @@ Expected: 4 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_train/data/video_source.py worldfoundry_train/tests/test_video_source.py
+git add worldforge_train/data/video_source.py worldforge_train/tests/test_video_source.py
 git commit -m "feat(train): video source with DVPP/decord backends"
 ```
 
@@ -882,23 +882,23 @@ git commit -m "feat(train): video source with DVPP/decord backends"
 ### Task 4: Tubelet masking (port from facebookresearch/vjepa2)
 
 **Files:**
-- Create: `worldfoundry_train/data/tubelet_mask.py`
-- Create: `worldfoundry_train/tests/test_tubelet_mask.py`
+- Create: `worldforge_train/data/tubelet_mask.py`
+- Create: `worldforge_train/tests/test_tubelet_mask.py`
 
 **Interfaces:**
 - Consumes: nothing
 - Produces:
-  - `worldfoundry_train.data.tubelet_mask.multiblock_mask(shape, num_blocks, ...)` → `np.ndarray[bool]` of shape `shape` (T,H,W)
-  - `worldfoundry_train.data.tubelet_mask.tubelet_mask(shape, tubelet_size, ...)` → `np.ndarray[bool]`
+  - `worldforge_train.data.tubelet_mask.multiblock_mask(shape, num_blocks, ...)` → `np.ndarray[bool]` of shape `shape` (T,H,W)
+  - `worldforge_train.data.tubelet_mask.tubelet_mask(shape, tubelet_size, ...)` → `np.ndarray[bool]`
 
-- [ ] **Step 1: Write failing test `worldfoundry_train/tests/test_tubelet_mask.py`**
+- [ ] **Step 1: Write failing test `worldforge_train/tests/test_tubelet_mask.py`**
 
 ```python
 import numpy as np
 import pytest
 
-from worldfoundry_common.exceptions import MaskingError
-from worldfoundry_train.data.tubelet_mask import multiblock_mask, tubelet_mask
+from worldforge_common.exceptions import MaskingError
+from worldforge_train.data.tubelet_mask import multiblock_mask, tubelet_mask
 
 
 def test_multiblock_mask_shape_and_dtype():
@@ -953,13 +953,13 @@ def test_tubelet_mask_raises_when_shape_not_divisible():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_tubelet_mask.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_tubelet_mask.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement `worldfoundry_train/data/tubelet_mask.py`**
+- [ ] **Step 3: Implement `worldforge_train/data/tubelet_mask.py`**
 
 ```python
 """Tubelet masking for V-JEPA 2 (ported from facebookresearch/vjepa2/src/utils/tensors.py).
@@ -973,7 +973,7 @@ from typing import Sequence, Tuple
 
 import numpy as np
 
-from worldfoundry_common.exceptions import MaskingError
+from worldforge_common.exceptions import MaskingError
 
 
 def _broadcast_shape_for_tubelet(
@@ -1084,8 +1084,8 @@ def tubelet_mask(
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_tubelet_mask.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_tubelet_mask.py -v
 ```
 
 Expected: 3 tests pass.
@@ -1093,7 +1093,7 @@ Expected: 3 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_train/data/tubelet_mask.py worldfoundry_train/tests/test_tubelet_mask.py
+git add worldforge_train/data/tubelet_mask.py worldforge_train/tests/test_tubelet_mask.py
 git commit -m "feat(train): tubelet masking for V-JEPA 2"
 ```
 
@@ -1102,21 +1102,21 @@ git commit -m "feat(train): tubelet masking for V-JEPA 2"
 ### Task 5: Dataset wrapper (HF datasets + Arrow)
 
 **Files:**
-- Create: `worldfoundry_train/data/dataset.py`
-- Create: `worldfoundry_train/tests/test_dataset.py`
+- Create: `worldforge_train/data/dataset.py`
+- Create: `worldforge_train/tests/test_dataset.py`
 
 **Interfaces:**
-- Consumes: `worldfoundry_train.data.video_source.build_video_source`
+- Consumes: `worldforge_train.data.video_source.build_video_source`
 - Produces:
-  - `worldfoundry_train.data.dataset.Vjepa2Dataset(manifest_path, mask_fn, patch_size=14)` returning dict `{"frames": Tensor, "mask": Tensor}` per item, where `mask` has shape `(T, H // patch_size, W // patch_size)` per the V-JEPA 2 ViT-L patch grid
+  - `worldforge_train.data.dataset.Vjepa2Dataset(manifest_path, mask_fn, patch_size=14)` returning dict `{"frames": Tensor, "mask": Tensor}` per item, where `mask` has shape `(T, H // patch_size, W // patch_size)` per the V-JEPA 2 ViT-L patch grid
 
-- [ ] **Step 1: Write failing test `worldfoundry_train/tests/test_dataset.py`**
+- [ ] **Step 1: Write failing test `worldforge_train/tests/test_dataset.py`**
 
 ```python
 import numpy as np
 import pytest
 
-from worldfoundry_train.data.dataset import Vjepa2Dataset
+from worldforge_train.data.dataset import Vjepa2Dataset
 
 
 @pytest.fixture
@@ -1164,13 +1164,13 @@ def test_dataset_getitem_mask_grid_scales_with_patch_size(manifest):
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_dataset.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_dataset.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement `worldfoundry_train/data/dataset.py`**
+- [ ] **Step 3: Implement `worldforge_train/data/dataset.py`**
 
 ```python
 """Video dataset wrapper for V-JEPA 2 training.
@@ -1189,7 +1189,7 @@ from typing import Callable
 
 import numpy as np
 
-from worldfoundry_train.data.video_source import build_video_source
+from worldforge_train.data.video_source import build_video_source
 
 MaskFn = Callable[[tuple[int, int, int], np.random.Generator], np.ndarray]
 
@@ -1236,8 +1236,8 @@ class Vjepa2Dataset:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_dataset.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_dataset.py -v
 ```
 
 Expected: 3 tests pass.
@@ -1245,7 +1245,7 @@ Expected: 3 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_train/data/dataset.py worldfoundry_train/tests/test_dataset.py
+git add worldforge_train/data/dataset.py worldforge_train/tests/test_dataset.py
 git commit -m "feat(train): video dataset wrapper with patch-grid mask_fn"
 ```
 
@@ -1254,23 +1254,23 @@ git commit -m "feat(train): video dataset wrapper with patch-grid mask_fn"
 ### Task 6: LoRA wrapper with mandatory module-name sanity check (G4)
 
 **Files:**
-- Create: `worldfoundry_train/model/module_names.py`
-- Create: `worldfoundry_train/model/lora_wrapper.py`
-- Create: `worldfoundry_train/tests/test_module_names.py`
-- Create: `worldfoundry_train/tests/test_lora_wrapper.py`
+- Create: `worldforge_train/model/module_names.py`
+- Create: `worldforge_train/model/lora_wrapper.py`
+- Create: `worldforge_train/tests/test_module_names.py`
+- Create: `worldforge_train/tests/test_lora_wrapper.py`
 
 **Interfaces:**
 - Consumes: `transformers.VJEPA2Model`
 - Produces:
-  - `worldfoundry_train.model.module_names.discover_lora_targets(model, candidates)` → list of names actually present
-  - `worldfoundry_train.model.lora_wrapper.build_lora_model(model, r=16, alpha=32)` → `peft.PeftModel` (raises `ValueError` if matches=0 per G4)
+  - `worldforge_train.model.module_names.discover_lora_targets(model, candidates)` → list of names actually present
+  - `worldforge_train.model.lora_wrapper.build_lora_model(model, r=16, alpha=32)` → `peft.PeftModel` (raises `ValueError` if matches=0 per G4)
 
-- [ ] **Step 1: Write failing test `worldfoundry_train/tests/test_module_names.py`**
+- [ ] **Step 1: Write failing test `worldforge_train/tests/test_module_names.py`**
 
 ```python
 import torch.nn as nn
 
-from worldfoundry_train.model.module_names import discover_lora_targets
+from worldforge_train.model.module_names import discover_lora_targets
 
 
 class FakeLinear(nn.Module):
@@ -1325,12 +1325,12 @@ def test_discover_supports_nested_module_names():
     assert "blocks.1.mlp.fc1" in targets
 ```
 
-- [ ] **Step 2: Write failing test `worldfoundry_train/tests/test_lora_wrapper.py`**
+- [ ] **Step 2: Write failing test `worldforge_train/tests/test_lora_wrapper.py`**
 
 ```python
 import pytest
 
-from worldfoundry_train.model.lora_wrapper import build_lora_model
+from worldforge_train.model.lora_wrapper import build_lora_model
 
 
 class _MatMul:
@@ -1376,7 +1376,7 @@ class _TinyVJEPA2:
 
 def test_build_lora_returns_peft_model(_monkeypatch_for_peft):
     # We patch peft.LoraConfig + get_peft_model to avoid real HF dependency in tests
-    from worldfoundry_train.model import lora_wrapper
+    from worldforge_train.model import lora_wrapper
     import peft
 
     captured = {}
@@ -1410,7 +1410,7 @@ def test_build_lora_raises_when_no_targets_match():
 
         blocks = []
 
-    from worldfoundry_train.model import lora_wrapper
+    from worldforge_train.model import lora_wrapper
     lora_wrapper.LoraConfig = lambda **kw: None
     lora_wrapper.get_peft_model = lambda base, cfg: object()
 
@@ -1421,13 +1421,13 @@ def test_build_lora_raises_when_no_targets_match():
 - [ ] **Step 3: Run tests to verify they fail**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_module_names.py worldfoundry_train/tests/test_lora_wrapper.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_module_names.py worldforge_train/tests/test_lora_wrapper.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 4: Implement `worldfoundry_train/model/module_names.py`**
+- [ ] **Step 4: Implement `worldforge_train/model/module_names.py`**
 
 ```python
 """Runtime discovery of LoRA-targetable module names in a model."""
@@ -1470,7 +1470,7 @@ def discover_lora_targets(
     return matches
 ```
 
-- [ ] **Step 5: Implement `worldfoundry_train/model/lora_wrapper.py`**
+- [ ] **Step 5: Implement `worldforge_train/model/lora_wrapper.py`**
 
 ```python
 """LoRA wrapping for V-JEPA 2 with mandatory sanity check (Global Constraint G4).
@@ -1485,7 +1485,7 @@ from dataclasses import dataclass
 
 import torch.nn as nn
 
-from worldfoundry_train.model.module_names import discover_lora_targets
+from worldforge_train.model.module_names import discover_lora_targets
 
 # Default candidates: q/k/v/o projections + MLP linears.
 # These will be filtered by discover_lora_targets against the actual model.
@@ -1554,8 +1554,8 @@ def build_lora_model(
 - [ ] **Step 6: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_module_names.py worldfoundry_train/tests/test_lora_wrapper.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_module_names.py worldforge_train/tests/test_lora_wrapper.py -v
 ```
 
 Expected: 4 tests pass.
@@ -1563,7 +1563,7 @@ Expected: 4 tests pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add worldfoundry_train/model/module_names.py worldfoundry_train/model/lora_wrapper.py worldfoundry_train/tests/test_module_names.py worldfoundry_train/tests/test_lora_wrapper.py
+git add worldforge_train/model/module_names.py worldforge_train/model/lora_wrapper.py worldforge_train/tests/test_module_names.py worldforge_train/tests/test_lora_wrapper.py
 git commit -m "feat(train): LoRA wrapper with mandatory sanity check (G4)"
 ```
 
@@ -1572,16 +1572,16 @@ git commit -m "feat(train): LoRA wrapper with mandatory sanity check (G4)"
 ### Task 7: DDP training entry (main script)
 
 **Files:**
-- Create: `worldfoundry_train/configs/vjepa2_vitl_1.2b.yaml`
-- Create: `worldfoundry_train/parallel/ddp.py`
-- Create: `worldfoundry_train/train.py`
-- Create: `worldfoundry_train/tests/test_ddp_smoke.py`
+- Create: `worldforge_train/configs/vjepa2_vitl_1.2b.yaml`
+- Create: `worldforge_train/parallel/ddp.py`
+- Create: `worldforge_train/train.py`
+- Create: `worldforge_train/tests/test_ddp_smoke.py`
 
 **Interfaces:**
 - Consumes: `Vjepa2Dataset`, `build_lora_model`
-- Produces: a CLI entry `python -m worldfoundry_train.train --parallel ddp ...` that runs training and exits 0 on success
+- Produces: a CLI entry `python -m worldforge_train.train --parallel ddp ...` that runs training and exits 0 on success
 
-- [ ] **Step 1: Write config `worldfoundry_train/configs/vjepa2_vitl_1.2b.yaml`**
+- [ ] **Step 1: Write config `worldforge_train/configs/vjepa2_vitl_1.2b.yaml`**
 
 ```yaml
 model:
@@ -1611,7 +1611,7 @@ data:
   mask_ratio: 0.75
 ```
 
-- [ ] **Step 2: Write failing test `worldfoundry_train/tests/test_ddp_smoke.py`**
+- [ ] **Step 2: Write failing test `worldforge_train/tests/test_ddp_smoke.py`**
 
 ```python
 import subprocess
@@ -1621,8 +1621,8 @@ import sys
 def test_train_help_runs():
     """The script must at least respond to --help without import errors."""
     result = subprocess.run(
-        [sys.executable, "-m", "worldfoundry_train.train", "--help"],
-        capture_output=True, text=True, cwd="/mnt/c/WorkSpace/WorldFoundry",
+        [sys.executable, "-m", "worldforge_train.train", "--help"],
+        capture_output=True, text=True, cwd="/mnt/c/WorkSpace/WorldForge",
     )
     # Acceptable: exits 0 with help text
     assert result.returncode == 0, result.stderr
@@ -1632,13 +1632,13 @@ def test_train_help_runs():
 - [ ] **Step 3: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_ddp_smoke.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_ddp_smoke.py -v
 ```
 
 Expected: ModuleNotFoundError or FileNotFoundError on the train script.
 
-- [ ] **Step 4: Implement `worldfoundry_train/parallel/ddp.py`**
+- [ ] **Step 4: Implement `worldforge_train/parallel/ddp.py`**
 
 ```python
 """DDP launcher for V-JEPA 2 LoRA training (Phase-1 default per Global Constraint G3)."""
@@ -1681,14 +1681,14 @@ def cleanup_ddp() -> None:
         dist.destroy_process_group()
 ```
 
-- [ ] **Step 5: Implement `worldfoundry_train/train.py`**
+- [ ] **Step 5: Implement `worldforge_train/train.py`**
 
 ```python
-"""WorldFoundry Phase-1 training entry.
+"""WorldForge Phase-1 training entry.
 
 Usage:
-    torchrun --nproc_per_node=8 -m worldfoundry_train.train \\
-        --config worldfoundry_train/configs/vjepa2_vitl_1.2b.yaml \\
+    torchrun --nproc_per_node=8 -m worldforge_train.train \\
+        --config worldforge_train/configs/vjepa2_vitl_1.2b.yaml \\
         --parallel ddp
 """
 from __future__ import annotations
@@ -1698,11 +1698,11 @@ from pathlib import Path
 
 import yaml
 
-from worldfoundry_common.npu_env import check_versions
+from worldforge_common.npu_env import check_versions
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="WorldFoundry V-JEPA 2 LoRA training")
+    parser = argparse.ArgumentParser(description="WorldForge V-JEPA 2 LoRA training")
     parser.add_argument("--config", type=Path, required=True, help="YAML config path")
     parser.add_argument("--parallel", choices=["ddp", "fsdp"], default="ddp")
     parser.add_argument("--strict-versions", action="store_true")
@@ -1717,11 +1717,11 @@ def main() -> int:
         cfg = yaml.safe_load(f)
 
     if args.parallel == "ddp":
-        from worldfoundry_train.parallel.ddp import cleanup_ddp, setup_ddp
+        from worldforge_train.parallel.ddp import cleanup_ddp, setup_ddp
         world_size, local_rank, global_rank = setup_ddp()
         print(f"[DDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
     else:
-        from worldfoundry_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
+        from worldforge_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
         world_size, local_rank, global_rank = setup_fsdp()
         print(f"[FSDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
 
@@ -1743,9 +1743,9 @@ def run_ddp_training(cfg: dict, local_rank: int, global_rank: int, world_size: i
 
     Implementation lives in Task 7 main code path; tests cover the entry only.
     """
-    from worldfoundry_train.data.dataset import Vjepa2Dataset
-    from worldfoundry_train.data.tubelet_mask import tubelet_mask
-    from worldfoundry_train.model.lora_wrapper import build_lora_model
+    from worldforge_train.data.dataset import Vjepa2Dataset
+    from worldforge_train.data.tubelet_mask import tubelet_mask
+    from worldforge_train.model.lora_wrapper import build_lora_model
 
     manifest = cfg["data"]["manifest"]
     ds = Vjepa2Dataset(
@@ -1761,7 +1761,7 @@ def run_ddp_training(cfg: dict, local_rank: int, global_rank: int, world_size: i
     print(f"[TRAIN] LoRA build (deferred to NPU host) cfg={cfg['lora']}")
 
     # Stub training loop: in Phase-1 W2 the real loop is implemented in
-    # worldfoundry_train/trainer.py once NPU host is available.
+    # worldforge_train/trainer.py once NPU host is available.
     for step, batch in enumerate(_fake_batch_iter(ds, world_size)):
         if step >= 2:
             break
@@ -1788,8 +1788,8 @@ if __name__ == "__main__":
 - [ ] **Step 6: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_ddp_smoke.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_ddp_smoke.py -v
 ```
 
 Expected: 1 test passes.
@@ -1797,7 +1797,7 @@ Expected: 1 test passes.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add worldfoundry_train/configs/ worldfoundry_train/parallel/ddp.py worldfoundry_train/train.py worldfoundry_train/tests/test_ddp_smoke.py
+git add worldforge_train/configs/ worldforge_train/parallel/ddp.py worldforge_train/train.py worldforge_train/tests/test_ddp_smoke.py
 git commit -m "feat(train): DDP launcher and train.py CLI entry"
 ```
 
@@ -1806,13 +1806,13 @@ git commit -m "feat(train): DDP launcher and train.py CLI entry"
 ### Task 8: FSDP launcher stub (full-FT only)
 
 **Files:**
-- Create: `worldfoundry_train/parallel/fsdp.py`
-- Create: `worldfoundry_train/tests/test_fsdp_smoke.py`
+- Create: `worldforge_train/parallel/fsdp.py`
+- Create: `worldforge_train/tests/test_fsdp_smoke.py`
 
 **Interfaces:**
 - Produces: `setup_fsdp()`, `cleanup_fsdp()` (same signature as DDP version)
 
-- [ ] **Step 1: Write failing test `worldfoundry_train/tests/test_fsdp_smoke.py`**
+- [ ] **Step 1: Write failing test `worldforge_train/tests/test_fsdp_smoke.py`**
 
 ```python
 import importlib
@@ -1821,7 +1821,7 @@ import pytest
 
 
 def test_fsdp_module_imports():
-    mod = importlib.import_module("worldfoundry_train.parallel.fsdp")
+    mod = importlib.import_module("worldforge_train.parallel.fsdp")
     assert hasattr(mod, "setup_fsdp")
     assert hasattr(mod, "cleanup_fsdp")
 ```
@@ -1829,13 +1829,13 @@ def test_fsdp_module_imports():
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_fsdp_smoke.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_fsdp_smoke.py -v
 ```
 
 Expected: ModuleNotFoundError.
 
-- [ ] **Step 3: Implement `worldfoundry_train/parallel/fsdp.py`**
+- [ ] **Step 3: Implement `worldforge_train/parallel/fsdp.py`**
 
 ```python
 """FSDP launcher (Phase-1: stub returning same shape as DDP; Phase-2 W9: full impl).
@@ -1861,20 +1861,20 @@ def setup_fsdp() -> tuple[int, int, int]:
         UserWarning,
         stacklevel=2,
     )
-    from worldfoundry_train.parallel.ddp import setup_ddp
+    from worldforge_train.parallel.ddp import setup_ddp
     return setup_ddp()
 
 
 def cleanup_fsdp() -> None:
-    from worldfoundry_train.parallel.ddp import cleanup_ddp
+    from worldforge_train.parallel.ddp import cleanup_ddp
     cleanup_ddp()
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_train/tests/test_fsdp_smoke.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_train/tests/test_fsdp_smoke.py -v
 ```
 
 Expected: 1 test passes.
@@ -1882,7 +1882,7 @@ Expected: 1 test passes.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_train/parallel/fsdp.py worldfoundry_train/tests/test_fsdp_smoke.py
+git add worldforge_train/parallel/fsdp.py worldforge_train/tests/test_fsdp_smoke.py
 git commit -m "feat(train): FSDP launcher stub (Phase-2 W9 for full impl)"
 ```
 
@@ -1891,20 +1891,20 @@ git commit -m "feat(train): FSDP launcher stub (Phase-2 W9 for full impl)"
 ### Task 9: VJEPA2Worker (vLLM-Ascend plugin skeleton)
 
 **Files:**
-- Create: `worldfoundry_inf/vjepa2_worker.py`
-- Create: `worldfoundry_inf/tests/test_vjepa2_worker.py`
+- Create: `worldforge_inf/vjepa2_worker.py`
+- Create: `worldforge_inf/tests/test_vjepa2_worker.py`
 
 **Interfaces:**
 - Consumes: HF VJEPA2Model
 - Produces:
-  - `worldfoundry_inf.vjepa2_worker.VJEPA2Worker(model_path)` with `.encode(video_tensor) -> Tensor`
+  - `worldforge_inf.vjepa2_worker.VJEPA2Worker(model_path)` with `.encode(video_tensor) -> Tensor`
 
-- [ ] **Step 1: Write failing test `worldfoundry_inf/tests/test_vjepa2_worker.py`**
+- [ ] **Step 1: Write failing test `worldforge_inf/tests/test_vjepa2_worker.py`**
 
 ```python
 import pytest
 
-from worldfoundry_inf.vjepa2_worker import VJEPA2Worker
+from worldforge_inf.vjepa2_worker import VJEPA2Worker
 
 
 class _FakeHFModel:
@@ -1921,14 +1921,14 @@ class _FakeHFModel:
 
 
 def test_worker_init_loads_model(monkeypatch):
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
+    monkeypatch.setattr("worldforge_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
     assert worker.model is not None
 
 
 def test_worker_encode_returns_tensor(monkeypatch):
     import torch
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
+    monkeypatch.setattr("worldforge_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
     fake_video = torch.zeros(1, 16, 3, 224, 224)
     out = worker.encode(fake_video)
@@ -1938,13 +1938,13 @@ def test_worker_encode_returns_tensor(monkeypatch):
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_vjepa2_worker.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_vjepa2_worker.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement `worldfoundry_inf/vjepa2_worker.py`**
+- [ ] **Step 3: Implement `worldforge_inf/vjepa2_worker.py`**
 
 ```python
 """VJEPA2Worker — minimal vLLM-Ascend plugin skeleton for V-JEPA 2 inference.
@@ -2006,8 +2006,8 @@ class VJEPA2Worker:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_vjepa2_worker.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_vjepa2_worker.py -v
 ```
 
 Expected: 2 tests pass.
@@ -2015,7 +2015,7 @@ Expected: 2 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/vjepa2_worker.py worldfoundry_inf/tests/test_vjepa2_worker.py
+git add worldforge_inf/vjepa2_worker.py worldforge_inf/tests/test_vjepa2_worker.py
 git commit -m "feat(inf): VJEPA2Worker skeleton for vLLM-Ascend plugin"
 ```
 
@@ -2024,19 +2024,19 @@ git commit -m "feat(inf): VJEPA2Worker skeleton for vLLM-Ascend plugin"
 ### Task 10: ModelSlim W8A8 quantization stub
 
 **Files:**
-- Create: `worldfoundry_inf/compile/quantize.py`
-- Create: `worldfoundry_inf/tests/test_quantize.py`
+- Create: `worldforge_inf/compile/quantize.py`
+- Create: `worldforge_inf/tests/test_quantize.py`
 
 **Interfaces:**
 - Produces:
-  - `worldfoundry_inf.compile.quantize.quantize_model(model_path, output_path, quant_type="w8a8") -> Path`
+  - `worldforge_inf.compile.quantize.quantize_model(model_path, output_path, quant_type="w8a8") -> Path`
 
-- [ ] **Step 1: Write failing test `worldfoundry_inf/tests/test_quantize.py`**
+- [ ] **Step 1: Write failing test `worldforge_inf/tests/test_quantize.py`**
 
 ```python
 from pathlib import Path
 
-from worldfoundry_inf.compile.quantize import quantize_model
+from worldforge_inf.compile.quantize import quantize_model
 
 
 def test_quantize_model_creates_output_file(tmp_path):
@@ -2065,13 +2065,13 @@ def test_quantize_model_rejects_unknown_type(tmp_path):
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_quantize.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_quantize.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement `worldfoundry_inf/compile/quantize.py`**
+- [ ] **Step 3: Implement `worldforge_inf/compile/quantize.py`**
 
 ```python
 """ModelSlim-style quantization wrapper.
@@ -2128,8 +2128,8 @@ def quantize_model(
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_quantize.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_quantize.py -v
 ```
 
 Expected: 2 tests pass.
@@ -2137,7 +2137,7 @@ Expected: 2 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/compile/quantize.py worldfoundry_inf/tests/test_quantize.py
+git add worldforge_inf/compile/quantize.py worldforge_inf/tests/test_quantize.py
 git commit -m "feat(inf): ModelSlim W8A8 quantization stub"
 ```
 
@@ -2146,22 +2146,22 @@ git commit -m "feat(inf): ModelSlim W8A8 quantization stub"
 ### Task 11: MindIE-SD compile stub
 
 **Files:**
-- Create: `worldfoundry_inf/compile/mindie_sd.py`
-- Create: `worldfoundry_inf/tests/test_mindie_sd.py`
+- Create: `worldforge_inf/compile/mindie_sd.py`
+- Create: `worldforge_inf/tests/test_mindie_sd.py`
 
 **Interfaces:**
 - Produces:
-  - `worldfoundry_inf.compile.mindie_sd.compile_to_om(model_path, output_path, target_hardware="Atlas 800 A2 / 910B") -> Path`
+  - `worldforge_inf.compile.mindie_sd.compile_to_om(model_path, output_path, target_hardware="Atlas 800 A2 / 910B") -> Path`
 
-- [ ] **Step 1: Write failing test `worldfoundry_inf/tests/test_mindie_sd.py`**
+- [ ] **Step 1: Write failing test `worldforge_inf/tests/test_mindie_sd.py`**
 
 ```python
 from pathlib import Path
 
 import pytest
 
-from worldfoundry_common.exceptions import OMCompileError
-from worldfoundry_inf.compile.mindie_sd import compile_to_om
+from worldforge_common.exceptions import OMCompileError
+from worldforge_inf.compile.mindie_sd import compile_to_om
 
 
 def test_compile_to_om_writes_om_file(tmp_path):
@@ -2188,13 +2188,13 @@ def test_compile_to_om_raises_on_missing_quant_meta(tmp_path):
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_mindie_sd.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_mindie_sd.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement `worldfoundry_inf/compile/mindie_sd.py`**
+- [ ] **Step 3: Implement `worldforge_inf/compile/mindie_sd.py`**
 
 ```python
 """MindIE-SD compile wrapper.
@@ -2212,7 +2212,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from worldfoundry_common.exceptions import OMCompileError
+from worldforge_common.exceptions import OMCompileError
 
 SUPPORTED_HARDWARE = (
     "Atlas 800 A2 / 910B",
@@ -2267,8 +2267,8 @@ def compile_to_om(
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_mindie_sd.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_mindie_sd.py -v
 ```
 
 Expected: 2 tests pass.
@@ -2276,7 +2276,7 @@ Expected: 2 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/compile/mindie_sd.py worldfoundry_inf/tests/test_mindie_sd.py
+git add worldforge_inf/compile/mindie_sd.py worldforge_inf/tests/test_mindie_sd.py
 git commit -m "feat(inf): MindIE-SD compile wrapper stub"
 ```
 
@@ -2285,23 +2285,23 @@ git commit -m "feat(inf): MindIE-SD compile wrapper stub"
 ### Task 12: Batcher + Scheduler (adapter-aware routing)
 
 **Files:**
-- Create: `worldfoundry_inf/batcher.py`
-- Create: `worldfoundry_inf/scheduler.py`
-- Create: `worldfoundry_inf/tests/test_batcher.py`
+- Create: `worldforge_inf/batcher.py`
+- Create: `worldforge_inf/scheduler.py`
+- Create: `worldforge_inf/tests/test_batcher.py`
 
 **Interfaces:**
 - Produces:
-  - `worldfoundry_inf.batcher.VideoBatcher(max_batch=8, max_latency_ms=50)` with `.submit(video, adapter_name) -> Future`
-  - `worldfoundry_inf.scheduler.AdapterRouter(registry)` with `.route(adapter_name) -> VJEPA2Worker`
+  - `worldforge_inf.batcher.VideoBatcher(max_batch=8, max_latency_ms=50)` with `.submit(video, adapter_name) -> Future`
+  - `worldforge_inf.scheduler.AdapterRouter(registry)` with `.route(adapter_name) -> VJEPA2Worker`
 
-- [ ] **Step 1: Write failing test `worldfoundry_inf/tests/test_batcher.py`**
+- [ ] **Step 1: Write failing test `worldforge_inf/tests/test_batcher.py`**
 
 ```python
 import time
 
 import numpy as np
 
-from worldfoundry_inf.batcher import VideoBatcher
+from worldforge_inf.batcher import VideoBatcher
 
 
 def test_batcher_submits_and_returns_result():
@@ -2321,13 +2321,13 @@ def test_batcher_flushes_on_latency_deadline():
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_batcher.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_batcher.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement `worldfoundry_inf/batcher.py`**
+- [ ] **Step 3: Implement `worldforge_inf/batcher.py`**
 
 ```python
 """Video batcher for inference requests.
@@ -2397,13 +2397,13 @@ class VideoBatcher:
 - [ ] **Step 4: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_batcher.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_batcher.py -v
 ```
 
 Expected: 2 tests pass.
 
-- [ ] **Step 5: Implement `worldfoundry_inf/scheduler.py`**
+- [ ] **Step 5: Implement `worldforge_inf/scheduler.py`**
 
 ```python
 """Adapter-aware router for VJEPA2Worker instances.
@@ -2416,7 +2416,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from worldfoundry_common.exceptions import AdapterNotFoundError
+from worldforge_common.exceptions import AdapterNotFoundError
 
 
 class AdapterRouter:
@@ -2446,8 +2446,8 @@ class AdapterRouter:
 - [ ] **Step 6: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_batcher.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_batcher.py -v
 ```
 
 Expected: 2 tests pass.
@@ -2455,7 +2455,7 @@ Expected: 2 tests pass.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add worldfoundry_inf/batcher.py worldfoundry_inf/scheduler.py worldfoundry_inf/tests/test_batcher.py
+git add worldforge_inf/batcher.py worldforge_inf/scheduler.py worldforge_inf/tests/test_batcher.py
 git commit -m "feat(inf): video batcher + adapter router"
 ```
 
@@ -2464,19 +2464,19 @@ git commit -m "feat(inf): video batcher + adapter router"
 ### Task 13: HMAC token authentication
 
 **Files:**
-- Create: `worldfoundry_inf/security.py`
-- Create: `worldfoundry_inf/tests/test_security.py`
+- Create: `worldforge_inf/security.py`
+- Create: `worldforge_inf/tests/test_security.py`
 
 **Interfaces:**
 - Produces:
-  - `worldfoundry_inf.security.HmacTokenAuth(secret)` with `.sign(method, path, body, timestamp) -> str` and `.verify(...) -> bool`
+  - `worldforge_inf.security.HmacTokenAuth(secret)` with `.sign(method, path, body, timestamp) -> str` and `.verify(...) -> bool`
 
-- [ ] **Step 1: Write failing test `worldfoundry_inf/tests/test_security.py`**
+- [ ] **Step 1: Write failing test `worldforge_inf/tests/test_security.py`**
 
 ```python
 import time
 
-from worldfoundry_inf.security import HmacTokenAuth
+from worldforge_inf.security import HmacTokenAuth
 
 
 def test_sign_and_verify_roundtrip():
@@ -2503,16 +2503,16 @@ def test_verify_rejects_stale_timestamp():
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_security.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_security.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement `worldfoundry_inf/security.py`**
+- [ ] **Step 3: Implement `worldforge_inf/security.py`**
 
 ```python
-"""HMAC-SHA256 token authentication for WorldFoundry inference endpoints.
+"""HMAC-SHA256 token authentication for WorldForge inference endpoints.
 
 Per spec §4.7 + Global Constraint G12:
 - HMAC over (method + path + body + timestamp) with shared secret
@@ -2553,8 +2553,8 @@ class HmacTokenAuth:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_security.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_security.py -v
 ```
 
 Expected: 3 tests pass.
@@ -2562,7 +2562,7 @@ Expected: 3 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/security.py worldfoundry_inf/tests/test_security.py
+git add worldforge_inf/security.py worldforge_inf/tests/test_security.py
 git commit -m "feat(inf): HMAC-SHA256 token auth for inference endpoints"
 ```
 
@@ -2571,17 +2571,17 @@ git commit -m "feat(inf): HMAC-SHA256 token auth for inference endpoints"
 ### Task 14: /v1/world/encode API + FastAPI server
 
 **Files:**
-- Create: `worldfoundry_inf/api/encode.py`
-- Create: `worldfoundry_inf/api/predict.py` (stub for next task)
-- Create: `worldfoundry_inf/api/plan.py` (stub for next task)
-- Create: `worldfoundry_inf/server.py`
-- Create: `worldfoundry_inf/tests/test_api_endpoints.py`
+- Create: `worldforge_inf/api/encode.py`
+- Create: `worldforge_inf/api/predict.py` (stub for next task)
+- Create: `worldforge_inf/api/plan.py` (stub for next task)
+- Create: `worldforge_inf/server.py`
+- Create: `worldforge_inf/tests/test_api_endpoints.py`
 
 **Interfaces:**
 - Produces:
-  - `worldfoundry_inf.server.create_app(model_path, secret) -> FastAPI` with routes `/v1/world/{encode,predict,plan}`
+  - `worldforge_inf.server.create_app(model_path, secret) -> FastAPI` with routes `/v1/world/{encode,predict,plan}`
 
-- [ ] **Step 1: Write failing test `worldfoundry_inf/tests/test_api_endpoints.py`**
+- [ ] **Step 1: Write failing test `worldforge_inf/tests/test_api_endpoints.py`**
 
 ```python
 import base64
@@ -2590,7 +2590,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from worldfoundry_inf.server import create_app
+from worldforge_inf.server import create_app
 
 
 @pytest.fixture
@@ -2607,7 +2607,7 @@ def client(monkeypatch):
             import torch
             return torch.zeros(1, 196, 1024)
 
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker._load_hf_model", lambda p, dtype: _StubWorker())
+    monkeypatch.setattr("worldforge_inf.vjepa2_worker._load_hf_model", lambda p, dtype: _StubWorker())
 
     app = create_app(model_path="/fake/model", secret="test-secret")
     return TestClient(app)
@@ -2633,7 +2633,7 @@ def test_encode_with_valid_auth_returns_200(client, fake_video_bytes):
         content=body,
         headers={
             "Authorization": f"HMAC {sig}",
-            "X-WorldFoundry-Timestamp": ts,
+            "X-WorldForge-Timestamp": ts,
             "Content-Type": "application/json",
         },
     )
@@ -2651,7 +2651,7 @@ def test_encode_rejects_stale_timestamp(client, fake_video_bytes):
     sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
     resp = client.post(
         path, content=body,
-        headers={"Authorization": f"HMAC {sig}", "X-WorldFoundry-Timestamp": ts,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 401
@@ -2660,13 +2660,13 @@ def test_encode_rejects_stale_timestamp(client, fake_video_bytes):
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_api_endpoints.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_api_endpoints.py -v
 ```
 
 Expected: ImportError (no server module).
 
-- [ ] **Step 3: Implement `worldfoundry_inf/api/encode.py`**
+- [ ] **Step 3: Implement `worldforge_inf/api/encode.py`**
 
 ```python
 """POST /v1/world/encode — return dense features from a video."""
@@ -2679,8 +2679,8 @@ import numpy as np
 import torch
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from worldfoundry_common.exceptions import ModelNotFoundError
-from worldfoundry_inf.security import HmacTokenAuth
+from worldforge_common.exceptions import ModelNotFoundError
+from worldforge_inf.security import HmacTokenAuth
 
 router = APIRouter()
 
@@ -2711,7 +2711,7 @@ async def encode(request: Request, auth: HmacTokenAuth = Depends(lambda: request
 def _check_auth(request: Request, auth: HmacTokenAuth, body_bytes: bytes) -> None:
     """Validate HMAC headers. Raises HTTPException 401 on failure."""
     hdr = request.headers.get("Authorization", "")
-    ts = request.headers.get("X-WorldFoundry-Timestamp", "")
+    ts = request.headers.get("X-WorldForge-Timestamp", "")
     if not hdr.startswith("HMAC "):
         raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
     sig = hdr[len("HMAC "):]
@@ -2719,7 +2719,7 @@ def _check_auth(request: Request, auth: HmacTokenAuth, body_bytes: bytes) -> Non
         raise HTTPException(status_code=401, detail="HMAC verification failed")
 ```
 
-- [ ] **Step 4: Implement `worldfoundry_inf/api/predict.py` (stub)**
+- [ ] **Step 4: Implement `worldforge_inf/api/predict.py` (stub)**
 
 ```python
 """POST /v1/world/predict — predict masked tokens. Phase-1 stub; full impl W3."""
@@ -2735,7 +2735,7 @@ async def predict_stub() -> dict:
     return {"status": "phase1-stub", "note": "Phase-2 W3: full predict impl"}
 ```
 
-- [ ] **Step 5: Implement `worldfoundry_inf/api/plan.py` (stub)**
+- [ ] **Step 5: Implement `worldforge_inf/api/plan.py` (stub)**
 
 ```python
 """POST /v1/world/plan — V-JEPA 2-AC planning. Phase-1 stub; full impl W4."""
@@ -2751,10 +2751,10 @@ async def plan_stub() -> dict:
     return {"status": "phase1-stub", "note": "Phase-2 W4: V-JEPA 2-AC planning"}
 ```
 
-- [ ] **Step 6: Implement `worldfoundry_inf/server.py`**
+- [ ] **Step 6: Implement `worldforge_inf/server.py`**
 
 ```python
-"""WorldFoundry inference FastAPI app."""
+"""WorldForge inference FastAPI app."""
 from __future__ import annotations
 
 import os
@@ -2762,16 +2762,16 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from worldfoundry_common.npu_env import is_npu_available
-from worldfoundry_inf.api import encode, plan, predict
-from worldfoundry_inf.scheduler import AdapterRouter
-from worldfoundry_inf.security import HmacTokenAuth
-from worldfoundry_inf.vjepa2_worker import VJEPA2Worker
+from worldforge_common.npu_env import is_npu_available
+from worldforge_inf.api import encode, plan, predict
+from worldforge_inf.scheduler import AdapterRouter
+from worldforge_inf.security import HmacTokenAuth
+from worldforge_inf.vjepa2_worker import VJEPA2Worker
 
 
 def create_app(model_path: Path | str, secret: str | None = None) -> FastAPI:
     secret = secret or os.environ.get("WORLDFORGE_HMAC_SECRET", "change-me")
-    app = FastAPI(title="WorldFoundry Inference", version="0.1.0-phase1")
+    app = FastAPI(title="WorldForge Inference", version="0.1.0-phase1")
 
     app.state.auth = HmacTokenAuth(secret=secret)
     app.state.router = AdapterRouter()
@@ -2815,8 +2815,8 @@ if __name__ == "__main__":
 - [ ] **Step 7: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_api_endpoints.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_api_endpoints.py -v
 ```
 
 Expected: 3 tests pass.
@@ -2824,7 +2824,7 @@ Expected: 3 tests pass.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add worldfoundry_inf/api/ worldfoundry_inf/server.py worldfoundry_inf/tests/test_api_endpoints.py
+git add worldforge_inf/api/ worldforge_inf/server.py worldforge_inf/tests/test_api_endpoints.py
 git commit -m "feat(inf): FastAPI server with /v1/world/encode and HMAC auth"
 ```
 
@@ -2833,8 +2833,8 @@ git commit -m "feat(inf): FastAPI server with /v1/world/encode and HMAC auth"
 ### Task 15: /v1/world/predict full impl
 
 **Files:**
-- Modify: `worldfoundry_inf/api/predict.py`
-- Modify: `worldfoundry_inf/tests/test_api_endpoints.py`
+- Modify: `worldforge_inf/api/predict.py`
+- Modify: `worldforge_inf/tests/test_api_endpoints.py`
 
 **Interfaces:**
 - Produces: `POST /v1/world/predict` accepts `{video, mask_ratio}` and returns `{predicted_features, loss_score}`
@@ -2855,7 +2855,7 @@ def predict_client(monkeypatch):
             return torch.zeros(1, 196, 1024)
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model", lambda p, dtype: _StubWorker()
+        "worldforge_inf.vjepa2_worker._load_hf_model", lambda p, dtype: _StubWorker()
     )
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
 
@@ -2875,7 +2875,7 @@ def test_predict_with_valid_auth_returns_200(predict_client, fake_video_bytes):
         content=body,
         headers={
             "Authorization": f"HMAC {sig}",
-            "X-WorldFoundry-Timestamp": ts,
+            "X-WorldForge-Timestamp": ts,
             "Content-Type": "application/json",
         },
     )
@@ -2888,13 +2888,13 @@ def test_predict_with_valid_auth_returns_200(predict_client, fake_video_bytes):
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_api_endpoints.py::test_predict_with_valid_auth_returns_200 -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_api_endpoints.py::test_predict_with_valid_auth_returns_200 -v
 ```
 
 Expected: FAIL (predict stub doesn't return predicted_features).
 
-- [ ] **Step 3: Replace `worldfoundry_inf/api/predict.py`**
+- [ ] **Step 3: Replace `worldforge_inf/api/predict.py`**
 
 ```python
 """POST /v1/world/predict — predict masked tokens.
@@ -2910,7 +2910,7 @@ import numpy as np
 import torch
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from worldfoundry_inf.security import HmacTokenAuth
+from worldforge_inf.security import HmacTokenAuth
 
 router = APIRouter()
 
@@ -2941,7 +2941,7 @@ async def predict(request: Request, auth: HmacTokenAuth = Depends(lambda: reques
 
 def _check_auth(request: Request, auth: HmacTokenAuth, body_bytes: bytes) -> None:
     hdr = request.headers.get("Authorization", "")
-    ts = request.headers.get("X-WorldFoundry-Timestamp", "")
+    ts = request.headers.get("X-WorldForge-Timestamp", "")
     if not hdr.startswith("HMAC "):
         raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
     sig = hdr[len("HMAC "):]
@@ -2952,8 +2952,8 @@ def _check_auth(request: Request, auth: HmacTokenAuth, body_bytes: bytes) -> Non
 - [ ] **Step 4: Run all endpoint tests**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_api_endpoints.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_api_endpoints.py -v
 ```
 
 Expected: 4 tests pass.
@@ -2961,7 +2961,7 @@ Expected: 4 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/api/predict.py worldfoundry_inf/tests/test_api_endpoints.py
+git add worldforge_inf/api/predict.py worldforge_inf/tests/test_api_endpoints.py
 git commit -m "feat(inf): /v1/world/predict full impl"
 ```
 
@@ -2970,8 +2970,8 @@ git commit -m "feat(inf): /v1/world/predict full impl"
 ### Task 16: /v1/world/plan full impl (V-JEPA 2-AC)
 
 **Files:**
-- Modify: `worldfoundry_inf/api/plan.py`
-- Modify: `worldfoundry_inf/tests/test_api_endpoints.py`
+- Modify: `worldforge_inf/api/plan.py`
+- Modify: `worldforge_inf/tests/test_api_endpoints.py`
 
 **Interfaces:**
 - Produces: `POST /v1/world/plan` accepts `{video, actions}` and returns `{next_features, planned_actions}`
@@ -2981,7 +2981,7 @@ git commit -m "feat(inf): /v1/world/predict full impl"
 ```python
 def test_plan_with_valid_auth_returns_200(monkeypatch, fake_video_bytes):
     import hmac, hashlib, time
-    import worldfoundry_inf.vjepa2_worker as vw
+    import worldforge_inf.vjepa2_worker as vw
     import torch
 
     class _StubWorker:
@@ -2993,7 +2993,7 @@ def test_plan_with_valid_auth_returns_200(monkeypatch, fake_video_bytes):
             return torch.zeros(1, 196, 1024), [int(a) for a in actions]
 
     monkeypatch.setattr(vw, "_load_hf_model", lambda p, dtype: _StubWorker())
-    from worldfoundry_inf.server import create_app
+    from worldforge_inf.server import create_app
     from fastapi.testclient import TestClient
     tc = TestClient(create_app(model_path="/fake/model", secret="test-secret"))
 
@@ -3006,7 +3006,7 @@ def test_plan_with_valid_auth_returns_200(monkeypatch, fake_video_bytes):
 
     resp = tc.post(
         path, content=body,
-        headers={"Authorization": f"HMAC {sig}", "X-WorldFoundry-Timestamp": ts,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 200
@@ -3018,7 +3018,7 @@ def test_plan_with_valid_auth_returns_200(monkeypatch, fake_video_bytes):
 - [ ] **Step 2: Add `plan` method to `VJEPA2Worker`**
 
 ```python
-# Append to worldfoundry_inf/vjepa2_worker.py after predict():
+# Append to worldforge_inf/vjepa2_worker.py after predict():
 
     @torch.no_grad()
     def plan(self, video_tensor: torch.Tensor, actions: list[int]) -> tuple[torch.Tensor, list[int]]:
@@ -3032,7 +3032,7 @@ def test_plan_with_valid_auth_returns_200(monkeypatch, fake_video_bytes):
         return feats, list(actions)
 ```
 
-- [ ] **Step 3: Replace `worldfoundry_inf/api/plan.py`**
+- [ ] **Step 3: Replace `worldforge_inf/api/plan.py`**
 
 ```python
 """POST /v1/world/plan — V-JEPA 2-AC planning.
@@ -3047,7 +3047,7 @@ import numpy as np
 import torch
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from worldfoundry_inf.security import HmacTokenAuth
+from worldforge_inf.security import HmacTokenAuth
 
 router = APIRouter()
 
@@ -3075,7 +3075,7 @@ async def plan(request: Request, auth: HmacTokenAuth = Depends(lambda: request.a
 
 def _check_auth(request: Request, auth: HmacTokenAuth, body_bytes: bytes) -> None:
     hdr = request.headers.get("Authorization", "")
-    ts = request.headers.get("X-WorldFoundry-Timestamp", "")
+    ts = request.headers.get("X-WorldForge-Timestamp", "")
     if not hdr.startswith("HMAC "):
         raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
     sig = hdr[len("HMAC "):]
@@ -3086,8 +3086,8 @@ def _check_auth(request: Request, auth: HmacTokenAuth, body_bytes: bytes) -> Non
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_inf/tests/test_api_endpoints.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_inf/tests/test_api_endpoints.py -v
 ```
 
 Expected: 5 tests pass.
@@ -3095,7 +3095,7 @@ Expected: 5 tests pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_inf/api/plan.py worldfoundry_inf/vjepa2_worker.py worldfoundry_inf/tests/test_api_endpoints.py
+git add worldforge_inf/api/plan.py worldforge_inf/vjepa2_worker.py worldforge_inf/tests/test_api_endpoints.py
 git commit -m "feat(inf): /v1/world/plan (V-JEPA 2-AC) full impl"
 ```
 
@@ -3105,12 +3105,12 @@ git commit -m "feat(inf): /v1/world/plan (V-JEPA 2-AC) full impl"
 
 **Files:**
 - Create: `scripts/phase1_smoke.sh`
-- Create: `worldfoundry_common/metrics.py`
+- Create: `worldforge_common/metrics.py`
 
 **Interfaces:**
 - Produces: `scripts/phase1_smoke.sh` runs a smoke test that touches all subsystems
 
-- [ ] **Step 1: Write `worldfoundry_common/metrics.py`**
+- [ ] **Step 1: Write `worldforge_common/metrics.py`**
 
 ```python
 """Prometheus metrics shared by train/inf/rl subsystems."""
@@ -3119,19 +3119,19 @@ from __future__ import annotations
 from prometheus_client import Counter, Histogram
 
 WORLDFORGE_RPS = Counter(
-    "worldfoundry_rps",
-    "WorldFoundry inference requests per second",
+    "worldforge_rps",
+    "WorldForge inference requests per second",
     ["endpoint"],
 )
 WORLDFORGE_LATENCY_MS = Histogram(
-    "worldfoundry_latency_ms",
-    "WorldFoundry inference latency in ms",
+    "worldforge_latency_ms",
+    "WorldForge inference latency in ms",
     ["endpoint"],
     buckets=(10, 25, 50, 100, 200, 400, 800, 1600, 3200),
 )
 WORLDFORGE_OM_LOAD_ERRORS = Counter(
-    "worldfoundry_om_load_errors",
-    "WorldFoundry OM load failures",
+    "worldforge_om_load_errors",
+    "WorldForge OM load failures",
     ["model_path"],
 )
 ```
@@ -3162,27 +3162,27 @@ run_step() {
 }
 
 # 1. Data
-run_step "DATA: build sample dataset" python -m worldfoundry_train.data.dataset --self-test
+run_step "DATA: build sample dataset" python -m worldforge_train.data.dataset --self-test
 
 # 2. Train (DDP LoRA, single-rank CPU fallback)
 if [[ "$CPU_FLAG" == "--cpu" ]]; then
     run_step "TRAIN: DDP LoRA on CPU stub" \
-        python -m worldfoundry_train.train \
-            --config worldfoundry_train/configs/vjepa2_vitl_1.2b.yaml \
+        python -m worldforge_train.train \
+            --config worldforge_train/configs/vjepa2_vitl_1.2b.yaml \
             --parallel ddp
 fi
 
 # 3. Quantize
 run_step "QUANTIZE: W8A8" \
-    python -c "from pathlib import Path; from worldfoundry_inf.compile.quantize import quantize_model; quantize_model(Path('models/vjepa2-vitl-1.2b'), Path('models/vjepa2-vitl-1.2b-w8a8'), quant_type='w8a8')"
+    python -c "from pathlib import Path; from worldforge_inf.compile.quantize import quantize_model; quantize_model(Path('models/vjepa2-vitl-1.2b'), Path('models/vjepa2-vitl-1.2b-w8a8'), quant_type='w8a8')"
 
 # 4. Compile
 run_step "COMPILE: MindIE-SD" \
-    python -c "from pathlib import Path; from worldfoundry_inf.compile.mindie_sd import compile_to_om; compile_to_om(Path('models/vjepa2-vitl-1.2b-w8a8'), Path('models/vjepa2-vitl-1.2b/model.om'))"
+    python -c "from pathlib import Path; from worldforge_inf.compile.mindie_sd import compile_to_om; compile_to_om(Path('models/vjepa2-vitl-1.2b-w8a8'), Path('models/vjepa2-vitl-1.2b/model.om'))"
 
 # 5. Serve
 run_step "SERVE: launch FastAPI on :8080 (background)" \
-    bash -c 'python -m worldfoundry_inf.server --model models/vjepa2-vitl-1.2b --port 8080 &'
+    bash -c 'python -m worldforge_inf.server --model models/vjepa2-vitl-1.2b --port 8080 &'
 
 # 6. Probe
 sleep 5
@@ -3193,7 +3193,7 @@ echo "==== Phase-1 smoke PASS ===="
 
 - [ ] **Step 3: Add `--self-test` to Vjepa2Dataset CLI**
 
-Append to `worldfoundry_train/data/dataset.py`:
+Append to `worldforge_train/data/dataset.py`:
 
 ```python
 def _self_test() -> int:
@@ -3216,7 +3216,7 @@ def _self_test() -> int:
         c.close()
         manifest = Path(tmp) / "manifest.csv"
         manifest.write_text(f"video_path,num_frames,height,width\n{out},20,64,64\n")
-        from worldfoundry_train.data.tubelet_mask import tubelet_mask
+        from worldforge_train.data.tubelet_mask import tubelet_mask
         ds = Vjepa2Dataset(manifest, mask_fn=lambda shape, rng: tubelet_mask(shape, (2, 14, 14), rng=rng))
         item = ds[0]
         assert item["frames"].shape[0] == 20
@@ -3233,7 +3233,7 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run smoke test on CPU**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 chmod +x scripts/phase1_smoke.sh
 bash scripts/phase1_smoke.sh --cpu
 ```
@@ -3243,7 +3243,7 @@ Expected: all 6 steps reach "PASS" (or the train step is skipped due to VJEPA2Mo
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_common/metrics.py scripts/phase1_smoke.sh worldfoundry_train/data/dataset.py
+git add worldforge_common/metrics.py scripts/phase1_smoke.sh worldforge_train/data/dataset.py
 git commit -m "feat(common,scripts): Prometheus metrics and Phase-1 smoke script"
 ```
 
@@ -3252,18 +3252,18 @@ git commit -m "feat(common,scripts): Prometheus metrics and Phase-1 smoke script
 ### Task 18: Feature-similarity eval metric
 
 **Files:**
-- Create: `worldfoundry_common/tests/test_metrics.py`
-- Modify: `worldfoundry_common/metrics.py`
+- Create: `worldforge_common/tests/test_metrics.py`
+- Modify: `worldforge_common/metrics.py`
 
 **Interfaces:**
-- Produces: `worldfoundry_common.metrics.cosine_similarity(a, b)` → float
+- Produces: `worldforge_common.metrics.cosine_similarity(a, b)` → float
 
-- [ ] **Step 1: Append failing test to `worldfoundry_common/tests/test_metrics.py`**
+- [ ] **Step 1: Append failing test to `worldforge_common/tests/test_metrics.py`**
 
 ```python
 import numpy as np
 
-from worldfoundry_common.metrics import cosine_similarity
+from worldforge_common.metrics import cosine_similarity
 
 
 def test_cosine_similarity_identical_is_one():
@@ -3287,7 +3287,7 @@ def test_cosine_similarity_2d_arrays():
 
 - [ ] **Step 2: Implement `cosine_similarity`**
 
-Append to `worldfoundry_common/metrics.py`:
+Append to `worldforge_common/metrics.py`:
 
 ```python
 import numpy as np
@@ -3312,8 +3312,8 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray | float:
 - [ ] **Step 3: Run tests**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_common/tests/test_metrics.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_common/tests/test_metrics.py -v
 ```
 
 Expected: 3 tests pass.
@@ -3321,7 +3321,7 @@ Expected: 3 tests pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add worldfoundry_common/metrics.py worldfoundry_common/tests/test_metrics.py
+git add worldforge_common/metrics.py worldforge_common/tests/test_metrics.py
 git commit -m "feat(common): cosine similarity eval metric"
 ```
 
@@ -3330,20 +3330,20 @@ git commit -m "feat(common): cosine similarity eval metric"
 ### Task 19: VJEPAActor port from V-JEPA 2-AC (latent action prediction)
 
 **Files:**
-- Create: `worldfoundry_rl/actor.py`
-- Create: `worldfoundry_rl/env_droid.py`
-- Create: `worldfoundry_rl/tests/test_actor.py`
+- Create: `worldforge_rl/actor.py`
+- Create: `worldforge_rl/env_droid.py`
+- Create: `worldforge_rl/tests/test_actor.py`
 
 **Interfaces:**
 - Produces:
-  - `worldfoundry_rl.actor.VJEPAActor.from_pretrained(model_path)` with `.predict_latent_action(state, action_history) -> Tensor`
+  - `worldforge_rl.actor.VJEPAActor.from_pretrained(model_path)` with `.predict_latent_action(state, action_history) -> Tensor`
 
-- [ ] **Step 1: Write failing test `worldfoundry_rl/tests/test_actor.py`**
+- [ ] **Step 1: Write failing test `worldforge_rl/tests/test_actor.py`**
 
 ```python
 import pytest
 
-from worldfoundry_rl.actor import VJEPAActor
+from worldforge_rl.actor import VJEPAActor
 
 
 def test_actor_init_loads_model(monkeypatch):
@@ -3355,7 +3355,7 @@ def test_actor_init_loads_model(monkeypatch):
             return Out()
 
     monkeypatch.setattr(
-        "worldfoundry_rl.actor._load_hf_model",
+        "worldforge_rl.actor._load_hf_model",
         lambda path, dtype: _FakeEncoder(),
     )
     actor = VJEPAActor.from_pretrained("/fake/model")
@@ -3372,7 +3372,7 @@ def test_predict_latent_action_returns_tensor(monkeypatch):
             return Out()
 
     monkeypatch.setattr(
-        "worldfoundry_rl.actor._load_hf_model",
+        "worldforge_rl.actor._load_hf_model",
         lambda path, dtype: _FakeEncoder(),
     )
     actor = VJEPAActor.from_pretrained("/fake/model")
@@ -3385,13 +3385,13 @@ def test_predict_latent_action_returns_tensor(monkeypatch):
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_rl/tests/test_actor.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_rl/tests/test_actor.py -v
 ```
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement `worldfoundry_rl/actor.py`**
+- [ ] **Step 3: Implement `worldforge_rl/actor.py`**
 
 ```python
 """VJEPAActor — wraps V-JEPA 2 for action-conditioned prediction (Phase-1 W7).
@@ -3436,7 +3436,7 @@ class VJEPAActor:
         return out.last_hidden_state
 ```
 
-- [ ] **Step 4: Implement `worldfoundry_rl/env_droid.py` (stub)**
+- [ ] **Step 4: Implement `worldforge_rl/env_droid.py` (stub)**
 
 ```python
 """DroidEnv stub — offline dataset replay only (Phase-1, no live simulator).
@@ -3472,8 +3472,8 @@ class DroidEnv:
 - [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_rl/tests/test_actor.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_rl/tests/test_actor.py -v
 ```
 
 Expected: 2 tests pass.
@@ -3481,7 +3481,7 @@ Expected: 2 tests pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add worldfoundry_rl/actor.py worldfoundry_rl/env_droid.py worldfoundry_rl/tests/test_actor.py
+git add worldforge_rl/actor.py worldforge_rl/env_droid.py worldforge_rl/tests/test_actor.py
 git commit -m "feat(rl): VJEPAActor stub + DroidEnv offline replay"
 ```
 
@@ -3490,13 +3490,13 @@ git commit -m "feat(rl): VJEPAActor stub + DroidEnv offline replay"
 ### Task 20: AC finetuning entry (Phase-1 W7)
 
 **Files:**
-- Create: `worldfoundry_rl/train_ac.py`
-- Create: `worldfoundry_rl/tests/test_train_ac_smoke.py`
+- Create: `worldforge_rl/train_ac.py`
+- Create: `worldforge_rl/tests/test_train_ac_smoke.py`
 
 **Interfaces:**
-- Produces: `python -m worldfoundry_rl.train_ac --model ... --manifest ...` runs AC finetuning
+- Produces: `python -m worldforge_rl.train_ac --model ... --manifest ...` runs AC finetuning
 
-- [ ] **Step 1: Write failing test `worldfoundry_rl/tests/test_train_ac_smoke.py`**
+- [ ] **Step 1: Write failing test `worldforge_rl/tests/test_train_ac_smoke.py`**
 
 ```python
 import subprocess
@@ -3505,8 +3505,8 @@ import sys
 
 def test_train_ac_help_runs():
     result = subprocess.run(
-        [sys.executable, "-m", "worldfoundry_rl.train_ac", "--help"],
-        capture_output=True, text=True, cwd="/mnt/c/WorkSpace/WorldFoundry",
+        [sys.executable, "-m", "worldforge_rl.train_ac", "--help"],
+        capture_output=True, text=True, cwd="/mnt/c/WorkSpace/WorldForge",
     )
     assert result.returncode == 0
     assert "--model" in result.stdout
@@ -3515,16 +3515,16 @@ def test_train_ac_help_runs():
 - [ ] **Step 2: Run failing test**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_rl/tests/test_train_ac_smoke.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_rl/tests/test_train_ac_smoke.py -v
 ```
 
 Expected: ModuleNotFoundError.
 
-- [ ] **Step 3: Implement `worldfoundry_rl/train_ac.py`**
+- [ ] **Step 3: Implement `worldforge_rl/train_ac.py`**
 
 ```python
-"""WorldFoundry Phase-1 V-JEPA 2-AC finetuning entry.
+"""WorldForge Phase-1 V-JEPA 2-AC finetuning entry.
 
 Per spec §5.3 + risk row "AC reproduction scope":
 - Phase-1 covers only the AC finetuning phase (latent action prediction).
@@ -3536,13 +3536,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from worldfoundry_common.npu_env import check_versions, init_distributed, npu_device_count
-from worldfoundry_rl.actor import VJEPAActor
-from worldfoundry_rl.env_droid import DroidEnv
+from worldforge_common.npu_env import check_versions, init_distributed, npu_device_count
+from worldforge_rl.actor import VJEPAActor
+from worldforge_rl.env_droid import DroidEnv
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="WorldFoundry V-JEPA 2-AC finetuning (Phase-1)")
+    parser = argparse.ArgumentParser(description="WorldForge V-JEPA 2-AC finetuning (Phase-1)")
     parser.add_argument("--model", type=Path, required=True, help="V-JEPA 2 base weights path")
     parser.add_argument("--manifest", type=Path, required=True, help="Droid manifest CSV")
     parser.add_argument("--epochs", type=int, default=100)
@@ -3577,8 +3577,8 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_rl/tests/test_train_ac_smoke.py -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_rl/tests/test_train_ac_smoke.py -v
 ```
 
 Expected: 1 test passes.
@@ -3586,7 +3586,7 @@ Expected: 1 test passes.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add worldfoundry_rl/train_ac.py worldfoundry_rl/tests/test_train_ac_smoke.py
+git add worldforge_rl/train_ac.py worldforge_rl/tests/test_train_ac_smoke.py
 git commit -m "feat(rl): AC finetuning entry (Phase-1 W7 scope only)"
 ```
 
@@ -3619,7 +3619,7 @@ echo "==== Phase-1 AC finetuning ===="
 echo "model:    $MODEL_PATH"
 echo "manifest: $MANIFEST"
 
-python -m worldfoundry_rl.train_ac \
+python -m worldforge_rl.train_ac \
     --model "$MODEL_PATH" \
     --manifest "$MANIFEST" \
     --epochs "${WORLDFORGE_AC_EPOCHS:-100}" \
@@ -3638,16 +3638,16 @@ echo "==== Phase-1 AC finetuning PASS ===="
 
 ```bash
 # 1. Build & launch container (one-time)
-docker build -t worldfoundry-base:phase1 -f docker/worldfoundry-base/Dockerfile .
+docker build -t worldforge-base:phase1 -f docker/worldforge-base/Dockerfile .
 
 # 2. Smoke test on CPU
-docker run --rm -v $(pwd):/workspace worldfoundry-base:phase1 \
+docker run --rm -v $(pwd):/workspace worldforge-base:phase1 \
     bash scripts/phase1_smoke.sh --cpu
 
 # 3. Smoke test on NPU (real hardware)
 docker run --rm --device /dev/davinci0:/dev/davinci0 \
     -v $(pwd):/workspace -v /data:/data \
-    worldfoundry-base:phase1 \
+    worldforge-base:phase1 \
     bash scripts/phase1_smoke.sh
 
 # 4. AC finetuning (W7-W8)
@@ -3655,7 +3655,7 @@ docker run --rm --device /dev/davinci0:/dev/davinci0 \
     -v $(pwd):/workspace -v /data:/data \
     -e WORLDFORGE_MODEL=models/vjepa2-vitl-1.2b \
     -e WORLDFORGE_DROID_MANIFEST=/data/droid/manifest.csv \
-    worldfoundry-base:phase1 \
+    worldforge-base:phase1 \
     bash scripts/phase1_ac_repro.sh
 ```
 
@@ -3664,7 +3664,7 @@ docker run --rm --device /dev/davinci0:/dev/davinci0 \
 ### "LoRA matched 0 modules"
 Per Global Constraint G4 + spec §3.2: `model.print_trainable_parameters()` returns 0.
 Fix: inspect `base_model.named_modules()`; the V-JEPA 2 actual module names
-may differ from the candidate list. Update `worldfoundry_train/model/lora_wrapper.py`
+may differ from the candidate list. Update `worldforge_train/model/lora_wrapper.py`
 `DEFAULT_LORA_CANDIDATES`.
 
 ### "version mismatch" at startup
@@ -3673,7 +3673,7 @@ You installed a package version not on the locked matrix. Either:
 - Pass `--strict-versions` to fail fast on the next run.
 
 ### "Adapter not registered"
-`AdapterNotFoundError` from `worldfoundry_inf.scheduler.AdapterRouter.route`.
+`AdapterNotFoundError` from `worldforge_inf.scheduler.AdapterRouter.route`.
 The inference service does not silently default to a fallback adapter
 (per spec §4.7). Restart the server with the missing adapter loaded, or
 fix the client to use a registered adapter name.
@@ -3685,8 +3685,8 @@ constructor will silently fall back to decord; this is expected on CPU.
 ## Acceptance criteria check
 
 See spec §9. For Phase-1 (Tasks 1-21), the relevant ones are:
-- #1 (W1-W2 train) — verified by `pytest worldfoundry_train/tests` + smoke
-- #2 (W3-W4 inference) — verified by `pytest worldfoundry_inf/tests` + curl /v1/world/encode
+- #1 (W1-W2 train) — verified by `pytest worldforge_train/tests` + smoke
+- #2 (W3-W4 inference) — verified by `pytest worldforge_inf/tests` + curl /v1/world/encode
 - #3 (W5-W6 smoke) — verified by `bash scripts/phase1_smoke.sh`
 - #4 (W7-W8 AC finetuning) — verified by `bash scripts/phase1_ac_repro.sh`
 
@@ -3700,7 +3700,7 @@ issued as a separate implementation plan after Phase-1 acceptance.
 - [ ] **Step 3: Make scripts executable and run AC repro stub**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
+cd /mnt/c/WorkSpace/WorldForge
 chmod +x scripts/phase1_ac_repro.sh
 # Dry-run the help text
 bash scripts/phase1_ac_repro.sh 2>&1 | head -5 || true
@@ -3711,8 +3711,8 @@ Expected: prints the header banner even if model/manifest missing (script exits 
 - [ ] **Step 4: Run all tests to verify the full Phase-1 suite is green**
 
 ```bash
-cd /mnt/c/WorkSpace/WorldFoundry
-PYTHONPATH=. pytest worldfoundry_common/tests worldfoundry_train/tests worldfoundry_inf/tests worldfoundry_rl/tests -v
+cd /mnt/c/WorkSpace/WorldForge
+PYTHONPATH=. pytest worldforge_common/tests worldforge_train/tests worldforge_inf/tests worldforge_rl/tests -v
 ```
 
 Expected: all 30+ tests pass.
