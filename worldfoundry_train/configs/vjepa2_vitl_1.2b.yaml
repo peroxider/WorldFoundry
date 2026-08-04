@@ -51,7 +51,7 @@ jepa:
     num_masks: 1               # >1 needs the multi-mask data pipeline (W23+)
 
 # Optional: quantize the baseline weights before training (W18+).
-# Requires `worldforge_inf` and a saved local model dir in `source_dir`.
+# Requires `worldfoundry_inf` and a saved local model dir in `source_dir`.
 # Leave this block commented out to train on the bf16 baseline directly.
 #
 # quant:
