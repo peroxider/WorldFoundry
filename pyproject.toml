@@ -3,9 +3,9 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "worldforge"
+name = "worldfoundry"
 version = "0.1.0"
-description = "Ascend NPU world model training + inference platform (Phase-1: V-JEPA 2)"
+description = "Ascend NPU world-model rendering/training/inference framework (JEPA family, simulator RL, simulator + hardware deployment) — orchestrating vllm-ascend, mindspeed, verl/RLinf, msmodelslim"
 requires-python = "==3.11.*"
 dependencies = [
     "torch==2.9.0",
@@ -33,14 +33,14 @@ quant = ["msmodelslim==26.1.0"]
 video = ["av==14.0.0", "decord==0.6.0"]
 
 [project.entry-points."vllm.platform_plugins"]
-worldforge_inf = "worldforge_inf._vllm_ascend_plugin:register"
+worldfoundry_inf = "worldfoundry_inf._vllm_ascend_plugin:register"
 
 [project.entry-points."vllm.general_plugins"]
-vjepa2_model = "worldforge_inf._vllm_ascend_plugin:register_model"
+vjepa2_model = "worldfoundry_inf._vllm_ascend_plugin:register_model"
 
 [tool.setuptools.packages.find]
-include = ["worldforge_*"]
+include = ["worldfoundry_*"]
 
 [tool.pytest.ini_options]
-testpaths = ["worldforge_train/tests", "worldforge_inf/tests", "worldforge_rl/tests"]
+testpaths = ["worldfoundry_train/tests", "worldfoundry_inf/tests", "worldfoundry_rl/tests"]
 addopts = "-v --tb=short"
