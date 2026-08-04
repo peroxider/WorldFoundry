@@ -18,7 +18,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: "/mnt/c/WorkSpace/WorldForge/spikes/w35-3-rlinf/results"
+    log_path: "/mnt/c/WorkSpace/WorldFoundry/spikes/w35-3-rlinf/results"
     project_name: rlinf-spike
     experiment_name: "gym_ppo_cart_pole"
     logger_backends: ["tensorboard"]

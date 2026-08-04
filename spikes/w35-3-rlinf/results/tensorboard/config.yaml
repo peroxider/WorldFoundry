@@ -85,7 +85,7 @@ cluster:
 runner:
   task_type: embodied
   logger:
-    log_path: /mnt/c/WorkSpace/WorldForge/spikes/w35-3-rlinf/results
+    log_path: /mnt/c/WorkSpace/WorldFoundry/spikes/w35-3-rlinf/results
     project_name: rlinf-spike
     experiment_name: gym_ppo_cart_pole_vjepa2_pixel
     logger_backends:
@@ -145,7 +145,7 @@ env:
     video_cfg:
       save_video: false
       info_on_video: false
-      video_base_dir: /mnt/c/WorkSpace/WorldForge/spikes/w35-3-rlinf/results/video/train
+      video_base_dir: /mnt/c/WorkSpace/WorldFoundry/spikes/w35-3-rlinf/results/video/train
   eval:
     env_type: gym_cartpole
     gym_id: CartPole-v1
@@ -164,7 +164,7 @@ env:
     num_frames: 2
     video_cfg:
       save_video: false
-      video_base_dir: /mnt/c/WorkSpace/WorldForge/spikes/w35-3-rlinf/results/video/eval
+      video_base_dir: /mnt/c/WorkSpace/WorldFoundry/spikes/w35-3-rlinf/results/video/eval
 rollout:
   group_name: RolloutGroup
   backend: huggingface

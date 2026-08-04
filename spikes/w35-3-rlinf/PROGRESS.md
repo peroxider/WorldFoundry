@@ -140,7 +140,7 @@ actor/critic 更新 → 权重同步全链路无报错，PPO 指标正常输出
 
 ```bash
 # 启动训练（spike 根目录）
-D=/mnt/c/WorkSpace/WorldForge/spikes/w35-3-rlinf; V=/home/chad/w35-3/venv
+D=/mnt/c/WorkSpace/WorldFoundry/spikes/w35-3-rlinf; V=/home/chad/w35-3/venv
 cd $D && setsid env RAY_ADDRESS=127.0.0.1:6399 PYTHONPATH=$D $V/bin/python src/train_spike.py > run-baseline.log 2>&1 < /dev/null &
 # 重启 Ray（如需）
 setsid $V/bin/python $V/bin/ray start --head --temp-dir=$HOME/ray_tmp --object-store-memory=500000000 --port=6399 --num-cpus=12 > $HOME/ray-start.log 2>&1 < /dev/null &
@@ -152,7 +152,7 @@ setsid $V/bin/python $V/bin/ray start --head --temp-dir=$HOME/ray_tmp --object-s
   或 `python <script>` 形式，bin 脚本 shebang 指向旧路径。
 - 版本：rlinf 0.3.0 / torch 2.10.0+cpu / ray 2.56.1 / transformers 4.57.6 / gymnasium 0.29.1。
 - pip 用 tuna 镜像。embodichain 路线已判死（dexsim_engine 无处可装）→ gymnasium CartPole 兜底。
-- Write/Edit 工具必须用 Windows 路径 `C:\WorkSpace\WorldForge\...`。
+- Write/Edit 工具必须用 Windows 路径 `C:\WorkSpace\WorldFoundry\...`。
 - FSDP 已确认 cpu 兼容：`create_device_mesh` 用 `Worker.torch_device_type`（补丁后="cpu"），
   AMP 已关（fsdp.yaml `amp_autocast.enabled: False`），无 `.cuda()` 硬编码；
   `torch.amp.autocast(device_type="cuda")` 仅在 AMP 开启时触发。

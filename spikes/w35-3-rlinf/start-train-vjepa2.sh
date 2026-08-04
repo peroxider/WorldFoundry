@@ -1,7 +1,7 @@
 #!/bin/bash
 # W35.3 S2/S3 spike launcher (VJEPA2Policy mode A). Start with:
 #   setsid bash start-train-vjepa2.sh < /dev/null > /dev/null 2>&1 &
-D=/mnt/c/WorkSpace/WorldForge/spikes/w35-3-rlinf
+D=/mnt/c/WorkSpace/WorldFoundry/spikes/w35-3-rlinf
 V=/home/chad/w35-3/venv
 cd "$D" || exit 1
 export RAY_ADDRESS=127.0.0.1:6399
