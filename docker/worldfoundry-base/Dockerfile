@@ -1,4 +1,4 @@
-# WorldForge Phase-1 base image
+# WorldFoundry Phase-1 base image
 # Locked version matrix (spec §6.2):
 #   CANN 8.5.1 + torch_npu 2.9.0 + vllm-ascend 0.18.0
 FROM ascend-pytorch:2.9.0-cann8.5.1-ubuntu22.04
@@ -45,10 +45,10 @@ RUN git clone --depth 1 --branch main --single-branch https://github.com/faceboo
 # Project source
 WORKDIR /workspace
 COPY pyproject.toml .
-COPY worldforge_common/ worldforge_common/
-COPY worldforge_train/ worldforge_train/
-COPY worldforge_inf/ worldforge_inf/
-COPY worldforge_rl/ worldforge_rl/
+COPY worldfoundry_common/ worldfoundry_common/
+COPY worldfoundry_train/ worldfoundry_train/
+COPY worldfoundry_inf/ worldfoundry_inf/
+COPY worldfoundry_rl/ worldfoundry_rl/
 
 RUN pip install -e .
 

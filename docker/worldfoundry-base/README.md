@@ -1,4 +1,4 @@
-# WorldForge base image
+# WorldFoundry base image
 
 Locked version matrix per spec §6.2:
 
@@ -11,10 +11,10 @@ Locked version matrix per spec §6.2:
 
 Build:
 ```bash
-docker build -t worldforge-base:phase1 -f docker/worldforge-base/Dockerfile .
+docker build -t worldfoundry-base:phase1 -f docker/worldfoundry-base/Dockerfile .
 ```
 
 Run smoke (CPU fallback — NPU required for real tests):
 ```bash
-docker run --rm -it worldforge-base:phase1 bash
+docker run --rm -it worldfoundry-base:phase1 bash
 ```
