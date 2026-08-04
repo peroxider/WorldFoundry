@@ -18,6 +18,7 @@ G3 boundary: this file does NOT modify ``train.py`` or ``parallel/*``.
 """
 from __future__ import annotations
 
+from contextlib import nullcontext
 from typing import Callable, Iterable, Mapping
 
 import torch
@@ -77,6 +78,25 @@ def run_training_step(
     return float(loss.detach().item())
 
 
+def _rescale_grads(optimizer: Optimizer, factor: float) -> None:
+    """Multiply all accumulated grads by ``factor`` in place.
+
+    Used to flush a partial accumulation window: micro-batch losses are
+    uniformly scaled by ``1 / grad_accum``, so a tail window of
+    ``window_size < grad_accum`` micro-batches must be rescaled by
+    ``grad_accum / window_size`` to recover the window-mean gradient.
+
+    In-place ``mul_`` is safe for plain params, DDP-managed grads (DDP has
+    already all-reduced into ``p.grad`` during the final backward), and
+    FSDP with ``use_orig_params=True`` (``p.grad`` is a view into the
+    sharded flat grad; elementwise scaling preserves the sharded layout).
+    """
+    for param_group in optimizer.param_groups:
+        for p in param_group["params"]:
+            if p.grad is not None:
+                p.grad.mul_(factor)
+
+
 def run_training_loop(
     model: nn.Module,
     batch_iter: Iterable[Mapping[str, torch.Tensor]],
@@ -85,24 +105,73 @@ def run_training_loop(
     optimizer: Optimizer,
     loss_fn: LossFn | None = None,
     step_callback: Callable[[int, float], None] | None = None,
+    grad_accum: int = 1,
 ) -> list[float]:
-    """Run ``num_steps`` training steps, returning per-step losses.
+    """Run ``num_steps`` micro-batch steps with gradient accumulation.
 
-    If ``step_callback`` is provided, it is called as
-    ``step_callback(step_no, loss)`` after each step (1-indexed step_no).
-    Used by trainer to schedule checkpoint saves.
+    ``num_steps`` counts micro-batches (unchanged from the pre-accumulation
+    contract). Every ``grad_accum`` micro-batches form one accumulation
+    window: intermediate micro-batches only backward-accumulate scaled
+    gradients (``loss / grad_accum``); the window-closing micro-batch also
+    triggers ``strategy.step(optimizer)`` (optimizer.step + zero_grad).
+    A trailing partial window (``num_steps % grad_accum != 0``) is flushed
+    at the end with grads rescaled to the window mean.
+
+    Intermediate micro-batches run under ``strategy.no_sync(model)`` so
+    DDP/FSDP skip cross-rank gradient sync until the window closes.
+    Strategies without sync suppression fall back to a null context
+    (correct, just extra sync traffic).
+
+    ``step_callback`` semantics: called only on optimizer steps as
+    ``step_callback(optimizer_step_no, window_mean_loss)`` with a 1-indexed
+    optimizer-step counter. Checkpoint steps derived from this callback
+    therefore count optimizer steps, not micro-batches. With
+    ``grad_accum == 1`` every micro-batch is an optimizer step, so behavior
+    is byte-for-byte identical to the pre-accumulation loop.
+
+    Returns:
+        Per-optimizer-step mean losses. Length is
+        ``ceil(num_steps / grad_accum)`` (== ``num_steps`` when
+        ``grad_accum == 1``).
     """
     if num_steps <= 0:
         raise ValueError(f"num_steps must be positive, got {num_steps}")
+    if grad_accum < 1:
+        raise ValueError(f"grad_accum must be >= 1, got {grad_accum}")
+    if loss_fn is None:
+        loss_fn = default_loss_fn
 
     losses: list[float] = []
+    window_losses: list[float] = []
+    optimizer_step = 0
     iterator = iter(batch_iter)
     for step in range(num_steps):
         batch = next(iterator)
-        loss = run_training_step(model, batch, strategy, optimizer, loss_fn)
-        losses.append(loss)
-        if step_callback is not None:
-            step_callback(step + 1, loss)
+        # Sync grads on the window-closing micro-batch, and always on the
+        # final micro-batch so a partial tail window is reduced + flushed.
+        is_sync_step = (step + 1) % grad_accum == 0 or step == num_steps - 1
+        ctx = nullcontext() if is_sync_step else strategy.no_sync(model)
+        with ctx:
+            loss = loss_fn(model, batch)
+            if not loss.requires_grad:
+                raise RuntimeError(
+                    f"loss_fn returned a tensor with requires_grad=False; "
+                    f"check that the model parameters have requires_grad=True."
+                )
+            strategy.backward(loss / grad_accum)
+        window_losses.append(float(loss.detach().item()))
+
+        if is_sync_step:
+            window_size = len(window_losses)
+            if window_size < grad_accum:
+                _rescale_grads(optimizer, grad_accum / window_size)
+            strategy.step(optimizer)
+            optimizer_step += 1
+            window_mean = sum(window_losses) / window_size
+            losses.append(window_mean)
+            window_losses.clear()
+            if step_callback is not None:
+                step_callback(optimizer_step, window_mean)
     return losses
 
 

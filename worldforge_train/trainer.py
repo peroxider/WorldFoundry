@@ -36,10 +36,26 @@ def default_logger(step: int, loss: float) -> None:
 
 
 def make_strategy(profile: str = "train") -> "DistributedStrategy":
+    """Map a parallel profile name to a strategy instance.
+
+    - ``"ddp"``  -> :class:`~worldforge_train.parallel.ddp.DDPStrategy`
+      (Phase-1 default for LoRA per spec §3.3)
+    - ``"fsdp"`` -> :class:`~worldforge_train.parallel.fsdp.FSDPStrategy`
+    - ``"train"`` -> FSDPStrategy (legacy Phase-1 alias, kept for backward
+      compatibility; new configs should use ``"ddp"`` / ``"fsdp"``)
+
+    Unknown names raise ValueError (fail-fast per G4) instead of silently
+    returning a default.
+    """
+    if profile == "ddp":
+        from worldforge_train.parallel.ddp import DDPStrategy
+        return DDPStrategy()
     if profile in ("train", "fsdp"):
         from worldforge_train.parallel.fsdp import FSDPStrategy
         return FSDPStrategy()
-    raise ValueError(f"unknown profile: {profile!r}; expected 'train' or 'fsdp'")
+    raise ValueError(
+        f"unknown profile: {profile!r}; expected 'ddp', 'fsdp' or legacy 'train'"
+    )
 
 
 def _default_num_steps(cfg: dict, ds_len: int, batch: int) -> int:
@@ -88,29 +104,41 @@ def run_training(
     resume_from: Path | None = None,
     save_every_n: int = 0,
 ) -> list[float]:
-    """Run end-to-end training. Returns per-step losses.
+    """Run end-to-end training. Returns per-optimizer-step losses.
 
     G4: empty dataset -> ValueError; num_steps<=0 -> ValueError;
     save_every_n>0 without checkpoint_dir -> ValueError;
     resume_from nonexistent -> FileNotFoundError; corrupted .pt -> IOError;
-    LoRA signature mismatch -> ValueError.
+    LoRA signature mismatch -> ValueError; grad_accum<1 -> ValueError.
+
+    ``num_steps`` (and the YAML-derived default) counts micro-batches.
+    ``cfg["training"]["grad_accum"]`` (default 1) controls gradient
+    accumulation: every ``grad_accum`` micro-batches trigger one
+    optimizer step. Checkpoint ``step`` values, ``save_every_n`` and the
+    returned loss list therefore count optimizer steps
+    (``ceil(micro_steps / grad_accum)``); with ``grad_accum == 1`` all
+    semantics are identical to the pre-accumulation behavior.
 
     Args:
         checkpoint_dir: optional Path. If set, final checkpoint (and intermediate
-            ones at every save_every_n steps) is written here. Parent dirs created.
+            ones at every save_every_n optimizer steps) is written here. Parent dirs created.
         resume_from: optional Path. If set, load this checkpoint before training
-            and continue from its recorded step. LoRA signature is validated.
-        save_every_n: int. 0 = save only at end. >0 = save every N steps.
+            and continue from its recorded (optimizer) step. LoRA signature is validated.
+        save_every_n: int. 0 = save only at end. >0 = save every N optimizer steps.
             Raises ValueError if >0 and checkpoint_dir is None.
 
     Returns:
-        Per-step losses for the steps actually executed (post-resume if applicable).
+        Per-optimizer-step mean losses for the steps actually executed
+        (post-resume if applicable).
     """
     from worldforge_train.training_loop import default_loss_fn, run_training_loop
 
     loss_fn = loss_fn or default_loss_fn
     logger = logger or default_logger
     log_every_n = int(cfg["training"].get("log_every_n", 10))
+    grad_accum = int(cfg["training"].get("grad_accum", 1))
+    if grad_accum < 1:
+        raise ValueError(f"grad_accum must be >= 1, got {grad_accum}")
 
     ds = _build_dataset(cfg)
     if len(ds) == 0:
@@ -174,11 +202,18 @@ def run_training(
 
     # --- end W16 block ---
 
-    effective_num_steps = num_steps - start_step
+    # Checkpoint `step` counts OPTIMIZER steps (see run_training_loop
+    # step_callback semantics), while num_steps counts micro-batches.
+    # Convert the resumed optimizer-step counter back to micro-batches;
+    # exact when all completed accumulation windows were full (checkpoints
+    # are only written at window boundaries or at the final flush).
+    # grad_accum == 1 -> start_step * 1 == start_step (unchanged behavior).
+    effective_num_steps = num_steps - start_step * grad_accum
     if effective_num_steps <= 0:
         raise ValueError(
             f"effective_num_steps={effective_num_steps} (num_steps={num_steps}, "
-            f"start_step={start_step}); checkpoint step already at/over target. "
+            f"start_step={start_step}, grad_accum={grad_accum}); checkpoint "
+            f"step already at/over target. "
             f"Raise --steps or omit --resume-from."
         )
     print(f"[TRAIN] start_step={start_step} target={num_steps} "
@@ -199,11 +234,13 @@ def run_training(
     losses = run_training_loop(
         model, batches, num_steps=effective_num_steps,
         strategy=strategy, optimizer=optimizer, loss_fn=loss_fn,
-        step_callback=_step_cb,
+        step_callback=_step_cb, grad_accum=grad_accum,
     )
 
     if checkpoint_dir is not None:
-        final_step = start_step + effective_num_steps
+        # len(losses) == number of optimizer steps executed this run
+        # (== effective_num_steps when grad_accum == 1).
+        final_step = start_step + len(losses)
         save_checkpoint(
             checkpoint_dir / f"step_{final_step}.pt",
             model, optimizer, final_step, lora_signature=ckpt_sig,

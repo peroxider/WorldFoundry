@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
+from typing import ContextManager
 
 from torch import nn
 from torch.optim import Optimizer
@@ -24,6 +26,18 @@ class DistributedStrategy(ABC):
 
     @abstractmethod
     def step(self, optimizer: Optimizer) -> None: ...
+
+    def no_sync(self, model: nn.Module) -> ContextManager[None]:
+        """Context manager suppressing cross-rank gradient sync.
+
+        Used by the training loop for gradient-accumulation micro-batches
+        that do NOT close an accumulation window: DDP/FSDP would otherwise
+        all-reduce / reduce-scatter gradients on every backward. The
+        default is a null context (no suppression — always correct, just
+        extra sync traffic); strategies with native sync suppression
+        (DDP.no_sync, FSDP.no_sync) override this.
+        """
+        return nullcontext()
 
 
 def select_strategy(profile: str) -> DistributedStrategy:

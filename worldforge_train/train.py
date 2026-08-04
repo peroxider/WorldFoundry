@@ -16,7 +16,11 @@ from worldforge_common.npu_env import check_versions
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="WorldForge V-JEPA 2 LoRA training")
     parser.add_argument("--config", type=Path, required=True, help="YAML config path")
-    parser.add_argument("--parallel", choices=["ddp", "fsdp"], default="ddp")
+    parser.add_argument(
+        "--parallel", choices=["ddp", "fsdp"], default=None,
+        help="Parallel strategy override. Default: cfg[training][parallel], "
+             "falling back to 'ddp'.",
+    )
     parser.add_argument("--strict-versions", action="store_true")
     parser.add_argument(
         "--steps", type=int, default=0,
@@ -42,6 +46,20 @@ def _resolve_num_steps(args: argparse.Namespace) -> int | None:
     return args.steps if args.steps > 0 else None
 
 
+def _resolve_parallel(args: argparse.Namespace, cfg: dict) -> str:
+    """Resolve the parallel profile: CLI flag > cfg[training][parallel] > "ddp".
+
+    Fail-fast (ValueError) on unknown names so a typo'd config cannot
+    silently launch the wrong strategy.
+    """
+    profile = args.parallel or str(cfg.get("training", {}).get("parallel") or "ddp")
+    if profile not in ("ddp", "fsdp"):
+        raise ValueError(
+            f"unknown parallel profile: {profile!r}; expected 'ddp' or 'fsdp'"
+        )
+    return profile
+
+
 def _resolve_save_every_n(args: argparse.Namespace, cfg: dict) -> int:
     if args.save_every_n is not None:
         return args.save_every_n
@@ -58,7 +76,9 @@ def main() -> int:
     from worldforge_train.quantize_bridge import maybe_quantize_first
     cfg = maybe_quantize_first(cfg)
 
-    if args.parallel == "ddp":
+    profile = _resolve_parallel(args, cfg)
+
+    if profile == "ddp":
         from worldforge_train.parallel.ddp import cleanup_ddp, setup_ddp
         world_size, local_rank, global_rank = setup_ddp()
         print(f"[DDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
@@ -70,20 +90,22 @@ def main() -> int:
     num_steps = _resolve_num_steps(args)
     save_every_n = _resolve_save_every_n(args, cfg)
     try:
-        if args.parallel == "ddp":
+        if profile == "ddp":
             run_ddp_training(cfg, local_rank, global_rank, world_size,
                              num_steps=num_steps,
                              checkpoint_dir=args.checkpoint_dir,
                              resume_from=args.resume_from,
-                             save_every_n=save_every_n)
+                             save_every_n=save_every_n,
+                             profile=profile)
         else:
             run_fsdp_training(cfg, local_rank, global_rank, world_size,
                               num_steps=num_steps,
                               checkpoint_dir=args.checkpoint_dir,
                               resume_from=args.resume_from,
-                              save_every_n=save_every_n)
+                              save_every_n=save_every_n,
+                              profile=profile)
     finally:
-        if args.parallel == "ddp":
+        if profile == "ddp":
             cleanup_ddp()
         else:
             cleanup_fsdp()
@@ -94,10 +116,16 @@ def run_ddp_training(cfg: dict, local_rank: int, global_rank: int,
                      world_size: int, *, num_steps: int | None = None,
                      checkpoint_dir: Path | None = None,
                      resume_from: Path | None = None,
-                     save_every_n: int = 0) -> list[float]:
-    """Delegates to trainer.run_training. Returns per-step losses."""
+                     save_every_n: int = 0,
+                     profile: str | None = None) -> list[float]:
+    """Delegates to trainer.run_training. Returns per-optimizer-step losses.
+
+    Strategy selection consumes ``cfg["training"]["parallel"]`` unless an
+    explicit ``profile`` override is passed; defaults to ``"ddp"``.
+    """
     from worldforge_train.trainer import make_strategy, run_training
-    return run_training(cfg, make_strategy("train"), num_steps=num_steps,
+    profile = profile or str(cfg.get("training", {}).get("parallel", "ddp"))
+    return run_training(cfg, make_strategy(profile), num_steps=num_steps,
                         checkpoint_dir=checkpoint_dir, resume_from=resume_from,
                         save_every_n=save_every_n)
 
@@ -106,8 +134,12 @@ def run_fsdp_training(cfg: dict, local_rank: int, global_rank: int,
                       world_size: int, *, num_steps: int | None = None,
                       checkpoint_dir: Path | None = None,
                       resume_from: Path | None = None,
-                      save_every_n: int = 0) -> list[float]:
-    """Delegates to trainer.run_training with FSDPStrategy.
+                      save_every_n: int = 0,
+                      profile: str | None = None) -> list[float]:
+    """Delegates to trainer.run_training. Returns per-optimizer-step losses.
+
+    Strategy selection consumes ``cfg["training"]["parallel"]`` unless an
+    explicit ``profile`` override is passed; defaults to ``"fsdp"``.
 
     FSDPStrategy.wrap is identity on single-rank (proven in
     tests/test_training_loop_cpu.py) and FullyShardedDataParallel on
@@ -115,7 +147,8 @@ def run_fsdp_training(cfg: dict, local_rank: int, global_rank: int,
     tests/test_fsdp_allreduce_cpu.py).
     """
     from worldforge_train.trainer import make_strategy, run_training
-    return run_training(cfg, make_strategy("train"), num_steps=num_steps,
+    profile = profile or str(cfg.get("training", {}).get("parallel", "fsdp"))
+    return run_training(cfg, make_strategy(profile), num_steps=num_steps,
                         checkpoint_dir=checkpoint_dir, resume_from=resume_from,
                         save_every_n=save_every_n)
 

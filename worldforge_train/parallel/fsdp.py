@@ -12,7 +12,8 @@ CPU-test behavior.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable
+from contextlib import nullcontext
+from typing import Any, Callable, ContextManager
 
 import torch
 from torch import nn
@@ -225,6 +226,22 @@ class FSDPStrategy(DistributedStrategy):
             ),
             check_fn=_check_fn,
         )
+
+    def no_sync(self, model: nn.Module) -> ContextManager[None]:
+        """Suppress FSDP gradient reduce-scatter for accumulation micro-steps.
+
+        Only a truly FSDP-wrapped model supports ``no_sync``; the
+        single-rank passthrough path has no cross-rank sync to suppress,
+        so a null context is returned. Note: with ``use_orig_params=True``
+        FSDP still materializes full ``p.grad`` views during no_sync, and
+        the window-closing backward reduces the accumulated sum — matching
+        the DDP accumulation contract.
+        """
+        if self._is_fsdp_module(model):
+            from torch.distributed.fsdp import FullyShardedDataParallel
+            assert isinstance(model, FullyShardedDataParallel)
+            return model.no_sync()
+        return nullcontext()
 
     def backward(self, loss: "torch.Tensor") -> None:
         loss.backward()
