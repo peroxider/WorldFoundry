@@ -1,11 +1,11 @@
-# WorldForge
+# WorldFoundry
 
 Ascend NPU world model training + inference platform. **Phase-1** prototype ships
 training + inference for Meta V-JEPA 2 (1.2B).
 
 ## Prerequisites
 
-WorldForge installs **only inside the Ascend NPU base image**:
+WorldFoundry installs **only inside the Ascend NPU base image**:
 
 ```dockerfile
 FROM ascend-pytorch:2.9.0-cann8.5.1-ubuntu22.04
