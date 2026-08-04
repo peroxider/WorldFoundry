@@ -2,8 +2,8 @@ import importlib.metadata
 
 import pytest
 
-from worldforge_common import npu_env
-from worldforge_common.exceptions import VersionMismatchError
+from worldfoundry_common import npu_env
+from worldfoundry_common.exceptions import VersionMismatchError
 
 
 def test_check_versions_non_strict_returns_list(monkeypatch):

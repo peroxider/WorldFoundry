@@ -1,7 +1,7 @@
 """Backend registry for quantization implementations.
 
 Subclasses register themselves via the @register decorator; get_backend()
-is the only dispatch path used by worldforge_inf.compile.quantize.
+is the only dispatch path used by worldfoundry_inf.compile.quantize.
 
 W11 only ships the W8A8 backend (msModelSlim). Future W4A8 backend can
 land here without disturbing the facade.

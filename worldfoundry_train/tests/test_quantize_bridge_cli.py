@@ -11,7 +11,7 @@ import sys
 import pytest
 import yaml
 
-from worldforge_train import train as train_mod
+from worldfoundry_train import train as train_mod
 
 
 def test_main_accepts_quant_block(tmp_path, monkeypatch):
@@ -37,14 +37,14 @@ def test_main_accepts_quant_block(tmp_path, monkeypatch):
     ])
     seen = {}
     monkeypatch.setattr(
-        "worldforge_train.quantize_bridge.maybe_quantize_first",
+        "worldfoundry_train.quantize_bridge.maybe_quantize_first",
         lambda c: (seen.update({"called_with": c}) or c),
     )
     monkeypatch.setattr(
-        "worldforge_train.parallel.ddp.setup_ddp", lambda: (1, 0, 0),
+        "worldfoundry_train.parallel.ddp.setup_ddp", lambda: (1, 0, 0),
     )
     monkeypatch.setattr(
-        "worldforge_train.train.run_ddp_training", lambda *a, **kw: [],
+        "worldfoundry_train.train.run_ddp_training", lambda *a, **kw: [],
     )
     rc = train_mod.main()
     assert rc == 0
@@ -69,10 +69,10 @@ def test_main_without_quant_block_still_runs(tmp_path, monkeypatch):
         "train.py", "--config", str(cfg_path), "--steps", "0", "--parallel", "ddp",
     ])
     monkeypatch.setattr(
-        "worldforge_train.parallel.ddp.setup_ddp", lambda: (1, 0, 0),
+        "worldfoundry_train.parallel.ddp.setup_ddp", lambda: (1, 0, 0),
     )
     monkeypatch.setattr(
-        "worldforge_train.train.run_ddp_training", lambda *a, **kw: [],
+        "worldfoundry_train.train.run_ddp_training", lambda *a, **kw: [],
     )
     rc = train_mod.main()
     assert rc == 0

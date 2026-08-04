@@ -51,12 +51,12 @@ def select_strategy(profile: str) -> DistributedStrategy:
         ImportError: train-mmspeed selected but mindspeed-mm not installed
     """
     if profile == "train":
-        from worldforge_train.parallel.fsdp import FSDPStrategy
+        from worldfoundry_train.parallel.fsdp import FSDPStrategy
         return FSDPStrategy()
 
     if profile == "train-mmspeed":
         try:
-            from worldforge_train.parallel.mindspeed import MMStrategy
+            from worldfoundry_train.parallel.mindspeed import MMStrategy
         except ImportError as exc:
             raise ImportError(
                 "MindSpeed-MM not installed. Run: pip install -e '.[mindspeed]'"

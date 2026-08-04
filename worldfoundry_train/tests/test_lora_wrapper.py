@@ -2,7 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from worldforge_train.model.lora_wrapper import build_lora_model
+from worldfoundry_train.model.lora_wrapper import build_lora_model
 
 
 class _MatMul:

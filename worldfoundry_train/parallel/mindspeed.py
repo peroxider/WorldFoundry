@@ -4,7 +4,7 @@ from __future__ import annotations
 from torch import nn
 from torch.optim import Optimizer
 
-from worldforge_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.parallel.strategy import DistributedStrategy
 
 _MM_STUB_MSG = (
     "MMStrategy not implemented. W9 = NO-GO; "

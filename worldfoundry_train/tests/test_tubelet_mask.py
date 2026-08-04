@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from worldforge_common.exceptions import MaskingError
-from worldforge_train.data.tubelet_mask import multiblock_mask, tubelet_mask
+from worldfoundry_common.exceptions import MaskingError
+from worldfoundry_train.data.tubelet_mask import multiblock_mask, tubelet_mask
 
 
 def test_multiblock_mask_shape_and_dtype():

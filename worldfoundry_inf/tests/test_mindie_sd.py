@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from worldforge_common.exceptions import OMCompileError
-from worldforge_inf.compile.mindie_sd import compile_to_om
+from worldfoundry_common.exceptions import OMCompileError
+from worldfoundry_inf.compile.mindie_sd import compile_to_om
 
 
 def test_compile_to_om_writes_om_file(tmp_path):

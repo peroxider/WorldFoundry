@@ -1,1 +1,1 @@
-"""Evaluation harnesses for WorldForge inference path."""
+"""Evaluation harnesses for WorldFoundry inference path."""

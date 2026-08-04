@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from worldforge_inf.server import create_app
+from worldfoundry_inf.server import create_app
 
 
 @pytest.fixture
@@ -21,7 +21,7 @@ def client(monkeypatch):
             import torch
             return torch.zeros(1, 196, 1024)
 
-    monkeypatch.setattr("worldforge_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
+    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
 
     app = create_app(model_path="/fake/model", secret="test-secret")
     return TestClient(app)
@@ -47,7 +47,7 @@ def test_encode_with_valid_auth_returns_200(client, fake_video_bytes):
         content=body,
         headers={
             "Authorization": f"HMAC {sig}",
-            "X-WorldForge-Timestamp": ts,
+            "X-WorldFoundry-Timestamp": ts,
             "Content-Type": "application/json",
         },
     )
@@ -65,7 +65,7 @@ def test_encode_rejects_stale_timestamp(client, fake_video_bytes):
     sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
     resp = client.post(
         path, content=body,
-        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldFoundry-Timestamp": ts,
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 401
@@ -83,7 +83,7 @@ def predict_client(monkeypatch):
             import torch
             return torch.zeros(1, 196, 1024)
 
-    monkeypatch.setattr("worldforge_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
+    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
 
 
@@ -102,7 +102,7 @@ def test_predict_with_valid_auth_returns_200(predict_client, fake_video_bytes):
         content=body,
         headers={
             "Authorization": f"HMAC {sig}",
-            "X-WorldForge-Timestamp": ts,
+            "X-WorldFoundry-Timestamp": ts,
             "Content-Type": "application/json",
         },
     )
@@ -128,7 +128,7 @@ def plan_client(monkeypatch):
             import torch
             return torch.zeros(1, 196, 1024), [int(a) for a in actions]
 
-    monkeypatch.setattr("worldforge_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
+    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
 
 
@@ -147,7 +147,7 @@ def test_plan_with_valid_auth_returns_200(plan_client, fake_video_bytes):
         content=body,
         headers={
             "Authorization": f"HMAC {sig}",
-            "X-WorldForge-Timestamp": ts,
+            "X-WorldFoundry-Timestamp": ts,
             "Content-Type": "application/json",
         },
     )
@@ -168,7 +168,7 @@ def test_plan_rejects_null_actions(plan_client, fake_video_bytes):
     sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
     resp = plan_client.post(
         path, content=body,
-        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldFoundry-Timestamp": ts,
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 400
@@ -185,7 +185,7 @@ def test_plan_rejects_boolean_actions(plan_client, fake_video_bytes):
     sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
     resp = plan_client.post(
         path, content=body,
-        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldFoundry-Timestamp": ts,
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 400
@@ -203,7 +203,7 @@ def test_predict_rejects_malformed_video(predict_client):
     sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
     resp = predict_client.post(
         path, content=body,
-        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldFoundry-Timestamp": ts,
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 400
@@ -221,7 +221,7 @@ def test_plan_rejects_malformed_video(plan_client):
     sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
     resp = plan_client.post(
         path, content=body,
-        headers={"Authorization": f"HMAC {sig}", "X-WorldForge-Timestamp": ts,
+        headers={"Authorization": f"HMAC {sig}", "X-WorldFoundry-Timestamp": ts,
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 400

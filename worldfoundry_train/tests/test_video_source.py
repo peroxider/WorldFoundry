@@ -3,7 +3,7 @@ import logging
 import numpy as np
 import pytest
 
-from worldforge_train.data.video_source import (
+from worldfoundry_train.data.video_source import (
     DecordVideoSource,
     DVPPVideoSource,
     FallbackVideoSource,
@@ -28,7 +28,7 @@ def test_build_video_source_default_returns_decord(sample_mp4):
 
 def test_build_video_source_dvpp_unavailable_falls_back(sample_mp4, monkeypatch):
     monkeypatch.setattr(
-        "worldforge_train.data.video_source._dvpp_available",
+        "worldfoundry_train.data.video_source._dvpp_available",
         lambda: False,
     )
     src = build_video_source(sample_mp4, prefer_dvpp=True)
@@ -42,11 +42,11 @@ def test_build_video_source_raises_for_missing_file(tmp_path, monkeypatch):
         raise AssertionError("backend constructed despite missing file")
 
     monkeypatch.setattr(
-        "worldforge_train.data.video_source.DecordVideoSource",
+        "worldfoundry_train.data.video_source.DecordVideoSource",
         _never_construct,
     )
     monkeypatch.setattr(
-        "worldforge_train.data.video_source.DVPPVideoSource",
+        "worldfoundry_train.data.video_source.DVPPVideoSource",
         _never_construct,
     )
     with pytest.raises(FileNotFoundError):
@@ -67,7 +67,7 @@ def test_dvpp_source_read_all_raises_not_implemented(sample_mp4):
 def _force_dvpp_available(monkeypatch):
     """Pin the environment: pretend DVPP is present regardless of hardware."""
     monkeypatch.setattr(
-        "worldforge_train.data.video_source._dvpp_available",
+        "worldfoundry_train.data.video_source._dvpp_available",
         lambda: True,
     )
 
@@ -94,7 +94,7 @@ def test_dvpp_fallback_logs_warning(sample_mp4, monkeypatch, caplog):
     _force_dvpp_available(monkeypatch)
     src = build_video_source(sample_mp4, prefer_dvpp=True)
     with caplog.at_level(
-        logging.WARNING, logger="worldforge_train.data.video_source"
+        logging.WARNING, logger="worldfoundry_train.data.video_source"
     ):
         src.read_all()
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
@@ -118,7 +118,7 @@ class _ValueErrorSource(VideoSource):
 def test_fallback_catches_runtime_error(sample_mp4, caplog):
     src = FallbackVideoSource(_RuntimeErrorSource(), DecordVideoSource(sample_mp4))
     with caplog.at_level(
-        logging.WARNING, logger="worldforge_train.data.video_source"
+        logging.WARNING, logger="worldfoundry_train.data.video_source"
     ):
         frames = src.read_all()
     assert frames.shape == (20, 64, 64, 3)

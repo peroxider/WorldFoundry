@@ -1,4 +1,4 @@
-"""Checkpoint save/load for WorldForge training.
+"""Checkpoint save/load for WorldFoundry training.
 
 Persists trainable model state + optimizer state + torch/numpy RNG + step
 counter + LoRA signature into a single .pt blob. Atomic via tmp+rename.
@@ -7,7 +7,7 @@ On multi-rank FSDP, callers must gate save/load themselves (see W16 plan
 section 'Multi-rank save is deferred to Phase-2 W9+'). This module raises
 FileNotFoundError / IOError / KeyError / RuntimeError / ValueError per G4.
 
-G3 boundary: only files in worldforge_train/ are modified.
+G3 boundary: only files in worldfoundry_train/ are modified.
 """
 from __future__ import annotations
 

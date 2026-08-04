@@ -13,10 +13,10 @@ import pytest
 import torch
 from transformers import VJEPA2Config, VJEPA2Model
 
-import worldforge_train.trainer as trainer_mod
-from worldforge_train.jepa_objective import JEPAObjective
-from worldforge_train.parallel.strategy import DistributedStrategy
-from worldforge_train.trainer import run_training
+import worldfoundry_train.trainer as trainer_mod
+from worldfoundry_train.jepa_objective import JEPAObjective
+from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.trainer import run_training
 
 
 def _tiny_vjepa2() -> VJEPA2Model:

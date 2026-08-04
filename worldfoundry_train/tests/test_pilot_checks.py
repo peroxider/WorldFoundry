@@ -1,5 +1,5 @@
 """Unit tests for W22.7 pilot early-stop verdict logic
-(worldforge_train/eval/pilot_checks.py) — synthetic series triggering each
+(worldfoundry_train/eval/pilot_checks.py) — synthetic series triggering each
 branch: GO, memory-leak NO-GO, throughput-degradation warning, NaN NO-GO,
 EMA-stuck NO-GO, memory-gauge skip. Plus the trainer step_callback
 passthrough used to collect the series.
@@ -11,7 +11,7 @@ import pytest
 import torch
 from torch import nn
 
-from worldforge_train.eval.pilot_checks import GO, NO_GO, evaluate_pilot
+from worldfoundry_train.eval.pilot_checks import GO, NO_GO, evaluate_pilot
 
 N = 200
 
@@ -169,8 +169,8 @@ class _FakeDS:
 
 
 def test_trainer_step_callback_fires_per_optimizer_step(monkeypatch):
-    import worldforge_train.trainer as trainer_mod
-    from worldforge_train.parallel.strategy import DistributedStrategy
+    import worldfoundry_train.trainer as trainer_mod
+    from worldfoundry_train.parallel.strategy import DistributedStrategy
 
     class _Noop(DistributedStrategy):
         def wrap(self, model):

@@ -12,11 +12,11 @@ import pytest
 import torch
 from torch import nn
 
-from worldforge_train.checkpoint import (
+from worldfoundry_train.checkpoint import (
     JEPASignature, load_checkpoint, save_checkpoint, validate_jepa_signature,
 )
-from worldforge_train.jepa_objective import JEPAObjective
-from worldforge_train.model.predictor import JEPAPredictor
+from worldfoundry_train.jepa_objective import JEPAObjective
+from worldfoundry_train.model.predictor import JEPAPredictor
 
 
 class _ToyEncoder(nn.Module):
@@ -161,7 +161,7 @@ def test_old_checkpoint_without_jepa_loads_compatibly(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_trainer_jepa_checkpoint_resume_round_trip(tmp_path, monkeypatch):
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     from transformers import VJEPA2Config, VJEPA2Model
 
     captured: list[JEPAObjective] = []
@@ -189,7 +189,7 @@ def test_trainer_jepa_checkpoint_resume_round_trip(tmp_path, monkeypatch):
 
     monkeypatch.setattr(trainer_mod, "_build_dataset", lambda cfg: _FakeDS())
 
-    from worldforge_train.parallel.strategy import DistributedStrategy
+    from worldfoundry_train.parallel.strategy import DistributedStrategy
 
     class _Noop(DistributedStrategy):
         def wrap(self, model):

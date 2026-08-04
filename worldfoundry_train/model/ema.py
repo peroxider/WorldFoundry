@@ -164,7 +164,7 @@ class EMAUpdater:
         if model is not None:
             import torch.distributed as dist
 
-            from worldforge_train.checkpoint import _is_fsdp_module
+            from worldfoundry_train.checkpoint import _is_fsdp_module
 
             if (
                 dist.is_initialized()

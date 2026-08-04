@@ -15,8 +15,8 @@ from typing import ContextManager
 from torch import nn
 from torch.optim import Optimizer
 
-from worldforge_common.npu_env import is_npu_available
-from worldforge_train.parallel.strategy import DistributedStrategy
+from worldfoundry_common.npu_env import is_npu_available
+from worldfoundry_train.parallel.strategy import DistributedStrategy
 
 
 def setup_ddp() -> tuple[int, int, int]:

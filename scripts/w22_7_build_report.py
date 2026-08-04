@@ -14,7 +14,7 @@ import argparse
 import json
 from pathlib import Path
 
-from worldforge_train.eval.jepa_probing import read_jsonl
+from worldfoundry_train.eval.jepa_probing import read_jsonl
 
 REPORT_PATH = Path(
     "docs/superpowers/specs/2026-08-04-w22-7-ab-experiment-report.md"

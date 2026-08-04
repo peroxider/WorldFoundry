@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the worldforge_train test suite.
+"""Shared pytest fixtures for the worldfoundry_train test suite.
 
 The `sample_mp4` fixture used to live only inside test_video_source.py. To let
 sibling test modules (test_dataset.py and future tests) reuse the same 20-frame

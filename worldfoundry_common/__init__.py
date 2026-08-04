@@ -1,5 +1,5 @@
-"""Shared base for WorldForge Phase-1."""
-from worldforge_common.exceptions import (
+"""Shared base for WorldFoundry Phase-1."""
+from worldfoundry_common.exceptions import (
     VersionMismatchError,
     ModelNotFoundError,
     OMCompileError,

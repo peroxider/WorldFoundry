@@ -17,7 +17,7 @@ def _make_model(features: torch.Tensor):
 
 def test_cosine_above_threshold_passes():
     """cosine=0.99 (above 0.98) → report.passed=True."""
-    from worldforge_inf.eval.quant_eval import cosine_similarity
+    from worldfoundry_inf.eval.quant_eval import cosine_similarity
 
     bf16_feat = torch.randn(1, 4, 8)
     # Make int8 features ~bf16 features (high cosine)
@@ -27,7 +27,7 @@ def test_cosine_above_threshold_passes():
     int8_model = _make_model(int8_feat)
 
     with patch(
-        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         report = cosine_similarity(
@@ -46,7 +46,7 @@ def test_cosine_above_threshold_passes():
 
 def test_cosine_below_threshold_fails():
     """cosine~0.5 (well below 0.98) → report.passed=False."""
-    from worldforge_inf.eval.quant_eval import cosine_similarity
+    from worldfoundry_inf.eval.quant_eval import cosine_similarity
 
     bf16_feat = torch.randn(1, 4, 8)
     # Make int8 features orthogonal (low cosine)
@@ -56,7 +56,7 @@ def test_cosine_below_threshold_fails():
     int8_model = _make_model(int8_feat)
 
     with patch(
-        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         report = cosine_similarity(
@@ -73,7 +73,7 @@ def test_cosine_below_threshold_fails():
 
 def test_aggregate_cosine_is_mean_of_per_sample():
     """aggregate_cosine == mean(per_sample_cosine)."""
-    from worldforge_inf.eval.quant_eval import cosine_similarity
+    from worldfoundry_inf.eval.quant_eval import cosine_similarity
 
     bf16_feats = [torch.randn(1, 4, 8) for _ in range(3)]
     int8_feats = [f + torch.randn_like(f) * 0.01 for f in bf16_feats]
@@ -90,7 +90,7 @@ def test_aggregate_cosine_is_mean_of_per_sample():
     ]
 
     with patch(
-        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         report = cosine_similarity(
@@ -111,7 +111,7 @@ def test_aggregate_cosine_is_mean_of_per_sample():
 
 def test_shape_mismatch_raises_value_error():
     """Different bf16 vs int8 output shapes → ValueError."""
-    from worldforge_inf.eval.quant_eval import cosine_similarity
+    from worldfoundry_inf.eval.quant_eval import cosine_similarity
 
     bf16_feat = torch.randn(1, 4, 8)
     int8_feat = torch.randn(1, 4, 16)  # different last dim
@@ -120,7 +120,7 @@ def test_shape_mismatch_raises_value_error():
     int8_model = _make_model(int8_feat)
 
     with patch(
-        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         with pytest.raises(ValueError, match="Shape mismatch"):
@@ -134,7 +134,7 @@ def test_shape_mismatch_raises_value_error():
 
 def test_empty_eval_dataset_raises():
     """n_samples=0 → ValueError before model load."""
-    from worldforge_inf.eval.quant_eval import cosine_similarity
+    from worldfoundry_inf.eval.quant_eval import cosine_similarity
 
     with pytest.raises(ValueError, match="n_samples must be positive"):
         cosine_similarity(
@@ -146,13 +146,13 @@ def test_empty_eval_dataset_raises():
 
 def test_empty_iter_eval_dataset_raises():
     """eval_dataset=[] with positive n_samples → ValueError after model load."""
-    from worldforge_inf.eval.quant_eval import cosine_similarity
+    from worldfoundry_inf.eval.quant_eval import cosine_similarity
 
     bf16_model = _make_model(torch.randn(1, 4, 8))
     int8_model = _make_model(torch.randn(1, 4, 8))
 
     with patch(
-        "worldforge_inf.eval.quant_eval.AutoModel.from_pretrained",
+        "worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained",
         side_effect=[bf16_model, int8_model],
     ):
         with pytest.raises(ValueError, match="eval_dataset is empty"):

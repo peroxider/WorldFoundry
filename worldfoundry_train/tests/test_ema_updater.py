@@ -10,7 +10,7 @@ import pytest
 import torch
 from torch import nn
 
-from worldforge_train.model.ema import EMAUpdater
+from worldfoundry_train.model.ema import EMAUpdater
 
 
 def _pair(shape=(3, 4), dtype=torch.float32, seed=0):

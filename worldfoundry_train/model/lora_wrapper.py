@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 import torch.nn as nn
 
-from worldforge_train.model.module_names import discover_lora_targets
+from worldfoundry_train.model.module_names import discover_lora_targets
 
 # Default candidates: q/k/v/o projections + MLP linears.
 # These will be filtered by discover_lora_targets against the actual model.

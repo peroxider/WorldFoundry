@@ -9,7 +9,7 @@ from typing import Tuple
 
 import numpy as np
 
-from worldforge_common.exceptions import MaskingError
+from worldfoundry_common.exceptions import MaskingError
 
 
 def multiblock_mask(

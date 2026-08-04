@@ -56,7 +56,7 @@ def maybe_quantize_first(cfg: dict) -> dict:
         return cfg
     _validate_quant_block(block)
 
-    from worldforge_inf.compile.quantize import quantize_model
+    from worldfoundry_inf.compile.quantize import quantize_model
 
     out_path = quantize_model(
         model_path=Path(block["source_dir"]),
@@ -69,4 +69,4 @@ def maybe_quantize_first(cfg: dict) -> dict:
 
 
 if __name__ == "__main__":
-    raise SystemExit(0)  # library module; CLI lives in worldforge_train.train
+    raise SystemExit(0)  # library module; CLI lives in worldfoundry_train.train

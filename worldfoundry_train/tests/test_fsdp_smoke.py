@@ -5,14 +5,14 @@ import pytest
 
 
 def test_fsdp_module_imports():
-    mod = importlib.import_module("worldforge_train.parallel.fsdp")
+    mod = importlib.import_module("worldfoundry_train.parallel.fsdp")
     assert hasattr(mod, "setup_fsdp")
     assert hasattr(mod, "cleanup_fsdp")
 
 
 def test_setup_fsdp_returns_ranks_without_initializing_single_rank():
     """On a single-rank host setup_fsdp must return (1, 0, 0) without init."""
-    from worldforge_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
+    from worldfoundry_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
     import torch.distributed as dist
 
     old_world_size = os.environ.pop("WORLD_SIZE", None)

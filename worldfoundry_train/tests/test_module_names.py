@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from worldforge_train.model.module_names import discover_lora_targets
+from worldfoundry_train.model.module_names import discover_lora_targets
 
 
 class FakeLinear(nn.Module):

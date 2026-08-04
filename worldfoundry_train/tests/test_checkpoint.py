@@ -1,4 +1,4 @@
-"""Unit tests for worldforge_train.checkpoint — save/load round-trips, atomicity,
+"""Unit tests for worldfoundry_train.checkpoint — save/load round-trips, atomicity,
 signature validation. CPU, no mocks. tmp_path-style pytest fixtures."""
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import torch
 from torch import nn
 from torch.optim import AdamW
 
-from worldforge_train.checkpoint import (
+from worldfoundry_train.checkpoint import (
     LoraSignature, _trainable_state_dict,
     load_checkpoint, save_checkpoint, validate_lora_signature,
 )

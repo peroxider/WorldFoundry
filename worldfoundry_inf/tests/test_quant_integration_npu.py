@@ -1,6 +1,6 @@
 """End-to-end W8A8 quantization + cosine eval (NPU-gated, default skip).
 
-Run with: WORLDFORGE_RUN_QUANT_E2E=1 pytest worldforge_inf/tests/test_quant_integration_npu.py
+Run with: WORLDFORGE_RUN_QUANT_E2E=1 pytest worldfoundry_inf/tests/test_quant_integration_npu.py
 
 Requires:
 - torch_npu installed + NPU available
@@ -27,8 +27,8 @@ torch_npu_available = pytest.importorskip("torch_npu").npu.is_available()
 )
 def test_w8a8_quantization_end_to_end(tmp_path):
     """End-to-end: load bf16 -> W8A8 quant -> cosine >= 0.95."""
-    from worldforge_inf.compile.quantize import quantize_model
-    from worldforge_inf.eval.quant_eval import cosine_similarity
+    from worldfoundry_inf.compile.quantize import quantize_model
+    from worldfoundry_inf.eval.quant_eval import cosine_similarity
 
     src = Path(os.environ.get("WORLDFORGE_QUANT_TEST_MODEL",
                               "models/dino-vits8"))  # tiny ViT for CI

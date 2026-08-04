@@ -1,4 +1,4 @@
-"""CPU tests for worldforge_inf.vllm_ascend_worker (no NPU, no vllm_ascend).
+"""CPU tests for worldfoundry_inf.vllm_ascend_worker (no NPU, no vllm_ascend).
 
 Validates the Hardware Pluggable worker class structure:
 - Base-class resolution returns the stub on CPU-only systems
@@ -15,7 +15,7 @@ import pytest
 import torch
 import transformers
 
-from worldforge_inf.vllm_ascend_worker import (
+from worldfoundry_inf.vllm_ascend_worker import (
     VJEPA2NPUWorker,
     _npu_ops,
     _resolve_base_class,

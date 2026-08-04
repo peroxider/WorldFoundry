@@ -1,4 +1,4 @@
-"""WorldForge Phase-1 V-JEPA 2-AC finetuning entry.
+"""WorldFoundry Phase-1 V-JEPA 2-AC finetuning entry.
 
 Per spec §5.3 + risk row "AC reproduction scope":
 - Phase-1 covers only the AC finetuning phase (latent action prediction).
@@ -10,13 +10,13 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from worldforge_common.npu_env import check_versions, init_distributed, npu_device_count
-from worldforge_rl.actor import VJEPAActor
-from worldforge_rl.env_droid import DroidEnv
+from worldfoundry_common.npu_env import check_versions, init_distributed, npu_device_count
+from worldfoundry_rl.actor import VJEPAActor
+from worldfoundry_rl.env_droid import DroidEnv
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="WorldForge V-JEPA 2-AC finetuning (Phase-1)")
+    parser = argparse.ArgumentParser(description="WorldFoundry V-JEPA 2-AC finetuning (Phase-1)")
     parser.add_argument("--model", type=Path, required=True, help="V-JEPA 2 base weights path")
     parser.add_argument("--manifest", type=Path, required=True, help="Droid manifest CSV")
     parser.add_argument("--epochs", type=int, default=100)

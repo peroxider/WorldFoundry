@@ -19,7 +19,7 @@ from typing import Any, Iterable
 import torch
 from transformers import AutoModel
 
-from worldforge_inf.compile.quantize_backends import register
+from worldfoundry_inf.compile.quantize_backends import register
 
 try:  # pragma: no cover - environment dependent
     import msmodelslim
@@ -46,10 +46,10 @@ def _load_calibration_dataset(
     """Load calibration samples, importing the loader lazily.
 
     The import is deferred so this module stays importable before
-    ``worldforge_inf.data.calib_videomix22m`` lands, and so unit tests can
+    ``worldfoundry_inf.data.calib_videomix22m`` lands, and so unit tests can
     patch this function instead of reaching for HF datasets over the network.
     """
-    from worldforge_inf.data.calib_videomix22m import load_calibration_dataset
+    from worldfoundry_inf.data.calib_videomix22m import load_calibration_dataset
 
     return load_calibration_dataset(n=n, seed=seed)
 

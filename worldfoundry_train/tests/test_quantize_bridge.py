@@ -1,4 +1,4 @@
-"""CPU tests for worldforge_train.quantize_bridge (no NPU, no model load)."""
+"""CPU tests for worldfoundry_train.quantize_bridge (no NPU, no model load)."""
 from __future__ import annotations
 
 import importlib
@@ -11,9 +11,9 @@ import pytest
 @pytest.fixture
 def bridge_module():
     """Re-import the bridge to pick up any monkeypatching done elsewhere."""
-    if "worldforge_train.quantize_bridge" in sys.modules:
-        del sys.modules["worldforge_train.quantize_bridge"]
-    return importlib.import_module("worldforge_train.quantize_bridge")
+    if "worldfoundry_train.quantize_bridge" in sys.modules:
+        del sys.modules["worldfoundry_train.quantize_bridge"]
+    return importlib.import_module("worldfoundry_train.quantize_bridge")
 
 
 def _make_source_dir(tmp_path: Path) -> Path:
@@ -62,7 +62,7 @@ def test_valid_block_calls_quantize_and_mutates_hf_repo(bridge_module, tmp_path,
         return output_path
 
     monkeypatch.setattr(
-        "worldforge_inf.compile.quantize.quantize_model", fake_quantize_model,
+        "worldfoundry_inf.compile.quantize.quantize_model", fake_quantize_model,
     )
     out = bridge_module.maybe_quantize_first(cfg)
     assert out is cfg
@@ -124,7 +124,7 @@ def test_calibration_dataset_optional(bridge_module, tmp_path, monkeypatch):
         return output_path
 
     monkeypatch.setattr(
-        "worldforge_inf.compile.quantize.quantize_model", fake_q,
+        "worldfoundry_inf.compile.quantize.quantize_model", fake_q,
     )
     bridge_module.maybe_quantize_first(cfg)
     assert seen["cd"] is None

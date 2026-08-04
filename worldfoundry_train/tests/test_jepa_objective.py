@@ -11,9 +11,9 @@ import pytest
 import torch
 from torch import nn
 
-from worldforge_train.jepa_objective import JEPAObjective, jepa_loss
-from worldforge_train.model.ema import EMAUpdater
-from worldforge_train.model.predictor import JEPAPredictor
+from worldfoundry_train.jepa_objective import JEPAObjective, jepa_loss
+from worldfoundry_train.model.ema import EMAUpdater
+from worldfoundry_train.model.predictor import JEPAPredictor
 
 ENC_DIM = 32
 GRID = (1, 4, 4)
@@ -215,7 +215,7 @@ def test_hf_encoder_ignores_bool_masked_pos():
 def test_jepa_objective_three_step_cpu_smoke():
     from transformers import VJEPA2Config, VJEPA2Model
 
-    from worldforge_train.model.lora_wrapper import build_lora_model
+    from worldfoundry_train.model.lora_wrapper import build_lora_model
 
     torch.manual_seed(42)
     cfg = VJEPA2Config(

@@ -2,8 +2,8 @@
 
 This module is the target of two entry points declared in ``pyproject.toml``:
 
-- ``vllm.platform_plugins`` -> ``worldforge_inf = worldforge_inf._vllm_ascend_plugin:register``
-- ``vllm.general_plugins``   -> ``vjepa2_model = worldforge_inf._vllm_ascend_plugin:register_model``
+- ``vllm.platform_plugins`` -> ``worldfoundry_inf = worldfoundry_inf._vllm_ascend_plugin:register``
+- ``vllm.general_plugins``   -> ``vjepa2_model = worldfoundry_inf._vllm_ascend_plugin:register_model``
 
 When vLLM boots, it loads every entry point and invokes its target. ``register``
 tells vLLM which platform class to use (we reuse vllm-ascend's existing
@@ -13,7 +13,7 @@ how to dispatch inference for it via :class:`VJEPA2NPUWorker`.
 
 Both functions are designed to fail soft when vLLM is not installed (the
 common case on CPU-only dev hosts): they log + return rather than raising,
-so importing this module never breaks the rest of ``worldforge_inf``.
+so importing this module never breaks the rest of ``worldfoundry_inf``.
 """
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ def register_model() -> None:
 
     # Lazy import of the worker so the entry-point loader doesn't pull in
     # torch_npu / transformers until vLLM is actually initializing.
-    from worldforge_inf.vllm_ascend_worker import VJEPA2NPUWorker
+    from worldfoundry_inf.vllm_ascend_worker import VJEPA2NPUWorker
 
     try:
         registry.register_model("VJEPA2Model", VJEPA2NPUWorker)

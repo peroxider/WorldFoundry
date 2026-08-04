@@ -1,4 +1,4 @@
-"""CLI smoke for worldforge_train.train (W14).
+"""CLI smoke for worldfoundry_train.train (W14).
 
 Validates the CLI surface change (``--steps`` flag, FSDP no longer raises)
 without modifying any existing test. Phase-1 contract preserved
@@ -11,12 +11,12 @@ import sys
 
 import pytest
 
-from worldforge_train.train import parse_args, run_fsdp_training
+from worldfoundry_train.train import parse_args, run_fsdp_training
 
 
 def test_cli_help_lists_parallel_and_steps():
     r = subprocess.run(
-        [sys.executable, "-m", "worldforge_train.train", "--help"],
+        [sys.executable, "-m", "worldfoundry_train.train", "--help"],
         capture_output=True, text=True,
         cwd="/mnt/c/WorkSpace/WorldForge",
     )
@@ -27,7 +27,7 @@ def test_cli_help_lists_parallel_and_steps():
 
 def test_cli_help_advertises_ddp_and_fsdp_choices():
     r = subprocess.run(
-        [sys.executable, "-m", "worldforge_train.train", "--help"],
+        [sys.executable, "-m", "worldfoundry_train.train", "--help"],
         capture_output=True, text=True,
         cwd="/mnt/c/WorkSpace/WorldForge",
     )
@@ -48,7 +48,7 @@ def test_parse_args_defaults_steps_to_zero():
 
 def test_cli_missing_manifest_exits_nonzero_with_explicit_error():
     r = subprocess.run(
-        [sys.executable, "-m", "worldforge_train.train",
+        [sys.executable, "-m", "worldfoundry_train.train",
          "--config", "/nonexistent/manifest.yaml",
          "--steps", "1"],
         capture_output=True, text=True,
@@ -60,7 +60,7 @@ def test_cli_missing_manifest_exits_nonzero_with_explicit_error():
 
 def test_cli_rejects_unknown_parallel_value():
     r = subprocess.run(
-        [sys.executable, "-m", "worldforge_train.train",
+        [sys.executable, "-m", "worldfoundry_train.train",
          "--config", "x.yaml", "--parallel", "bogus"],
         capture_output=True, text=True,
         cwd="/mnt/c/WorkSpace/WorldForge",
@@ -85,7 +85,7 @@ def test_run_fsdp_training_no_longer_raises_not_implemented():
 
 def test_cli_help_includes_checkpoint_flags():
     r = subprocess.run(
-        [sys.executable, "-m", "worldforge_train.train", "--help"],
+        [sys.executable, "-m", "worldfoundry_train.train", "--help"],
         capture_output=True, text=True,
         cwd="/mnt/c/WorkSpace/WorldForge",
     )

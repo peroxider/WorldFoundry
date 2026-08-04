@@ -27,10 +27,10 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch import nn
 
-from worldforge_train.jepa_objective import (
+from worldfoundry_train.jepa_objective import (
     JEPAObjective, PredictorGradSyncStrategy,
 )
-from worldforge_train.model.predictor import JEPAPredictor
+from worldfoundry_train.model.predictor import JEPAPredictor
 
 N, D = 16, 8
 GRID = (1, 4, 4)
@@ -105,7 +105,7 @@ def _worker(rank: int, world_size: int, master_port: int, snapshots) -> None:
         model = FSDP(online, use_orig_params=True, device_id=torch.device("cpu"))
         obj.bind_distributed(model)
 
-        from worldforge_train.parallel.strategy import DistributedStrategy
+        from worldfoundry_train.parallel.strategy import DistributedStrategy
 
         class _Inner(DistributedStrategy):
             """Minimal inner strategy: FSDP reduces encoder grads in backward

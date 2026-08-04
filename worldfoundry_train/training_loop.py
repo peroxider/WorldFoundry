@@ -1,7 +1,7 @@
 """Real CPU-runnable training loop (forward + loss + backward + step).
 
 Wires the existing ``DistributedStrategy`` contract
-(``worldforge_train.parallel.strategy.DistributedStrategy``) to a real
+(``worldfoundry_train.parallel.strategy.DistributedStrategy``) to a real
 forward/loss/backward/step cycle. Works in single-rank mode (the
 ``world_size == 1`` path used in unit/CPU tests) without needing
 ``dist.init_process_group``; ``FSDPStrategy.wrap`` returns the model
@@ -25,7 +25,7 @@ import torch
 from torch import nn
 from torch.optim import Optimizer
 
-from worldforge_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.parallel.strategy import DistributedStrategy
 
 LossFn = Callable[[nn.Module, Mapping[str, torch.Tensor]], torch.Tensor]
 

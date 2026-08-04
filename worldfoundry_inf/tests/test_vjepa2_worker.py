@@ -1,6 +1,6 @@
 import pytest
 
-from worldforge_inf.vjepa2_worker import VJEPA2Worker
+from worldfoundry_inf.vjepa2_worker import VJEPA2Worker
 
 
 class _FakeHFModel:
@@ -17,14 +17,14 @@ class _FakeHFModel:
 
 
 def test_worker_init_loads_model(monkeypatch):
-    monkeypatch.setattr("worldforge_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
+    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
     assert worker.model is not None
 
 
 def test_worker_encode_returns_tensor(monkeypatch):
     import torch
-    monkeypatch.setattr("worldforge_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
+    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
     fake_video = torch.zeros(1, 16, 3, 224, 224)
     out = worker.encode(fake_video)

@@ -4,7 +4,7 @@ import torch
 
 def test_run_bench_writes_json(tmp_path, monkeypatch):
     """runner must write <tag>.json with clips_per_s + loss_curve."""
-    from worldforge_train.bench import runner
+    from worldfoundry_train.bench import runner
 
     # Stub model: a single Linear that outputs scalar loss.
     class TinyModel(torch.nn.Module):
@@ -46,7 +46,7 @@ def test_run_bench_delegates_backward_to_strategy(tmp_path, monkeypatch):
     Backend-neutral lifecycle: real MM strategy expects engine.backward(loss)
     so the runner must route backward through the strategy abstraction.
     """
-    from worldforge_train.bench import runner
+    from worldfoundry_train.bench import runner
 
     class TinyModel(torch.nn.Module):
         def __init__(self):

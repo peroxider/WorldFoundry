@@ -8,7 +8,7 @@ from __future__ import annotations
 import importlib.metadata
 import logging
 
-from worldforge_common.exceptions import VersionMismatchError
+from worldfoundry_common.exceptions import VersionMismatchError
 
 logger = logging.getLogger(__name__)
 

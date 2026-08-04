@@ -28,7 +28,7 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoModel, VJEPA2Config, VJEPA2Model
 
-from worldforge_inf.compile.quantize import quantize_model
+from worldfoundry_inf.compile.quantize import quantize_model
 
 _TINY_HIDDEN = 64
 _TINY_LAYERS = 2

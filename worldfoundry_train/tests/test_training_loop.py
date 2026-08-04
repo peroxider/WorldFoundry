@@ -1,4 +1,4 @@
-"""Unit tests for worldforge_train.training_loop (mock-based, fast)."""
+"""Unit tests for worldfoundry_train.training_loop (mock-based, fast)."""
 from __future__ import annotations
 
 import pytest
@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 from torch.optim import SGD
 
-from worldforge_train.parallel.strategy import DistributedStrategy
-from worldforge_train.training_loop import run_training_step, run_training_loop
+from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.training_loop import run_training_step, run_training_loop
 
 
 class _PassthroughStrategy(DistributedStrategy):

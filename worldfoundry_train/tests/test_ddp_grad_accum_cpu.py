@@ -25,8 +25,8 @@ import torch.multiprocessing as mp
 from torch import nn
 from torch.optim import AdamW
 
-from worldforge_train.parallel.ddp import DDPStrategy
-from worldforge_train.training_loop import run_training_loop
+from worldfoundry_train.parallel.ddp import DDPStrategy
+from worldfoundry_train.training_loop import run_training_loop
 
 
 def _make_tiny_model() -> nn.Module:

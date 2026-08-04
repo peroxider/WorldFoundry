@@ -21,9 +21,9 @@ import torch.distributed as dist
 import torch.nn as nn
 from torch.optim import SGD
 
-from worldforge_train.parallel.ddp import DDPStrategy
-from worldforge_train.parallel.fsdp import FSDPStrategy
-from worldforge_train.trainer import make_strategy
+from worldfoundry_train.parallel.ddp import DDPStrategy
+from worldfoundry_train.parallel.fsdp import FSDPStrategy
+from worldfoundry_train.trainer import make_strategy
 
 
 # --- make_strategy mapping ---
@@ -102,7 +102,7 @@ def test_ddp_strategy_no_sync_delegates_to_real_ddp_module():
 
 def test_resolve_parallel_cli_overrides_cfg():
     from types import SimpleNamespace
-    from worldforge_train.train import _resolve_parallel
+    from worldfoundry_train.train import _resolve_parallel
     args = SimpleNamespace(parallel="fsdp")
     cfg = {"training": {"parallel": "ddp"}}
     assert _resolve_parallel(args, cfg) == "fsdp"
@@ -110,7 +110,7 @@ def test_resolve_parallel_cli_overrides_cfg():
 
 def test_resolve_parallel_uses_cfg_when_cli_absent():
     from types import SimpleNamespace
-    from worldforge_train.train import _resolve_parallel
+    from worldfoundry_train.train import _resolve_parallel
     args = SimpleNamespace(parallel=None)
     cfg = {"training": {"parallel": "fsdp"}}
     assert _resolve_parallel(args, cfg) == "fsdp"
@@ -118,7 +118,7 @@ def test_resolve_parallel_uses_cfg_when_cli_absent():
 
 def test_resolve_parallel_defaults_to_ddp():
     from types import SimpleNamespace
-    from worldforge_train.train import _resolve_parallel
+    from worldfoundry_train.train import _resolve_parallel
     args = SimpleNamespace(parallel=None)
     assert _resolve_parallel(args, {}) == "ddp"
     assert _resolve_parallel(args, {"training": {}}) == "ddp"
@@ -126,14 +126,14 @@ def test_resolve_parallel_defaults_to_ddp():
 
 def test_resolve_parallel_unknown_cfg_value_raises():
     from types import SimpleNamespace
-    from worldforge_train.train import _resolve_parallel
+    from worldfoundry_train.train import _resolve_parallel
     args = SimpleNamespace(parallel=None)
     with pytest.raises(ValueError, match="tp"):
         _resolve_parallel(args, {"training": {"parallel": "tp"}})
 
 
 def test_parse_args_parallel_defaults_to_none():
-    from worldforge_train.train import parse_args
+    from worldfoundry_train.train import parse_args
     assert parse_args(["--config", "x.yaml"]).parallel is None
 
 
@@ -150,7 +150,7 @@ def test_parse_args_parallel_defaults_to_none():
     ],
 )
 def test_run_training_consumes_cfg_parallel(monkeypatch, fn_name, cfg_parallel, expected):
-    import worldforge_train.train as train_mod
+    import worldfoundry_train.train as train_mod
 
     captured: dict[str, str] = {}
 
@@ -159,7 +159,7 @@ def test_run_training_consumes_cfg_parallel(monkeypatch, fn_name, cfg_parallel, 
         raise RuntimeError("sentinel: stop before training")
 
     monkeypatch.setattr(
-        "worldforge_train.trainer.make_strategy", fake_make_strategy
+        "worldfoundry_train.trainer.make_strategy", fake_make_strategy
     )
 
     cfg = {"training": {}}

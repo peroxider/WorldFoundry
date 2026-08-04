@@ -1,6 +1,6 @@
 import time
 
-from worldforge_inf.security import HmacTokenAuth
+from worldfoundry_inf.security import HmacTokenAuth
 
 
 def test_sign_and_verify_roundtrip():

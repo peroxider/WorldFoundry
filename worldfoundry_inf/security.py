@@ -1,4 +1,4 @@
-"""HMAC-SHA256 token authentication for WorldForge inference endpoints.
+"""HMAC-SHA256 token authentication for WorldFoundry inference endpoints.
 
 Per spec §4.7 + Global Constraint G12:
 - HMAC over (method + path + body + timestamp) with shared secret

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from worldforge_train.data.dataset import Vjepa2Dataset
+from worldfoundry_train.data.dataset import Vjepa2Dataset
 
 
 @pytest.fixture

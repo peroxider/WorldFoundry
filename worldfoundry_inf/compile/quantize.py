@@ -1,13 +1,13 @@
 """Quantization facade — dispatches by quant_type to registered backend.
 
 Phase-1 API surface preserved verbatim (G3). The actual quantization work
-lives in worldforge_inf.compile.quantize_backends.*.
+lives in worldfoundry_inf.compile.quantize_backends.*.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
-from worldforge_inf.compile.quantize_backends import (
+from worldfoundry_inf.compile.quantize_backends import (
     SUPPORTED_QUANT_TYPES,
     _REGISTRY,
     backend_available,

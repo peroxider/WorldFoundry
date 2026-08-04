@@ -45,9 +45,9 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from worldforge_train.model.ema import EMAUpdater
-from worldforge_train.model.predictor import JEPAPredictor
-from worldforge_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.model.ema import EMAUpdater
+from worldfoundry_train.model.predictor import JEPAPredictor
+from worldfoundry_train.parallel.strategy import DistributedStrategy
 
 __all__ = ["JEPAObjective", "PredictorGradSyncStrategy", "jepa_loss"]
 

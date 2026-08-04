@@ -17,7 +17,7 @@ def _make_fake_dataset(n: int):
 
 def test_load_returns_n_tensors():
     """load_calibration_dataset(n=8) yields exactly 8 tensors."""
-    from worldforge_inf.data.calib_videomix22m import load_calibration_dataset
+    from worldfoundry_inf.data.calib_videomix22m import load_calibration_dataset
 
     fake_ds, _ = _make_fake_dataset(8)
 
@@ -26,10 +26,10 @@ def test_load_returns_n_tensors():
         return {"pixel_values": torch.zeros(1, 3, 224, 224)}
 
     with patch(
-        "worldforge_inf.data.calib_videomix22m.load_dataset", return_value=fake_ds
+        "worldfoundry_inf.data.calib_videomix22m.load_dataset", return_value=fake_ds
     ):
         with patch(
-            "worldforge_inf.data.calib_videomix22m.AutoImageProcessor.from_pretrained"
+            "worldfoundry_inf.data.calib_videomix22m.AutoImageProcessor.from_pretrained"
         ) as fake_proc_factory:
             fake_proc_factory.return_value = MagicMock(side_effect=fake_processor)
             tensors = list(load_calibration_dataset(n=8, seed=42))
@@ -40,10 +40,10 @@ def test_load_returns_n_tensors():
 
 def test_load_propagates_dataset_error():
     """HF datasets errors propagate (no silent fallback — G4)."""
-    from worldforge_inf.data.calib_videomix22m import load_calibration_dataset
+    from worldfoundry_inf.data.calib_videomix22m import load_calibration_dataset
 
     with patch(
-        "worldforge_inf.data.calib_videomix22m.load_dataset",
+        "worldfoundry_inf.data.calib_videomix22m.load_dataset",
         side_effect=RuntimeError("network unreachable"),
     ):
         with pytest.raises(RuntimeError, match="network unreachable"):

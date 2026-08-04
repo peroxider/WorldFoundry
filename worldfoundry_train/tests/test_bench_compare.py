@@ -22,7 +22,7 @@ def _good_payload(clips_per_s: float = 10.0, loss: float = 0.5) -> dict:
 
 
 def test_all_pass_writes_go(tmp_path):
-    from worldforge_train.bench.compare import compare
+    from worldfoundry_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(10.0))
     ev = _write_json(tmp_path / "eval.json", _good_payload(8.0))  # ratio 0.8 >= 0.7
     out = tmp_path / "report.md"
@@ -32,7 +32,7 @@ def test_all_pass_writes_go(tmp_path):
 
 
 def test_throughput_fail_writes_nogo(tmp_path):
-    from worldforge_train.bench.compare import compare
+    from worldfoundry_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(10.0))
     ev = _write_json(tmp_path / "eval.json", _good_payload(5.0))  # ratio 0.5 < 0.7
     out = tmp_path / "report.md"
@@ -49,7 +49,7 @@ def test_ratio_just_below_threshold_is_nogo(tmp_path):
     Rounding before the binary gate turns a NO-GO into a GO (silent default).
     Compute gate on full-precision raw ratio; round only for display.
     """
-    from worldforge_train.bench.compare import compare
+    from worldfoundry_train.bench.compare import compare
     # base=10.0, eval=6.999 -> raw ratio=0.6999 -> should be NO-GO
     base = _write_json(tmp_path / "base.json", _good_payload(10.0))
     ev = _write_json(tmp_path / "eval.json", _good_payload(6.999))
@@ -62,7 +62,7 @@ def test_ratio_just_below_threshold_is_nogo(tmp_path):
 
 def test_loss_curve_atol_boundary(tmp_path):
     """Loss curve max abs diff == 0.005 passes (atol=1e-2); == 0.02 fails."""
-    from worldforge_train.bench.compare import compare
+    from worldfoundry_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload(loss=0.5))
     near = _write_json(tmp_path / "near.json", {**_good_payload(loss=0.5), "loss_curve": [0.505] * 8})
     out_near = tmp_path / "near.md"
@@ -79,7 +79,7 @@ def test_null_loss_curve_marks_not_evaluable(tmp_path):
     The comparator must mark the condition as not evaluable, list the
     malformed field, and produce a NO-GO report — no traceback.
     """
-    from worldforge_train.bench.compare import compare
+    from worldfoundry_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload())
     bad = _write_json(tmp_path / "eval.json", {**_good_payload(), "loss_curve": None})
     out = tmp_path / "report.md"
@@ -94,7 +94,7 @@ def test_non_numeric_clips_is_nogo(tmp_path):
     """Malformed input: eval clips_per_s = 'ten' (string) must produce NO-GO,
     not a TypeError traceback.
     """
-    from worldforge_train.bench.compare import compare
+    from worldfoundry_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload())
     bad = _write_json(tmp_path / "eval.json", {**_good_payload(), "clips_per_s": "ten"})
     out = tmp_path / "report.md"
@@ -106,7 +106,7 @@ def test_non_numeric_clips_is_nogo(tmp_path):
 
 def test_malformed_json_produces_nogo(tmp_path):
     """Malformed JSON file must produce NO-GO report, not a traceback."""
-    from worldforge_train.bench.compare import compare
+    from worldfoundry_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload())
     bad = tmp_path / "eval.json"
     bad.write_text("{this is not valid json")
@@ -123,7 +123,7 @@ def test_missing_eval_preserves_stderr_from_log(tmp_path):
     bench_results/<tag>.log so the W9 evidence includes the failure
     context (e.g., NotImplementedError), not just "file missing".
     """
-    from worldforge_train.bench.compare import compare
+    from worldfoundry_train.bench.compare import compare
     base = _write_json(tmp_path / "base.json", _good_payload())
     eval_json = tmp_path / "eval.json"  # deliberately NOT created
     log = tmp_path / "eval.log"

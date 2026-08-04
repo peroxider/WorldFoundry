@@ -1,4 +1,4 @@
-"""Unit tests for worldforge_train.trainer (mock-free, fast)."""
+"""Unit tests for worldfoundry_train.trainer (mock-free, fast)."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -8,8 +8,8 @@ import pytest
 import torch
 import torch.nn as nn
 
-from worldforge_train.parallel.strategy import DistributedStrategy
-from worldforge_train.trainer import run_training
+from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.trainer import run_training
 
 
 class _PassthroughStrategy(DistributedStrategy):
@@ -110,7 +110,7 @@ def test_run_training_returns_per_step_losses():
         counter["n"] += 1
         return _fake_batch()
 
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -137,7 +137,7 @@ def test_run_training_num_steps_derived_from_yaml_when_unset():
         counter["n"] += 1
         return _fake_batch()
 
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -161,7 +161,7 @@ def test_run_training_cli_steps_override_beats_yaml_derivation():
         counter["n"] += 1
         return _fake_batch()
 
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=8)
     try:
@@ -179,7 +179,7 @@ def test_run_training_empty_dataset_raises_value_error():
     cfg = _cfg()
     model = _TinyLinearModel()
     strategy = _PassthroughStrategy()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=0)
     try:
@@ -199,7 +199,7 @@ def test_run_training_zero_num_steps_raises_value_error():
     cfg["training"]["per_device_batch"] = 99
     model = _TinyLinearModel()
     strategy = _PassthroughStrategy()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -217,7 +217,7 @@ def test_run_training_negative_num_steps_kwarg_raises():
     cfg = _cfg()
     model = _TinyLinearModel()
     strategy = _PassthroughStrategy()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -239,7 +239,7 @@ def test_run_training_optimizer_filters_to_trainable_params_only():
             p.requires_grad_(False)
     strategy = _PassthroughStrategy()
     captured = {}
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_opt = trainer_mod._build_optimizer
 
     def capturing(model, lr):
@@ -269,7 +269,7 @@ def test_run_training_default_logger_emits_at_log_every_n():
     model = _TinyLinearModel()
     strategy = _PassthroughStrategy()
     log_calls = []
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=8)
     try:
@@ -289,7 +289,7 @@ def test_run_training_injected_logger_overrides_default():
     model = _TinyLinearModel()
     strategy = _PassthroughStrategy()
     log_calls = []
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -313,7 +313,7 @@ def test_run_training_injected_loss_fn_overrides_default():
         sentinel["called"] = True
         return torch.tensor(0.0, requires_grad=True)
 
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -332,7 +332,7 @@ def test_run_training_strategy_wrap_called_with_lora_wrapped_model():
     cfg = _cfg()
     model = _TinyLinearModel()
     strategy = _PassthroughStrategy()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -354,7 +354,7 @@ def test_run_training_strategy_backward_called_once_per_step():
     cfg = _cfg()
     model = _TinyLinearModel()
     strategy = _PassthroughStrategy()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -383,7 +383,7 @@ def _patch_checkpoint_safe_dist(monkeypatch):
 def test_run_training_saves_final_checkpoint(tmp_path, _patch_checkpoint_safe_dist):
     cfg = _cfg()
     model = _TinyLinearModel()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -402,7 +402,7 @@ def test_run_training_saves_final_checkpoint(tmp_path, _patch_checkpoint_safe_di
 def test_run_training_save_every_n_produces_multiple_files(tmp_path, _patch_checkpoint_safe_dist):
     cfg = _cfg()
     model = _TinyLinearModel()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=8)
     try:
@@ -422,7 +422,7 @@ def test_run_training_save_every_n_produces_multiple_files(tmp_path, _patch_chec
 def test_run_training_save_every_n_without_dir_raises(_patch_checkpoint_safe_dist):
     cfg = _cfg()
     model = _TinyLinearModel()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -444,7 +444,7 @@ def test_run_training_resume_from_checkpoint_continues_losses(tmp_path, _patch_c
         np.random.seed(42)
 
     cfg = _cfg()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=8)
     try:
@@ -488,7 +488,7 @@ def test_run_training_resume_from_checkpoint_continues_losses(tmp_path, _patch_c
 def test_run_training_resume_with_lora_signature_mismatch_raises(tmp_path, _patch_checkpoint_safe_dist):
     cfg = _cfg()
     model = _TinyLinearModel()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:
@@ -519,7 +519,7 @@ def test_run_training_resume_with_lora_signature_mismatch_raises(tmp_path, _patc
 def test_run_training_resume_missing_file_raises(_patch_checkpoint_safe_dist):
     cfg = _cfg()
     model = _TinyLinearModel()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original_ds = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
     try:

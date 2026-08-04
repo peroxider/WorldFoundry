@@ -1,6 +1,6 @@
 """CPU e2e: tiny VJEPA2Model -> quantize (fake) -> bridge -> run_training 1 step.
 
-Mirrors worldforge_inf/tests/test_quant_integration_cpu.py pattern with
+Mirrors worldfoundry_inf/tests/test_quant_integration_cpu.py pattern with
 one extra step (LoRA + 1-step training). No NPU required.
 """
 from __future__ import annotations
@@ -11,11 +11,11 @@ import pytest
 import torch
 import transformers
 
-from worldforge_train.parallel.fsdp import FSDPStrategy
-from worldforge_train.quantize_bridge import maybe_quantize_first
-from worldforge_train.trainer import run_training
+from worldfoundry_train.parallel.fsdp import FSDPStrategy
+from worldfoundry_train.quantize_bridge import maybe_quantize_first
+from worldfoundry_train.trainer import run_training
 
-import worldforge_train.trainer as _trainer_mod
+import worldfoundry_train.trainer as _trainer_mod
 
 
 def _make_tiny_vjepa2_and_save(tmp_path: Path) -> Path:

@@ -5,8 +5,8 @@ strategy.wrap -> AdamW (trainable params only) -> run_training_loop.
 
 CPU single-process + multi-rank (gloo) by construction. Multi-rank
 all-reduce handled by FSDPStrategy.step (see
-worldforge_train/parallel/fsdp.py:62). Checkpoint save/load handled by
-worldforge_train.checkpoint (W16).
+worldfoundry_train/parallel/fsdp.py:62). Checkpoint save/load handled by
+worldfoundry_train.checkpoint (W16).
 """
 from __future__ import annotations
 
@@ -18,19 +18,19 @@ from typing import Callable, TYPE_CHECKING
 import torch
 from torch import nn
 
-from worldforge_train.checkpoint import (
+from worldfoundry_train.checkpoint import (
     LoraSignature, load_checkpoint, save_checkpoint, validate_lora_signature,
 )
-from worldforge_train.data.collator import collate_vjepa2_batch
-from worldforge_train.data.dataset import Vjepa2Dataset
-from worldforge_train.data.tubelet_mask import tubelet_mask
-from worldforge_train.jepa_objective import JEPAObjective, PredictorGradSyncStrategy
-from worldforge_train.model.lora_wrapper import build_lora_model
-from worldforge_train.model.predictor import JEPAPredictor
+from worldfoundry_train.data.collator import collate_vjepa2_batch
+from worldfoundry_train.data.dataset import Vjepa2Dataset
+from worldfoundry_train.data.tubelet_mask import tubelet_mask
+from worldfoundry_train.jepa_objective import JEPAObjective, PredictorGradSyncStrategy
+from worldfoundry_train.model.lora_wrapper import build_lora_model
+from worldfoundry_train.model.predictor import JEPAPredictor
 
 if TYPE_CHECKING:
-    from worldforge_train.parallel.strategy import DistributedStrategy
-    from worldforge_train.training_loop import LossFn
+    from worldfoundry_train.parallel.strategy import DistributedStrategy
+    from worldfoundry_train.training_loop import LossFn
 
 __all__ = ["run_training", "make_strategy", "default_logger"]
 
@@ -42,9 +42,9 @@ def default_logger(step: int, loss: float) -> None:
 def make_strategy(profile: str = "train") -> "DistributedStrategy":
     """Map a parallel profile name to a strategy instance.
 
-    - ``"ddp"``  -> :class:`~worldforge_train.parallel.ddp.DDPStrategy`
+    - ``"ddp"``  -> :class:`~worldfoundry_train.parallel.ddp.DDPStrategy`
       (Phase-1 default for LoRA per spec §3.3)
-    - ``"fsdp"`` -> :class:`~worldforge_train.parallel.fsdp.FSDPStrategy`
+    - ``"fsdp"`` -> :class:`~worldfoundry_train.parallel.fsdp.FSDPStrategy`
     - ``"train"`` -> FSDPStrategy (legacy Phase-1 alias, kept for backward
       compatibility; new configs should use ``"ddp"`` / ``"fsdp"``)
 
@@ -52,10 +52,10 @@ def make_strategy(profile: str = "train") -> "DistributedStrategy":
     returning a default.
     """
     if profile == "ddp":
-        from worldforge_train.parallel.ddp import DDPStrategy
+        from worldfoundry_train.parallel.ddp import DDPStrategy
         return DDPStrategy()
     if profile in ("train", "fsdp"):
-        from worldforge_train.parallel.fsdp import FSDPStrategy
+        from worldfoundry_train.parallel.fsdp import FSDPStrategy
         return FSDPStrategy()
     raise ValueError(
         f"unknown profile: {profile!r}; expected 'ddp', 'fsdp' or legacy 'train'"
@@ -223,7 +223,7 @@ def run_training(
         Per-optimizer-step mean losses for the steps actually executed
         (post-resume if applicable).
     """
-    from worldforge_train.training_loop import default_loss_fn, run_training_loop
+    from worldfoundry_train.training_loop import default_loss_fn, run_training_loop
 
     injected_loss_fn = loss_fn  # None means "use default" (or JEPA, if enabled)
     loss_fn = loss_fn or default_loss_fn

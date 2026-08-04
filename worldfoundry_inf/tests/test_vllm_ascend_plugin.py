@@ -1,4 +1,4 @@
-"""CPU tests for worldforge_inf._vllm_ascend_plugin (no vllm, no NPU).
+"""CPU tests for worldfoundry_inf._vllm_ascend_plugin (no vllm, no NPU).
 
 Validates the registration entry-point functions:
 - register() returns the vllm-ascend platform class path string
@@ -12,7 +12,7 @@ import logging
 
 import pytest
 
-from worldforge_inf import _vllm_ascend_plugin as plugin
+from worldfoundry_inf import _vllm_ascend_plugin as plugin
 
 
 def test_register_returns_npu_platform_path():
@@ -22,7 +22,7 @@ def test_register_returns_npu_platform_path():
 
 def test_register_model_no_op_when_vllm_missing(caplog):
     """When vllm is not installed, register_model() logs + returns, no exception."""
-    with caplog.at_level(logging.INFO, logger="worldforge_inf._vllm_ascend_plugin"):
+    with caplog.at_level(logging.INFO, logger="worldfoundry_inf._vllm_ascend_plugin"):
         plugin.register_model()  # must not raise
     assert "vllm not installed" in caplog.text
 
@@ -52,7 +52,7 @@ def test_register_model_swallows_registry_exceptions(monkeypatch, caplog):
             raise RuntimeError("simulated registry failure")
 
     monkeypatch.setattr(plugin, "_vllm_model_registry", lambda: _BoomRegistry)
-    with caplog.at_level(logging.WARNING, logger="worldforge_inf._vllm_ascend_plugin"):
+    with caplog.at_level(logging.WARNING, logger="worldfoundry_inf._vllm_ascend_plugin"):
         plugin.register_model()  # must not raise
     assert "registration failed" in caplog.text
     assert "simulated registry failure" in caplog.text

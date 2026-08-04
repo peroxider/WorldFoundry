@@ -1,6 +1,6 @@
 import pytest
 
-from worldforge_rl.actor import VJEPAActor
+from worldfoundry_rl.actor import VJEPAActor
 
 
 def test_actor_init_loads_model(monkeypatch):
@@ -12,7 +12,7 @@ def test_actor_init_loads_model(monkeypatch):
             return Out()
 
     monkeypatch.setattr(
-        "worldforge_rl.actor._load_hf_model",
+        "worldfoundry_rl.actor._load_hf_model",
         lambda *args, **kwargs: _FakeEncoder(),
     )
     actor = VJEPAActor.from_pretrained("/fake/model")
@@ -29,7 +29,7 @@ def test_predict_latent_action_returns_tensor(monkeypatch):
             return Out()
 
     monkeypatch.setattr(
-        "worldforge_rl.actor._load_hf_model",
+        "worldfoundry_rl.actor._load_hf_model",
         lambda *args, **kwargs: _FakeEncoder(),
     )
     actor = VJEPAActor.from_pretrained("/fake/model")

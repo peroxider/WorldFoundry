@@ -13,7 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from worldforge_common.exceptions import OMCompileError
+from worldfoundry_common.exceptions import OMCompileError
 
 SUPPORTED_HARDWARE = (
     "Atlas 800 A2 / 910B",

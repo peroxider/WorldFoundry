@@ -6,7 +6,7 @@ def test_wrap_calls_fully_sharded_data_parallel(monkeypatch):
     """On multi-rank, wrap() must invoke FullyShardedDataParallel(model, use_orig_params=True)."""
     pytest.importorskip("torch.distributed.fsdp")
     import torch.distributed as dist
-    from worldforge_train.parallel.fsdp import FSDPStrategy
+    from worldfoundry_train.parallel.fsdp import FSDPStrategy
 
     captured = {}
 
@@ -33,7 +33,7 @@ def test_multi_rank_wrap_passes_sharding_and_mixed_precision(monkeypatch):
     """FSDP kwargs include the requested sharding strategy and mixed precision."""
     pytest.importorskip("torch.distributed.fsdp")
     import torch.distributed as dist
-    from worldforge_train.parallel.fsdp import FSDPStrategy
+    from worldfoundry_train.parallel.fsdp import FSDPStrategy
 
     captured = {}
 
@@ -59,7 +59,7 @@ def test_multi_rank_wrap_passes_sharding_and_mixed_precision(monkeypatch):
 def test_unknown_sharding_strategy_raises(monkeypatch):
     pytest.importorskip("torch.distributed.fsdp")
     import torch.distributed as dist
-    from worldforge_train.parallel.fsdp import FSDPStrategy
+    from worldfoundry_train.parallel.fsdp import FSDPStrategy
 
     from torch.distributed import fsdp as torch_fsdp
     monkeypatch.setattr(torch_fsdp, "FullyShardedDataParallel", lambda *a, **k: a[0])
@@ -73,7 +73,7 @@ def test_unknown_sharding_strategy_raises(monkeypatch):
 def test_unknown_mixed_precision_raises(monkeypatch):
     pytest.importorskip("torch.distributed.fsdp")
     import torch.distributed as dist
-    from worldforge_train.parallel.fsdp import FSDPStrategy
+    from worldfoundry_train.parallel.fsdp import FSDPStrategy
 
     from torch.distributed import fsdp as torch_fsdp
     monkeypatch.setattr(torch_fsdp, "FullyShardedDataParallel", lambda *a, **k: a[0])
@@ -88,7 +88,7 @@ def test_fsdp_wrapped_model_skips_manual_allreduce(monkeypatch):
     """When wrap() produced an FSDP module, step() must NOT manually all_reduce."""
     pytest.importorskip("torch.distributed.fsdp")
     import torch.distributed as dist
-    from worldforge_train.parallel.fsdp import FSDPStrategy
+    from worldfoundry_train.parallel.fsdp import FSDPStrategy
 
     monkeypatch.setattr(dist, "is_initialized", lambda: True)
     monkeypatch.setattr(dist, "get_world_size", lambda: 2)
@@ -119,7 +119,7 @@ def test_step_all_reduces_and_steps(monkeypatch):
     use the same primitives Phase-1 used (all_reduce -> step -> zero_grad) so
     W9 baseline numbers stay comparable to Phase-1 (spec §3.2 equivalence).
     """
-    from worldforge_train.parallel.fsdp import FSDPStrategy
+    from worldfoundry_train.parallel.fsdp import FSDPStrategy
     import torch.distributed as dist
     calls = []
     monkeypatch.setattr(dist, "is_initialized", lambda: True)
@@ -144,7 +144,7 @@ def test_equivalent_to_phase1_trainer(monkeypatch):
     Proves W9 baseline numbers (from FSDPStrategy) are comparable to Phase-1.
     """
     import torch
-    from worldforge_train.parallel.fsdp import FSDPStrategy
+    from worldfoundry_train.parallel.fsdp import FSDPStrategy
 
     # Seed before each model construction so both Linear(4,1) inits match.
     # The brief assumes identical inits; without re-seeding, path A's
@@ -179,7 +179,7 @@ def test_activation_checkpointing_invokes_torch_helper(monkeypatch):
     """activation_checkpointing=True calls PyTorch's apply_activation_checkpointing."""
     pytest.importorskip("torch.distributed.fsdp")
     import torch.distributed as dist
-    from worldforge_train.parallel.fsdp import FSDPStrategy
+    from worldfoundry_train.parallel.fsdp import FSDPStrategy
 
     captured = {}
 

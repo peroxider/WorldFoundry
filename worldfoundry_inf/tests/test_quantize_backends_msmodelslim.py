@@ -20,7 +20,7 @@ import pytest
 
 def _reload_with_mock_msmodelslim(fake_msmodelslim):
     """Reload the backend module with ``msmodelslim`` mocked in sys.modules."""
-    from worldforge_inf.compile.quantize_backends import msmodelslim as ms_mod
+    from worldfoundry_inf.compile.quantize_backends import msmodelslim as ms_mod
 
     with patch.dict(sys.modules, {"msmodelslim": fake_msmodelslim}):
         importlib.reload(ms_mod)
@@ -38,7 +38,7 @@ def _make_fake_msmodelslim():
 
 def test_w8a8_backend_self_registers_on_import():
     """Importing msmodelslim.py registers 'w8a8' in the registry."""
-    from worldforge_inf.compile.quantize_backends import _REGISTRY
+    from worldfoundry_inf.compile.quantize_backends import _REGISTRY
 
     assert "w8a8" in _REGISTRY
 
@@ -145,7 +145,7 @@ def test_w8a8_backend_raises_actionable_error_when_msmodelslim_absent(tmp_path):
     (src / "config.json").write_text('{"model_type": "vjepa2"}')
     out = tmp_path / "quantized"
 
-    from worldforge_inf.compile.quantize_backends import msmodelslim as ms_mod
+    from worldfoundry_inf.compile.quantize_backends import msmodelslim as ms_mod
 
     with patch.object(ms_mod, "_MSMODELSLIM_AVAILABLE", False):
         backend = ms_mod.W8A8Backend()
@@ -155,7 +155,7 @@ def test_w8a8_backend_raises_actionable_error_when_msmodelslim_absent(tmp_path):
 
 def test_w4a8_raises_with_deferral_message():
     """backend_available('w4a8') returns (False, hint) noting W4A8 deferred."""
-    from worldforge_inf.compile.quantize_backends import backend_available
+    from worldfoundry_inf.compile.quantize_backends import backend_available
 
     # w4a8 is intentionally not registered in W11 (deferred to a later phase).
     available, hint = backend_available("w4a8")
@@ -170,7 +170,7 @@ def test_w4a8_public_facade_raises_value_error_with_deferral():
     Must match BOTH 'No backend registered' (contract) AND 'deferred to
     future sub-project' (actionable deferral message, G4).
     """
-    from worldforge_inf.compile.quantize import quantize_model
+    from worldfoundry_inf.compile.quantize import quantize_model
 
     with pytest.raises(ValueError) as exc_info:
         quantize_model(

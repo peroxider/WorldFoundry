@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 
-from worldforge_inf.compile.quantize_backends import (
+from worldfoundry_inf.compile.quantize_backends import (
     QuantBackend,
     backend_available,
     get_backend,

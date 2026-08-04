@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from worldforge_inf.compile.quantize import quantize_model
+from worldfoundry_inf.compile.quantize import quantize_model
 
 
 def test_facade_dispatches_w8a8_to_backend(tmp_path):
@@ -19,10 +19,10 @@ def test_facade_dispatches_w8a8_to_backend(tmp_path):
     fake_backend.quantize.return_value = out
 
     with patch(
-        "worldforge_inf.compile.quantize.get_backend", return_value=fake_backend
+        "worldfoundry_inf.compile.quantize.get_backend", return_value=fake_backend
     ) as mock_get:
         with patch(
-            "worldforge_inf.compile.quantize.backend_available",
+            "worldfoundry_inf.compile.quantize.backend_available",
             return_value=(True, None),
         ):
             result = quantize_model(src, out, quant_type="w8a8",
@@ -49,7 +49,7 @@ def test_facade_backend_unavailable_raises_import_error():
     src = Path("/fake/bf16")
     out = Path("/fake/w8a8")
     with patch(
-        "worldforge_inf.compile.quantize.backend_available",
+        "worldfoundry_inf.compile.quantize.backend_available",
         return_value=(False, "pip install worldforge[quant]"),
     ):
         with pytest.raises(ImportError, match="pip install worldforge\\[quant\\]"):

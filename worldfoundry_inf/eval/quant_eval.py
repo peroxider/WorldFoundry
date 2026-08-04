@@ -4,7 +4,7 @@ Used as the W11 acceptance gate per parent spec §9 #6:
 "下游特征 cosine similarity 与 bf16 baseline ≥ 0.98".
 
 CLI usage (see __main__ block at bottom):
-    python -m worldforge_inf.eval.quant_eval \\
+    python -m worldfoundry_inf.eval.quant_eval \\
         --baseline models/vjepa2-vitl-1.2b-bf16 \\
         --quantized models/vjepa2-vitl-1.2b-w8a8 \\
         --threshold 0.98
@@ -63,7 +63,7 @@ def cosine_similarity(
 
     if eval_dataset is None:
         # Default holdout: same videomix22m source, seed=123, n_samples
-        from worldforge_inf.data.calib_videomix22m import load_calibration_dataset
+        from worldfoundry_inf.data.calib_videomix22m import load_calibration_dataset
         eval_dataset = list(load_calibration_dataset(n=n_samples, seed=seed))
 
     samples = list(eval_dataset)

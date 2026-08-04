@@ -13,9 +13,9 @@ import pytest
 import torch
 from transformers import VJEPA2Config, VJEPA2Model
 
-from worldforge_train.model.lora_wrapper import build_lora_model
-from worldforge_train.parallel.fsdp import FSDPStrategy
-from worldforge_train.training_loop import run_training_loop
+from worldfoundry_train.model.lora_wrapper import build_lora_model
+from worldfoundry_train.parallel.fsdp import FSDPStrategy
+from worldfoundry_train.training_loop import run_training_loop
 
 
 def _build_real_tiny_vjepa2() -> VJEPA2Model:

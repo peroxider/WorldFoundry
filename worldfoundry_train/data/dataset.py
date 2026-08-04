@@ -14,7 +14,7 @@ from typing import Callable
 
 import numpy as np
 
-from worldforge_train.data.video_source import build_video_source
+from worldfoundry_train.data.video_source import build_video_source
 
 MaskFn = Callable[[tuple[int, int, int], np.random.Generator], np.ndarray]
 
@@ -101,7 +101,7 @@ def _self_test() -> int:
         c.close()
         manifest = Path(tmp) / "manifest.csv"
         manifest.write_text(f"video_path,num_frames,height,width\n{out},20,196,196\n")
-        from worldforge_train.data.tubelet_mask import tubelet_mask
+        from worldfoundry_train.data.tubelet_mask import tubelet_mask
         ds = Vjepa2Dataset(manifest, mask_fn=lambda shape, rng: tubelet_mask(shape, (2, 14, 14), rng=rng))
         item = ds[0]
         assert item["frames"].shape[0] == 20

@@ -1,11 +1,11 @@
-"""Unit tests for worldforge_train.data.collator (mock-free, fast)."""
+"""Unit tests for worldfoundry_train.data.collator (mock-free, fast)."""
 from __future__ import annotations
 
 import numpy as np
 import pytest
 import torch
 
-from worldforge_train.data.collator import collate_vjepa2_batch
+from worldfoundry_train.data.collator import collate_vjepa2_batch
 
 
 def _np_sample(T=4, H=28, W=28, Hg=2, Wg=2, seed=0):

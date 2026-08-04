@@ -2,7 +2,7 @@ import time
 
 import numpy as np
 
-from worldforge_inf.batcher import VideoBatcher
+from worldfoundry_inf.batcher import VideoBatcher
 
 
 def test_batcher_submits_and_returns_result():

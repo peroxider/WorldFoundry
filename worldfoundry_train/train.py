@@ -1,7 +1,7 @@
-"""WorldForge training entry.
+"""WorldFoundry training entry.
 
 Usage:
-    python -m worldforge_train.train --config <yaml> [--steps N] [--parallel ddp|fsdp]
+    python -m worldfoundry_train.train --config <yaml> [--steps N] [--parallel ddp|fsdp]
 """
 from __future__ import annotations
 
@@ -10,11 +10,11 @@ from pathlib import Path
 
 import yaml
 
-from worldforge_common.npu_env import check_versions
+from worldfoundry_common.npu_env import check_versions
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="WorldForge V-JEPA 2 LoRA training")
+    parser = argparse.ArgumentParser(description="WorldFoundry V-JEPA 2 LoRA training")
     parser.add_argument("--config", type=Path, required=True, help="YAML config path")
     parser.add_argument(
         "--parallel", choices=["ddp", "fsdp"], default=None,
@@ -73,17 +73,17 @@ def main() -> int:
     with args.config.open() as f:
         cfg = yaml.safe_load(f)
 
-    from worldforge_train.quantize_bridge import maybe_quantize_first
+    from worldfoundry_train.quantize_bridge import maybe_quantize_first
     cfg = maybe_quantize_first(cfg)
 
     profile = _resolve_parallel(args, cfg)
 
     if profile == "ddp":
-        from worldforge_train.parallel.ddp import cleanup_ddp, setup_ddp
+        from worldfoundry_train.parallel.ddp import cleanup_ddp, setup_ddp
         world_size, local_rank, global_rank = setup_ddp()
         print(f"[DDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
     else:
-        from worldforge_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
+        from worldfoundry_train.parallel.fsdp import cleanup_fsdp, setup_fsdp
         world_size, local_rank, global_rank = setup_fsdp()
         print(f"[FSDP] world_size={world_size} local_rank={local_rank} global_rank={global_rank}")
 
@@ -123,7 +123,7 @@ def run_ddp_training(cfg: dict, local_rank: int, global_rank: int,
     Strategy selection consumes ``cfg["training"]["parallel"]`` unless an
     explicit ``profile`` override is passed; defaults to ``"ddp"``.
     """
-    from worldforge_train.trainer import make_strategy, run_training
+    from worldfoundry_train.trainer import make_strategy, run_training
     profile = profile or str(cfg.get("training", {}).get("parallel", "ddp"))
     return run_training(cfg, make_strategy(profile), num_steps=num_steps,
                         checkpoint_dir=checkpoint_dir, resume_from=resume_from,
@@ -146,7 +146,7 @@ def run_fsdp_training(cfg: dict, local_rank: int, global_rank: int,
     multi-rank (proven in tests/test_fsdp_strategy.py +
     tests/test_fsdp_allreduce_cpu.py).
     """
-    from worldforge_train.trainer import make_strategy, run_training
+    from worldfoundry_train.trainer import make_strategy, run_training
     profile = profile or str(cfg.get("training", {}).get("parallel", "fsdp"))
     return run_training(cfg, make_strategy(profile), num_steps=num_steps,
                         checkpoint_dir=checkpoint_dir, resume_from=resume_from,

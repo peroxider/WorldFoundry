@@ -4,7 +4,7 @@ Wires the existing :class:`VJEPA2Worker` semantics (encode / predict / plan)
 into vLLM-Ascend's Hardware Pluggable Architecture. Designed to be discovered
 by vLLM via the ``vllm.platform_plugins`` / ``vllm.general_plugins`` entry
 points declared in ``pyproject.toml``; the actual registration is performed
-by :mod:`worldforge_inf._vllm_ascend_plugin`.
+by :mod:`worldfoundry_inf._vllm_ascend_plugin`.
 
 Architecture (W19):
 - ``VJEPA2NPUWorker`` subclasses vllm-ascend's ``NPUWorker`` at runtime when
@@ -81,7 +81,7 @@ def _npu_ops():
 class VJEPA2NPUWorker(_resolve_base_class()):
     """Hardware Pluggable worker for V-JEPA 2 on Ascend NPU.
 
-    Public API (matches :class:`worldforge_inf.vjepa2_worker.VJEPA2Worker`):
+    Public API (matches :class:`worldfoundry_inf.vjepa2_worker.VJEPA2Worker`):
     - :meth:`encode` — video -> dense features
     - :meth:`predict` — masked video + mask -> dense features
     - :meth:`plan` — video + actions -> (features, actions)
@@ -89,7 +89,7 @@ class VJEPA2NPUWorker(_resolve_base_class()):
     The worker calls torch_npu ops inside the compute path; on CPU fallback,
     the same methods execute on eager torch via the HF transformers path.
     vLLM's HPA discovery happens via the entry points in ``pyproject.toml``,
-    which target :mod:`worldforge_inf._vllm_ascend_plugin`.
+    which target :mod:`worldfoundry_inf._vllm_ascend_plugin`.
     """
 
     def __init__(

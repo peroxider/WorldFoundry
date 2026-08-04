@@ -1,4 +1,4 @@
-"""Unit tests for gradient accumulation in worldforge_train.training_loop.
+"""Unit tests for gradient accumulation in worldfoundry_train.training_loop.
 
 Covers (CPU, no process group):
 - optimizer-step semantics: strategy.step fires once per accumulation window
@@ -19,8 +19,8 @@ import torch
 import torch.nn as nn
 from torch.optim import SGD
 
-from worldforge_train.parallel.strategy import DistributedStrategy
-from worldforge_train.training_loop import run_training_loop, run_training_step
+from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.training_loop import run_training_loop, run_training_step
 
 
 class _RecordingStrategy(DistributedStrategy):
@@ -259,7 +259,7 @@ def test_grad_accum_one_matches_legacy_step_loop():
 
 from types import SimpleNamespace  # noqa: E402
 
-from worldforge_train.trainer import run_training  # noqa: E402
+from worldfoundry_train.trainer import run_training  # noqa: E402
 
 
 class _TinyLinearModel(nn.Module):
@@ -318,7 +318,7 @@ def _loss_fn(model, batch):
 
 @pytest.fixture
 def _patch_dataset(monkeypatch):
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     monkeypatch.setattr(
         trainer_mod, "_build_dataset", lambda cfg: _FakeDataset(n=8)
     )

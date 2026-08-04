@@ -11,8 +11,8 @@ import numpy as np
 import torch
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from worldforge_common.exceptions import AdapterNotFoundError
-from worldforge_inf.security import HmacTokenAuth
+from worldfoundry_common.exceptions import AdapterNotFoundError
+from worldfoundry_inf.security import HmacTokenAuth
 
 router = APIRouter()
 
@@ -49,7 +49,7 @@ async def plan(request: Request, auth: HmacTokenAuth = Depends(lambda: None)) ->
 
 def _check_auth(request: Request, auth: HmacTokenAuth, body_bytes: bytes) -> None:
     hdr = request.headers.get("Authorization", "")
-    ts = request.headers.get("X-WorldForge-Timestamp", "")
+    ts = request.headers.get("X-WorldFoundry-Timestamp", "")
     if not hdr.startswith("HMAC "):
         raise HTTPException(status_code=401, detail="missing or malformed Authorization header")
     sig = hdr[len("HMAC "):]

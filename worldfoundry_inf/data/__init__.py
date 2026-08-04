@@ -1,1 +1,1 @@
-"""Data loading utilities for WorldForge inference path."""
+"""Data loading utilities for WorldFoundry inference path."""

@@ -13,7 +13,7 @@ from typing import Any
 
 import torch
 
-from worldforge_train.parallel.strategy import select_strategy
+from worldfoundry_train.parallel.strategy import select_strategy
 
 
 class _TinyBenchModel(torch.nn.Module):

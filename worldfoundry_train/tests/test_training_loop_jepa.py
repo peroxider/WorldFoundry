@@ -10,8 +10,8 @@ import torch
 import torch.nn as nn
 from torch.optim import SGD
 
-from worldforge_train.parallel.strategy import DistributedStrategy
-from worldforge_train.training_loop import run_training_loop, run_training_step
+from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.training_loop import run_training_loop, run_training_step
 
 
 class _OrderRecordingStrategy(DistributedStrategy):

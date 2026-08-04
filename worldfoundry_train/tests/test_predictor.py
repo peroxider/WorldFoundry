@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from worldforge_train.model.predictor import JEPAPredictor
+from worldfoundry_train.model.predictor import JEPAPredictor
 
 # Tiny config: grid (1, 4, 4) -> N=16, encoder 32, predictor 16.
 GRID = (1, 4, 4)

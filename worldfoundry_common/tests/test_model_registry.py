@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from worldforge_common.model_registry import MODEL_REGISTRY, resolve_model_path
+from worldfoundry_common.model_registry import MODEL_REGISTRY, resolve_model_path
 
 
 def test_vjepa2_registered():

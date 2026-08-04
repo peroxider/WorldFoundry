@@ -1,6 +1,6 @@
 import numpy as np
 
-from worldforge_common.metrics import cosine_similarity
+from worldfoundry_common.metrics import cosine_similarity
 
 
 def test_cosine_similarity_identical_is_one():

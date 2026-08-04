@@ -17,10 +17,10 @@ import torch
 from torch import nn
 from transformers import VJEPA2Config, VJEPA2Model
 
-from worldforge_train.model.lora_wrapper import build_lora_model
-from worldforge_train.parallel.fsdp import FSDPStrategy
-from worldforge_train.parallel.strategy import DistributedStrategy
-from worldforge_train.trainer import run_training
+from worldfoundry_train.model.lora_wrapper import build_lora_model
+from worldfoundry_train.parallel.fsdp import FSDPStrategy
+from worldfoundry_train.parallel.strategy import DistributedStrategy
+from worldfoundry_train.trainer import run_training
 
 
 def _build_real_tiny_vjepa2() -> VJEPA2Model:
@@ -122,7 +122,7 @@ def _seed():
 
 def test_real_vjepa2_three_step_training_via_trainer():
     base = _build_real_tiny_vjepa2()
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeVJ2Dataset(n=4)
     try:
@@ -151,7 +151,7 @@ def test_trainer_loss_decreases_or_weights_change_on_real_vjepa2():
         n: p.detach().clone()
         for n, p in model.named_parameters() if p.requires_grad
     }
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeVJ2Dataset(n=4)
     try:
@@ -176,7 +176,7 @@ def test_trainer_loss_decreases_or_weights_change_on_real_vjepa2():
 def test_trainer_collator_round_trip_with_fake_dataset():
     """No VJEPA 2 weights; uses _Tiny model + _FakeVJ2Dataset +
     real collator_vjepa2_batch via trainer.run_training (no batch_fn)."""
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeVJ2Dataset(n=8)
     try:
@@ -209,7 +209,7 @@ def test_trainer_uses_real_ds_len_for_num_steps_when_no_override():
     """When ds_len not divisible by batch_size, drops partial last batch."""
     cfg = _cfg()
     cfg["training"]["per_device_batch"] = 2
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
     original = trainer_mod._build_dataset
     trainer_mod._build_dataset = lambda cfg: _FakeVJ2Dataset(n=7)
     try:

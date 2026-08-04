@@ -1,10 +1,10 @@
-from worldforge_common.exceptions import (
+from worldfoundry_common.exceptions import (
     AdapterNotFoundError,
     MaskingError,
     ModelNotFoundError,
     OMCompileError,
     VersionMismatchError,
-    WorldForgeError,
+    WorldFoundryError,
 )
 
 
@@ -16,4 +16,4 @@ def test_all_inherit_from_base():
         AdapterNotFoundError,
         MaskingError,
     ):
-        assert issubclass(cls, WorldForgeError)
+        assert issubclass(cls, WorldFoundryError)

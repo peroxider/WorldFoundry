@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from worldforge_inf.compile.quantize import quantize_model
+from worldfoundry_inf.compile.quantize import quantize_model
 
 
 def test_quantize_model_creates_output_file(tmp_path):
@@ -20,11 +20,11 @@ def test_quantize_model_creates_output_file(tmp_path):
     fake_backend = MagicMock()
     fake_backend.quantize.return_value = out_dir
     with patch(
-        "worldforge_inf.compile.quantize.get_backend",
+        "worldfoundry_inf.compile.quantize.get_backend",
         return_value=fake_backend,
     ):
         with patch(
-            "worldforge_inf.compile.quantize.backend_available",
+            "worldfoundry_inf.compile.quantize.backend_available",
             return_value=(True, None),
         ):
             result = quantize_model(src, out_dir, quant_type="w8a8")

@@ -12,7 +12,7 @@ import torch
 from torch import nn
 from torch.optim import AdamW
 
-from worldforge_train.checkpoint import (
+from worldfoundry_train.checkpoint import (
     LoraSignature, _is_fsdp_module, load_checkpoint, save_checkpoint,
 )
 
@@ -32,7 +32,7 @@ def test_trainable_state_dict_uses_full_state_dict_for_fsdp(tmp_path, monkeypatc
     from torch.distributed import fsdp as torch_fsdp
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     from torch.distributed.fsdp.api import FullStateDictConfig, StateDictType
-    from worldforge_train.checkpoint import _trainable_state_dict
+    from worldfoundry_train.checkpoint import _trainable_state_dict
 
     model = _make_model()
     # Make only the last layer trainable to test filtering.
@@ -40,7 +40,7 @@ def test_trainable_state_dict_uses_full_state_dict_for_fsdp(tmp_path, monkeypatc
         p.requires_grad = False
 
     monkeypatch.setattr(
-        "worldforge_train.checkpoint._is_fsdp_module", lambda m: True
+        "worldfoundry_train.checkpoint._is_fsdp_module", lambda m: True
     )
 
     captured: dict = {}
@@ -77,7 +77,7 @@ def test_save_checkpoint_calls_fsdp_optim_state_dict(tmp_path, monkeypatch):
 
     model = _make_model()
     opt = AdamW(model.parameters(), lr=0.01)
-    monkeypatch.setattr("worldforge_train.checkpoint._is_fsdp_module", lambda m: True)
+    monkeypatch.setattr("worldfoundry_train.checkpoint._is_fsdp_module", lambda m: True)
 
     captured_optim = {}
 
@@ -118,7 +118,7 @@ def test_load_checkpoint_calls_fsdp_optim_state_dict_to_load(tmp_path, monkeypat
 
     model = _make_model()
     opt = AdamW(model.parameters(), lr=0.01)
-    monkeypatch.setattr("worldforge_train.checkpoint._is_fsdp_module", lambda m: True)
+    monkeypatch.setattr("worldfoundry_train.checkpoint._is_fsdp_module", lambda m: True)
 
     captured = {}
 

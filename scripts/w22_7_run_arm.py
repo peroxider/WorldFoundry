@@ -23,7 +23,7 @@ Usage:
     python scripts/w22_7_run_arm.py --arm b --mode pilot --backend dry
     python scripts/w22_7_run_arm.py --arm b --mode pilot --backend atlas
     python scripts/w22_7_run_arm.py --arm b --mode atlas \
-        --config worldforge_train/configs/w22_7_arm_b_jepa.yaml --steps 2000
+        --config worldfoundry_train/configs/w22_7_arm_b_jepa.yaml --steps 2000
 
 Pilot mode (--mode pilot): short run (~200 steps, env W22_7_PILOT_STEPS)
 with per-step memory/throughput instrumentation and an early-stop verdict
@@ -45,16 +45,16 @@ import torch
 # driver opts in). Must be set before JEPAObjective is constructed.
 os.environ["WORLDFORGE_JEPA_TIMING"] = "1"
 
-from worldforge_train.checkpoint import load_checkpoint  # noqa: E402
-from worldforge_train.eval.jepa_probing import (  # noqa: E402
+from worldfoundry_train.checkpoint import load_checkpoint  # noqa: E402
+from worldfoundry_train.eval.jepa_probing import (  # noqa: E402
     append_jsonl, collapse_metrics, knn_hit_rate, linear_probe_accuracy,
     masked_reconstruction_cosine,
 )
-from worldforge_train.jepa_objective import JEPAObjective  # noqa: E402
-from worldforge_train.model.lora_wrapper import build_lora_model  # noqa: E402
-from worldforge_train.model.predictor import JEPAPredictor  # noqa: E402
-from worldforge_train.parallel.fsdp import FSDPStrategy  # noqa: E402
-from worldforge_train.trainer import run_training  # noqa: E402
+from worldfoundry_train.jepa_objective import JEPAObjective  # noqa: E402
+from worldfoundry_train.model.lora_wrapper import build_lora_model  # noqa: E402
+from worldfoundry_train.model.predictor import JEPAPredictor  # noqa: E402
+from worldfoundry_train.parallel.fsdp import FSDPStrategy  # noqa: E402
+from worldfoundry_train.trainer import run_training  # noqa: E402
 
 SEED = 42
 # Dry-run geometry: tiny VJEPA2, grid (1, 14, 14) -> N=196, hidden 64.
@@ -270,9 +270,9 @@ def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str) -> dict:
     polluted. backend: "dry" (tiny CPU model, proves the harness) or
     "atlas" (real YAML config + real weights).
     """
-    from worldforge_train.eval.pilot_checks import evaluate_pilot
+    from worldfoundry_train.eval.pilot_checks import evaluate_pilot
 
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
 
     pilot_dir = out_dir / arm / "pilot"
     pilot_dir.mkdir(parents=True, exist_ok=True)
@@ -302,7 +302,7 @@ def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str) -> dict:
             import yaml
 
             default_cfg = Path(
-                f"worldforge_train/configs/w22_7_arm_{arm}_"
+                f"worldfoundry_train/configs/w22_7_arm_{arm}_"
                 f"{'proxy' if arm == 'a' else 'jepa'}.yaml"
             )
             cfg = yaml.safe_load(default_cfg.read_text())
@@ -427,7 +427,7 @@ def _restore_for_probing(arm: str, ckpt: Path, cfg: dict):
 
 
 def run_arm_dry(arm: str, out_dir: Path, steps: int, save_every_n: int) -> dict:
-    import worldforge_train.trainer as trainer_mod
+    import worldfoundry_train.trainer as trainer_mod
 
     torch.manual_seed(SEED)
     np.random.seed(SEED)
@@ -576,7 +576,7 @@ def main() -> int:
         return 0 if verdict["verdict"] == "GO" else 3
     else:
         default_cfg = Path(
-            f"worldforge_train/configs/w22_7_arm_{args.arm}_"
+            f"worldfoundry_train/configs/w22_7_arm_{args.arm}_"
             f"{'proxy' if args.arm == 'a' else 'jepa'}.yaml"
         )
         run_arm_atlas(args.arm, args.config or default_cfg, args.out,

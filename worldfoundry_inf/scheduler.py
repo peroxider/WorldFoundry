@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from worldforge_common.exceptions import AdapterNotFoundError
+from worldfoundry_common.exceptions import AdapterNotFoundError
 
 
 class AdapterRouter:

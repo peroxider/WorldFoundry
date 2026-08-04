@@ -1,4 +1,4 @@
-"""Unit tests for W22.7 probing metrics (worldforge_train/eval/jepa_probing.py)
+"""Unit tests for W22.7 probing metrics (worldfoundry_train/eval/jepa_probing.py)
 and the default-off throughput instrumentation (design §12-② hooks).
 
 All CPU, synthetic data: each metric is validated on constructions with a
@@ -11,7 +11,7 @@ import json
 import pytest
 import torch
 
-from worldforge_train.eval.jepa_probing import (
+from worldfoundry_train.eval.jepa_probing import (
     append_jsonl, collapse_metrics, effective_rank, knn_hit_rate,
     linear_probe_accuracy, masked_reconstruction_cosine, read_jsonl,
     token_variance,
@@ -109,8 +109,8 @@ def _objective():
 
     import torch.nn as nn
 
-    from worldforge_train.jepa_objective import JEPAObjective
-    from worldforge_train.model.predictor import JEPAPredictor
+    from worldfoundry_train.jepa_objective import JEPAObjective
+    from worldfoundry_train.model.predictor import JEPAPredictor
 
     class _Enc(nn.Module):
         def __init__(self):

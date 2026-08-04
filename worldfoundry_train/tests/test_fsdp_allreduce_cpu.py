@@ -28,7 +28,7 @@ import torch.multiprocessing as mp
 from torch import nn
 from torch.optim import AdamW
 
-from worldforge_train.parallel.fsdp import FSDPStrategy
+from worldfoundry_train.parallel.fsdp import FSDPStrategy
 
 
 def _make_tiny_model() -> nn.Module:
