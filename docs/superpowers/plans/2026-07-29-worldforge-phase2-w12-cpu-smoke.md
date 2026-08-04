@@ -16,7 +16,7 @@
 ## Global Constraints
 
 - **G2:** msmodelslim==26.1.0 stays pinned; no new deps
-- **G3:** Phase-1 code (`worldforge_train/`, `worldforge_inf/compile/mindie_sd.py`) 0 changes
+- **G3:** Phase-1 code (`worldfoundry_train/`, `worldfoundry_inf/compile/mindie_sd.py`) 0 changes
 - **G4:** Explicit errors — fake backend's `quantize()` validates source is a HF model dir; missing `config.json` raises FileNotFoundError with path
 - **G5:** CPU test deterministic — no random init seeds leaked into assertions
 - **G6:** Single dispatch path — `quantize_model(quant_type="fake")` is the only public way to use FakeBackend (no direct FakeBackend() instantiation in test code)
@@ -28,7 +28,7 @@
 ## Task 1: `compile/quantize_backends/fake.py` — FakeBackend for CPU smoke
 
 **Files:**
-- Create: `worldforge_inf/compile/quantize_backends/fake.py` (~40 lines)
+- Create: `worldfoundry_inf/compile/quantize_backends/fake.py` (~40 lines)
 
 **Interfaces:**
 - Consumes: `quantize_backends.register`, `QuantBackend` Protocol
@@ -38,7 +38,7 @@
 
 ### Step 1.1: Write the failing test
 
-Create `worldforge_inf/tests/test_quantize_backends_fake.py`:
+Create `worldfoundry_inf/tests/test_quantize_backends_fake.py`:
 
 ```python
 """FakeBackend self-registers + reproduces quantize outputs without msModelSlim."""
@@ -47,11 +47,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from worldforge_inf.compile.quantize_backends import get_backend, backend_available
+from worldfoundry_inf.compile.quantize_backends import get_backend, backend_available
 
 
 def test_fake_backend_self_registers_on_import():
-    from worldforge_inf.compile.quantize_backends import fake  # noqa: F401
+    from worldfoundry_inf.compile.quantize_backends import fake  # noqa: F401
     available, _ = backend_available("fake")
     assert available is True
 
@@ -75,7 +75,7 @@ def test_fake_backend_quantize_copies_weights_and_meta(tmp_path):
 
 def test_fake_backend_writes_quant_meta_with_required_fields(tmp_path):
     """quant_meta.json has all 7 spec fields (matches W8A8Backend schema)."""
-    from worldforge_inf.compile.quantize_backends.fake import FakeBackend
+    from worldfoundry_inf.compile.quantize_backends.fake import FakeBackend
 
     src = tmp_path / "bf16"
     src.mkdir()
@@ -96,7 +96,7 @@ def test_fake_backend_writes_quant_meta_with_required_fields(tmp_path):
 
 
 def test_fake_backend_missing_config_raises(tmp_path):
-    from worldforge_inf.compile.quantize_backends.fake import FakeBackend
+    from worldfoundry_inf.compile.quantize_backends.fake import FakeBackend
 
     src = tmp_path / "bad"
     src.mkdir()
@@ -107,12 +107,12 @@ def test_fake_backend_missing_config_raises(tmp_path):
 
 ### Step 1.2: Run tests to verify they fail
 
-Run: `python3 -m pytest worldforge_inf/tests/test_quantize_backends_fake.py -v`
-Expected: `ModuleNotFoundError: No module named 'worldforge_inf.compile.quantize_backends.fake'`
+Run: `python3 -m pytest worldfoundry_inf/tests/test_quantize_backends_fake.py -v`
+Expected: `ModuleNotFoundError: No module named 'worldfoundry_inf.compile.quantize_backends.fake'`
 
 ### Step 1.3: Implement the FakeBackend
 
-Create `worldforge_inf/compile/quantize_backends/fake.py`:
+Create `worldfoundry_inf/compile/quantize_backends/fake.py`:
 
 ```python
 """FakeBackend — CPU-runnable surrogate that does NOT call msModelSlim.
@@ -175,13 +175,13 @@ class FakeBackend:
 
 ### Step 1.4: Verify tests pass
 
-Run: `python3 -m pytest worldforge_inf/tests/test_quantize_backends_fake.py -v`
+Run: `python3 -m pytest worldfoundry_inf/tests/test_quantize_backends_fake.py -v`
 Expected: 4 passed
 
 ### Step 1.5: Commit
 
 ```bash
-git add worldforge_inf/compile/quantize_backends/fake.py worldforge_inf/tests/test_quantize_backends_fake.py
+git add worldfoundry_inf/compile/quantize_backends/fake.py worldfoundry_inf/tests/test_quantize_backends_fake.py
 git commit -m "feat(quant): FakeBackend CPU surrogate registered as 'fake' quant_type"
 ```
 
@@ -190,7 +190,7 @@ git commit -m "feat(quant): FakeBackend CPU surrogate registered as 'fake' quant
 ## Task 2: CPU integration test (`test_quant_integration_cpu.py`)
 
 **Files:**
-- Create: `worldforge_inf/tests/test_quant_integration_cpu.py` (~80 lines)
+- Create: `worldfoundry_inf/tests/test_quant_integration_cpu.py` (~80 lines)
 
 **Why:** Validates the full orchestration on CPU without NPU — uses dino-vits8 surrogate model files (synthetic, no HF download required) + real HF `AutoModel.from_pretrained` + real `cosine_similarity` computation. The pipeline is exercised end-to-end with the only stub being the quantize step itself.
 
@@ -216,8 +216,8 @@ import torch
 import torch.nn as nn
 from transformers import AutoConfig, AutoModel, AutoModelForImageClassification
 
-from worldforge_inf.compile.quantize import quantize_model
-from worldforge_inf.eval.quant_eval import cosine_similarity
+from worldfoundry_inf.compile.quantize import quantize_model
+from worldfoundry_inf.eval.quant_eval import cosine_similarity
 
 
 def _write_tiny_hf_model(path: Path) -> Path:
@@ -317,24 +317,24 @@ def _make_model_with_encode(path):
     return m
 ```
 
-Then patch `worldforge_inf.eval.quant_eval.AutoModel.from_pretrained` to use this.
+Then patch `worldfoundry_inf.eval.quant_eval.AutoModel.from_pretrained` to use this.
 
 **Implementer note:** Please adjust the test if the integration breaks on first run, using one of the above strategies. The acceptance criterion is: the test loads bf16 + fake-quantized model paths, calls cosine_similarity, and the pipeline completes without raising.
 
 ### Step 2.2: Run integration test, debug, fix imports/order
 
-Run: `python3 -m pytest worldforge_inf/tests/test_quant_integration_cpu.py -v`
+Run: `python3 -m pytest worldfoundry_inf/tests/test_quant_integration_cpu.py -v`
 Expected: PASS (after possibly adjusting encode() patching)
 
 ### Step 2.3: Run full W11-W12 + CPU smoke suite
 
-Run: `python3 -m pytest worldforge_inf/tests/ -v`
+Run: `python3 -m pytest worldfoundry_inf/tests/ -v`
 Expected: 47 passed + 1 skipped (NPU gated) + 15 errors (pre-existing av)
 
 ### Step 2.4: Commit
 
 ```bash
-git add worldforge_inf/tests/test_quant_integration_cpu.py
+git add worldfoundry_inf/tests/test_quant_integration_cpu.py
 git commit -m "test(quant): CPU e2e smoke for facade → fake backend → cosine pipeline"
 ```
 
@@ -348,7 +348,7 @@ git commit -m "test(quant): CPU e2e smoke for facade → fake backend → cosine
 
 Pass brief + diff + report paths. Reviewer checks:
 - Spec compliance: FakeBackend at correct quant_type, doesn't shadow "w8a8"
-- G3: `worldforge_train/`, `mindie_sd.py` unchanged
+- G3: `worldfoundry_train/`, `mindie_sd.py` unchanged
 - CPU test runs by default (no NPU gate)
 - Sidecar schema consistent with W8A8Backend
 

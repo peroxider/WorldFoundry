@@ -11,10 +11,10 @@
 
 ### 1.1 现状（已读码核实）
 
-当前训练循环 `worldforge_train/training_loop.py:32-48` 的默认损失为：
+当前训练循环 `worldfoundry_train/training_loop.py:32-48` 的默认损失为：
 
 ```python
-# worldforge_train/training_loop.py:41-48
+# worldfoundry_train/training_loop.py:41-48
 out  = model(pixel_values_videos=x, bool_masked_pos=mask)      # 前向 ①（有梯度）
 feats = out.last_hidden_state
 with torch.no_grad():
@@ -58,7 +58,7 @@ $$
 
 | # | 目标 | 验收标准 |
 |---|------|----------|
-| G1 | 引入独立 predictor Transformer 模块 | 新模块 `worldforge_train/model/predictor.py`，CPU 单测可跑通前向/反向 |
+| G1 | 引入独立 predictor Transformer 模块 | 新模块 `worldfoundry_train/model/predictor.py`，CPU 单测可跑通前向/反向 |
 | G2 | 引入 EMA target encoder（momentum schedule + FSDP 安全更新） | EMA 更新后 target 与 online 权重按公式精确收敛；FSDP 多卡 smoke 测试通过 |
 | G3 | 真 JEPA 损失替换代理损失，保留旧损失为 feature flag | `jepa.enabled: false` 时行为与现状逐位一致 |
 | G4 | checkpoint 兼容：predictor/EMA 状态可保存、恢复、签名校验 | resume 后 loss 曲线连续；签名不匹配时按 G4 约束 raise |
@@ -69,7 +69,7 @@ $$
 - **不做 action-conditioned predictor**（V-JEPA 2-AC）：属 RL 子系统 / `vjepa2_worker.py:57` 的 `plan()` Phase-2 W4 范围。
 - **不改数据管线**：multiblock mask 的多 block 采样器（`tubelet_mask.py:15` 的 `multiblock_mask` 已存在但未被 trainer 使用）接入留作 W23+；本期继续用 `tubelet_mask`，仅在损失侧支持多 mask。
 - **不做从零预训练**：仍是 LoRA 微调范式（spec §3.2），EMA 范围相应限定（见 §5.3）。
-- **不改推理侧**：`worldforge_inf/vjepa2_worker.py` 不变；predictor 是训练期模块，不进推理图。
+- **不改推理侧**：`worldfoundry_inf/vjepa2_worker.py` 不变；predictor 是训练期模块，不进推理图。
 - **不追求 V-JEPA 2 官方完整训练配方**（多 crop、多 mask、长 warmup、大规模 batch）：本期对齐**结构**，超参对齐留待对照实验后调优。
 
 ---
@@ -139,7 +139,7 @@ $$
 
 实现选择：**手写轻量 `nn.TransformerEncoder`-风格模块**而非依赖 HF 内部类。理由：HF `VJEPA2Model` 的 predictor 子结构未以独立可复用模块暴露；项目约束"训练代码尽量少改 facebookresearch/vjepa2"（spec §1.3 风险偏好），自建模块零侵入上游。
 
-新文件 `worldforge_train/model/predictor.py`：
+新文件 `worldfoundry_train/model/predictor.py`：
 
 ```python
 class JEPAPredictor(nn.Module):
@@ -284,7 +284,7 @@ target encoder 显式持有独立的 LoRA adapter 副本（~10MB），backbone �
 | `training_loop.py:51` `run_training_step` | 新增可选参数 `post_step_hook: Callable[[], None] | None = None`，在 `strategy.step(optimizer)`（`:76`）之后调用。EMA 更新挂这里 |
 | `training_loop.py:80` `run_training_loop` | 透传 `post_step_hook` 参数 |
 | `training_loop.py:32` `default_loss_fn` | **不改**，作为回退路径保留（§10.3） |
-| 新增 `jepa.py`（建议放 `worldforge_train/jepa_objective.py`） | `class JEPAObjective`：持有 predictor、target_encoder、ema_updater；方法 `loss_fn(model, batch) -> Tensor`（符合 LossFn 契约）与 `after_step() -> None`（EMA + momentum 步进）。单一聚合点，避免闭包散变量 |
+| 新增 `jepa.py`（建议放 `worldfoundry_train/jepa_objective.py`） | `class JEPAObjective`：持有 predictor、target_encoder、ema_updater；方法 `loss_fn(model, batch) -> Tensor`（符合 LossFn 契约）与 `after_step() -> None`（EMA + momentum 步进）。单一聚合点，避免闭包散变量 |
 
 ### 7.2 `trainer.py` 改造点
 
@@ -299,7 +299,7 @@ target encoder 显式持有独立的 LoRA adapter 副本（~10MB），backbone �
 ### 7.3 配置文件新增字段
 
 ```yaml
-# worldforge_train/configs/vjepa2_vitl_1.2b.yaml 追加：
+# worldfoundry_train/configs/vjepa2_vitl_1.2b.yaml 追加：
 
 jepa:
   enabled: true                # false = 回退到旧代理损失（feature flag, §10.3）
@@ -373,7 +373,7 @@ $$
 
 ## 9. 验证方案
 
-### 9.1 单元测试清单（新增 `worldforge_train/tests/`）
+### 9.1 单元测试清单（新增 `worldfoundry_train/tests/`）
 
 | 测试文件 | 用例 |
 |----------|------|
@@ -398,7 +398,7 @@ $$
 **Probing 对比指标**（冻结 encoder，线性/轻量探针）：
 
 1. **掩码重建余弦相似度**：held-out 视频上，predictor 输出与 target encoder 输出的 cosine（B 臂应显著高于 A 臂的随机水平）；
-2. **线性 probing 下游任务**：动作/场景分类线性头准确率（SSv2 子集或项目 eval 管线已有任务，见 `worldforge_inf/eval/`）；
+2. **线性 probing 下游任务**：动作/场景分类线性头准确率（SSv2 子集或项目 eval 管线已有任务，见 `worldfoundry_inf/eval/`）；
 3. **表征坍塌检查**：encoder 输出的 token 间方差 / 有效秩（effective rank）。A 臂预期方差持续走低（趋坍塌），B 臂应保持稳定——这是判别"学到东西 vs 恒等退化"的最直接信号；
 4. **k-NN 检索一致性**：同视频不同时段的表征 k-NN 命中率。
 
@@ -467,11 +467,11 @@ W22.1–W22.6 已落地（167 基线 + 46 新增 = 213 tests 全绿）。以下�
 
 ### ② FSDP gather 的瞬态开销大于设计估计（§5.4 修正）
 
-设计估"每步 allgather ~10MB bf16"。实现发现 FSDP1 的 FULL_STATE_DICT gather 会在**每 rank 瞬态物化全模型**（含 frozen backbone，ViT-L bf16 ~2.4GB/rank/EMA step），随后才按名过滤 LoRA 权重；FSDP1 无部分参数 gather API。v1 按设计指定机制保正确性（`EMAUpdater._online_f32`，`worldforge_train/model/ema.py`），缓解杆为 `ema_update_every > 1`，是否启用由 W22.7 的 NPU profile 决定。
+设计估"每步 allgather ~10MB bf16"。实现发现 FSDP1 的 FULL_STATE_DICT gather 会在**每 rank 瞬态物化全模型**（含 frozen backbone，ViT-L bf16 ~2.4GB/rank/EMA step），随后才按名过滤 LoRA 权重；FSDP1 无部分参数 gather API。v1 按设计指定机制保正确性（`EMAUpdater._online_f32`，`worldfoundry_train/model/ema.py`），缓解杆为 `ema_update_every > 1`，是否启用由 W22.7 的 NPU profile 决定。
 
 ### ③ predictor 梯度同步实现为策略装饰器（§8.1 挂点修正）
 
-设计建议 `_sync_predictor_grads` "挂在 `strategy.step` 路径旁"。实际 `training_loop` 在 backward 之后、`strategy.step` 之前没有注入点，故实现为 `PredictorGradSyncStrategy`（`worldforge_train/jepa_objective.py`）：装饰任意 inner strategy，在 `step()` 内对 predictor 梯度显式 `all_reduce(SUM)/world_size` 后委托。对 DDP 与 FSDP 两种 profile 统一成立（predictor 在两种 wrap 之外），单 rank 纯透传；`parallel/*` 零改动。grad_accum 下只在关窗 step 同步，且 predictor 梯度与 encoder 同样经 `1/grad_accum` 缩放 + 尾部 rescale，语义为窗口均值。
+设计建议 `_sync_predictor_grads` "挂在 `strategy.step` 路径旁"。实际 `training_loop` 在 backward 之后、`strategy.step` 之前没有注入点，故实现为 `PredictorGradSyncStrategy`（`worldfoundry_train/jepa_objective.py`）：装饰任意 inner strategy，在 `step()` 内对 predictor 梯度显式 `all_reduce(SUM)/world_size` 后委托。对 DDP 与 FSDP 两种 profile 统一成立（predictor 在两种 wrap 之外），单 rank 纯透传；`parallel/*` 零改动。grad_accum 下只在关窗 step 同步，且 predictor 梯度与 encoder 同样经 `1/grad_accum` 缩放 + 尾部 rescale，语义为窗口均值。
 
 附带实测约束（仅影响测试桩，生产 HF 路径天然满足）：torch 2.10 的 FSDP1 在无 accelerator 时需显式 `device_id=torch.device("cpu")`；且 FSDP 的 pre-backward hook 注册要求 forward 返回 dataclass/内建容器（HF `ModelOutput` 满足，裸 `SimpleNamespace` 会导致 hook 不注册、post-backward 状态断言失败）。
 
@@ -481,13 +481,13 @@ W22.1–W22.6 已落地（167 基线 + 46 新增 = 213 tests 全绿）。以下�
 
 | 主题 | 位置 |
 |------|------|
-| 现行代理损失 | `worldforge_train/training_loop.py:32-48` |
-| LossFn 契约 | `worldforge_train/training_loop.py:29` |
-| step/loop 改造点 | `worldforge_train/training_loop.py:51-77, 80-106` |
-| 训练编排改造点 | `worldforge_train/trainer.py:61-65, 129-144, 155-173, 205-210` |
-| LoRA 构建 | `worldforge_train/model/lora_wrapper.py:31-76` |
-| FSDP wrap / 手动 allreduce 分支 | `worldforge_train/parallel/fsdp.py:120-187, 232-248` |
-| checkpoint 改造点 | `worldforge_train/checkpoint.py:60-110, 121-162, 165-230, 233-259` |
-| batch 数据格式 | `worldforge_train/data/collator.py:11-40` |
-| mask 采样器 | `worldforge_train/data/tubelet_mask.py:15-55, 80-108` |
-| 推理侧（不变） | `worldforge_inf/vjepa2_worker.py:38-65` |
+| 现行代理损失 | `worldfoundry_train/training_loop.py:32-48` |
+| LossFn 契约 | `worldfoundry_train/training_loop.py:29` |
+| step/loop 改造点 | `worldfoundry_train/training_loop.py:51-77, 80-106` |
+| 训练编排改造点 | `worldfoundry_train/trainer.py:61-65, 129-144, 155-173, 205-210` |
+| LoRA 构建 | `worldfoundry_train/model/lora_wrapper.py:31-76` |
+| FSDP wrap / 手动 allreduce 分支 | `worldfoundry_train/parallel/fsdp.py:120-187, 232-248` |
+| checkpoint 改造点 | `worldfoundry_train/checkpoint.py:60-110, 121-162, 165-230, 233-259` |
+| batch 数据格式 | `worldfoundry_train/data/collator.py:11-40` |
+| mask 采样器 | `worldfoundry_train/data/tubelet_mask.py:15-55, 80-108` |
+| 推理侧（不变） | `worldfoundry_inf/vjepa2_worker.py:38-65` |

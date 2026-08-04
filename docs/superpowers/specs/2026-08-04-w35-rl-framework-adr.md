@@ -9,7 +9,7 @@
 
 ## 1. 背景与问题
 
-WorldForge Phase-4 需要在昇腾 NPU 上建立"以 V-JEPA 2 encoder + AC predictor 为 policy 底座"的仿真环境 RL 训练能力。当前 `worldforge_rl/` 为纯桩（113 行，无梯度更新、无环境、无算法；`train_ac.py:37-43`），`pyproject.toml:29` 声明了 `verl==0.5.0` 依赖但全库零集成。
+WorldFoundry Phase-4 需要在昇腾 NPU 上建立"以 V-JEPA 2 encoder + AC predictor 为 policy 底座"的仿真环境 RL 训练能力。当前 `worldfoundry_rl/` 为纯桩（113 行，无梯度更新、无环境、无算法；`train_ac.py:37-43`），`pyproject.toml:29` 声明了 `verl==0.5.0` 依赖但全库零集成。
 
 本决策回答一个问题：**Phase-4 的 RL 训练底座是自研、集成 verl，还是集成 RLinf？**
 
@@ -17,8 +17,8 @@ WorldForge Phase-4 需要在昇腾 NPU 上建立"以 V-JEPA 2 encoder + AC predi
 
 | # | 约束 | 来源 |
 |---|---|---|
-| C1 | 训练/推理必须运行于昇腾 NPU（Atlas 800 A2 / 910B×8；CANN 8.5.1 + torch_npu 2.9.0 + vllm-ascend 0.18.0） | `worldforge_common/npu_env.py:15-21` |
-| C2 | Policy 底座是自定义架构（HF `VJEPA2Model` encoder + 自研 AC predictor，W22/W32），不是标准 LLM/VLA | `worldforge_rl/actor.py:29-40`、W22 设计文档 |
+| C1 | 训练/推理必须运行于昇腾 NPU（Atlas 800 A2 / 910B×8；CANN 8.5.1 + torch_npu 2.9.0 + vllm-ascend 0.18.0） | `worldfoundry_common/npu_env.py:15-21` |
+| C2 | Policy 底座是自定义架构（HF `VJEPA2Model` encoder + 自研 AC predictor，W22/W32），不是标准 LLM/VLA | `worldfoundry_rl/actor.py:29-40`、W22 设计文档 |
 | C3 | 需要真实仿真环境接入（MuJoCo/SAPIEN/CARLA 级，G6） | 路线图 W30/W31 |
 | C4 | 需要 PPO 起步、GRPO 可扩展（G7） | 路线图 W34/W35 |
 | C5 | 训推一体编排（rollout 推理与 actor 训练的协同调度，G14） | 路线图 W28/W37 |
@@ -26,10 +26,10 @@ WorldForge Phase-4 需要在昇腾 NPU 上建立"以 V-JEPA 2 encoder + AC predi
 
 ### 关键生态事实（2026-08 调研，均经核实）
 
-**verl 的昇腾支持是一方深度适配，且版本矩阵与 WorldForge 完全对齐：**
+**verl 的昇腾支持是一方深度适配，且版本矩阵与 WorldFoundry 完全对齐：**
 - 昇腾团队原生合入 verl 社区：支持 **verl FSDP2 原生后端** + 新增 **MindSpeed-MM NPU 加速后端**（昇腾社区公告，2026-04）
 - verl 官方文档设 **Ascend 专章**（`verl.readthedocs.io/en/latest/ascend_tutorial/`），支持硬件含 Atlas 900 A2 POD / Atlas 800T A3 / 950 系列；2025-12 起 NPU 设备自动识别（[verl Ascend Install Guidance](https://verl.readthedocs.io/en/latest/ascend_tutorial/get_start/install_guidance.html)，2026-05-20 更新）
-- **版本对齐**：verl 昇腾配套为 vllm-ascend 0.18.0 + torch_npu 2.9.0——与 WorldForge 锁定矩阵逐项一致
+- **版本对齐**：verl 昇腾配套为 vllm-ascend 0.18.0 + torch_npu 2.9.0——与 WorldFoundry 锁定矩阵逐项一致
 - **Fully Async 特性已在昇腾验证可用**（main + v0.7.1 分支，性能提升 1.6–2.0×，2026-05）；Qwen2.5-32B DAPO、Qwen3.5 GRPO 有公开 NPU 调优实践
 - 局限：以 LLM/VLM reasoning RL 为主战场；多模态 omni RL 在昇腾仍处 RFC 阶段（[verl-omni #245](https://github.com/verl-project/verl-omni/issues/245)）；无具身仿真器生态
 
@@ -88,7 +88,7 @@ WorldForge Phase-4 需要在昇腾 NPU 上建立"以 V-JEPA 2 encoder + AC predi
 **对路线图的变更：**
 - W35 由"verl 集成评估与迁移"改为"RL 框架选型验证（本 ADR §6）"
 - W30 ADR 增加议题：异构混部集群形态（仿真节点 GPU/CPU 选型）
-- W37 范围扩大：RLinf（或 verl）与 worldforge 训练栈/推理服务的集成编排
+- W37 范围扩大：RLinf（或 verl）与 worldfoundry 训练栈/推理服务的集成编排
 
 ## 6. 验证门（W35 执行清单）
 
