@@ -1,0 +1,26 @@
+{
+  "label": "w22_7 arm a dry-run (CPU; not a hardware baseline)",
+  "arm": "a",
+  "mode": "dry",
+  "jepa_enabled": false,
+  "optimizer_steps": 12,
+  "wall_time_s": 11.1016,
+  "avg_step_s": 0.925134,
+  "timing": {},
+  "target_forward_fraction": null,
+  "ema_fraction": null,
+  "loss_curve": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ]
+}

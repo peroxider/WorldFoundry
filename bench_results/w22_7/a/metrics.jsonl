@@ -1,0 +1,3 @@
+{"step": 4, "arm": "a", "token_variance": 0.9948459267616272, "effective_rank": 61.61921123078361, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": -0.015536729246377945}
+{"step": 8, "arm": "a", "token_variance": 0.9948459267616272, "effective_rank": 61.61921123078361, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": -0.015536729246377945}
+{"step": 12, "arm": "a", "token_variance": 0.9948459267616272, "effective_rank": 61.61921123078361, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": -0.015536729246377945}

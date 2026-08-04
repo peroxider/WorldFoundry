@@ -175,7 +175,7 @@ FastAPI 服务三端点，均有 HMAC 鉴权、adapter 路由、批处理骨架�
 | W32 | AC latent-action head 实现（替换 actor passthrough）：encoder latent + action → 下一 latent | G8（T2c 侧） | 单测 + 离线数据预训练收敛 |
 | W33 | plan 端点接入 AC predictor（Phase-2 W4 遗留项收口） | G8, G10（I2b） | `/v1/world/plan` 返回动作条件下的真实预测 latent |
 | W34 | PPO 训练器落地：rollout 收集 → advantage 估计 → 梯度更新闭环（先自研最小实现，验证正确性） | G7 | 仿真任务上 reward 曲线上升 |
-| W35 | verl 集成评估与迁移（替换或共存自研 PPO；GRPO 支持评估） | G7 | verl 路径 reward 曲线与 W34 对齐 |
+| W35 | RL 框架选型验证（verl vs RLinf vs 自研，按 ADR-W35 执行验证门 W35.1–W35.4）：首选 RLinf（仿真器生态 + 训推编排），verl 为备选（昇腾一方适配最深），自研 PPO（W34）为基线 | G6, G7, G14 | 验证门通过，框架决策生效；详见 `docs/superpowers/specs/2026-08-04-w35-rl-framework-adr.md` |
 | W36 | Reward model / 任务奖励接口定义（含从世界模型 latent 距离构造 intrinsic reward 的选项） | G9 | reward 接口文档 + 至少 1 个任务的 reward 实现 |
 | W37 | RL 训练与主训练栈集成：共用 checkpoint/LoRA 体系、ActorPool/EnvPool/LearnerPool 编排（按设计文档 §RL 架构图落地） | G7, G14 | 分布式 RL 训练 smoke 通过 |
 | W38 | 世界模型辅助 RL（model-based）：用 predictor 做 imagination rollout 降低真实仿真步数 | G8, G7 | 样本效率对照实验报告 |

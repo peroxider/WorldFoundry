@@ -1,0 +1,55 @@
+{
+  "arm": "a",
+  "verdict": "GO",
+  "n_steps": 30,
+  "checks": [
+    {
+      "name": "numeric_health",
+      "status": "pass",
+      "evidence": {
+        "finite": true,
+        "n_steps": 30,
+        "first_loss": 0.0,
+        "last_loss": 0.0
+      },
+      "action": ""
+    },
+    {
+      "name": "loss_decreasing",
+      "status": "warn",
+      "evidence": {
+        "first_window_median": 0.0,
+        "last_window_median": 0.0
+      },
+      "action": "pilot 短跑 loss 未下降；正式跑前确认 lr/warmup，非阻塞"
+    },
+    {
+      "name": "memory_growth",
+      "status": "pass",
+      "evidence": {
+        "memory_source": "cpu_rss_peak",
+        "first_window_median_mb": 751.34,
+        "last_window_median_mb": 751.34,
+        "relative_growth": 0.0,
+        "last_window_slope_mb_per_step": 0.0189,
+        "tolerances": {
+          "rel_growth": 0.1,
+          "rel_slope_per_step": 0.001
+        }
+      },
+      "action": ""
+    },
+    {
+      "name": "throughput_stability",
+      "status": "pass",
+      "evidence": {
+        "first_window_median_s": 0.450216,
+        "last_window_median_s": 0.451574,
+        "last_window_cv": 0.0599,
+        "degrade_factor": 1.5
+      },
+      "action": ""
+    }
+  ],
+  "summary": "全部硬门槛通过；警告项见 checks"
+}

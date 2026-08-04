@@ -1,0 +1,61 @@
+model:
+  hf_repo: facebook/vjepa2-vitl-1.2b
+  bf16: true
+  gradient_checkpointing: true
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+
+training:
+  parallel: ddp          # ddp | fsdp
+  per_device_batch: 2
+  grad_accum: 8
+  epochs: 1
+  lr: 1.0e-4
+  warmup_steps: 100
+  log_every_n: 10
+  save_every_n: 500
+
+data:
+  manifest: /data/videomix22m/manifest.csv
+  mask_tubelet_size: [2, 14, 14]
+  mask_ratio: 0.75
+
+# W22: true JEPA objective (predictor + EMA target encoder), replacing the
+# self-distillation proxy loss. enabled: false == byte-for-byte legacy
+# behavior. Env override WORLDFORGE_JEPA=off forces the legacy path
+# regardless of this flag (production fast rollback; env > yaml).
+jepa:
+  enabled: true
+
+  predictor:
+    embed_dim: 384             # official vitl pred_embed_dim
+    depth: 12                  # official pred_depth
+    num_heads: 12
+    mlp_ratio: 4.0
+    lr_scale: 1.0              # multiplier on training.lr for the predictor group
+
+  ema:
+    momentum_start: 0.996      # I-JEPA/V-JEPA convention
+    momentum_end: 1.0
+    schedule: cosine           # cosine | constant
+    schedule_steps: null       # null = total optimizer steps (ceil(micro/grad_accum))
+    update_every: 1            # every k optimizer steps; m compensated as m^k
+
+  loss:
+    type: smooth_l1            # smooth_l1 | l1 | cosine
+    beta: 1.0                  # Huber beta for smooth_l1
+    num_masks: 1               # >1 needs the multi-mask data pipeline (W23+)
+
+# Optional: quantize the baseline weights before training (W18+).
+# Requires `worldforge_inf` and a saved local model dir in `source_dir`.
+# Leave this block commented out to train on the bf16 baseline directly.
+#
+# quant:
+#   type: fake             # or "w8a8" (Atlas-only, requires msmodelslim==26.1.0)
+#   source_dir: /data/vjepa2-vitl-1.2b          # local saved-HF dir (NOT a HF Hub ID)
+#   output_dir: /data/vjepa2-vitl-1.2b-fake     # quantize_model writes here
+#   calibration_dataset: videomix22m-512          # optional

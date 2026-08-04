@@ -57,6 +57,62 @@ class LoraSignature:
         )
 
 
+@dataclass(frozen=True)
+class JEPASignature:
+    """Architectural signature of a JEPA objective (W22, design §7.4).
+
+    All fields are architecture-identifying: a mismatch means the checkpoint's
+    predictor/EMA state cannot be loaded into the current objective, so
+    validate_jepa_signature() raises ValueError (same semantics as
+    validate_lora_signature). Non-architectural hyperparams (EMA momentum
+    endpoints, loss beta) are deliberately NOT part of the signature.
+    """
+    pred_dim: int
+    pred_depth: int
+    pred_heads: int
+    encoder_dim: int
+    ema_schedule: str
+    loss_type: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "pred_dim": self.pred_dim,
+            "pred_depth": self.pred_depth,
+            "pred_heads": self.pred_heads,
+            "encoder_dim": self.encoder_dim,
+            "ema_schedule": self.ema_schedule,
+            "loss_type": self.loss_type,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "JEPASignature":
+        return cls(
+            pred_dim=int(d["pred_dim"]),
+            pred_depth=int(d["pred_depth"]),
+            pred_heads=int(d["pred_heads"]),
+            encoder_dim=int(d["encoder_dim"]),
+            ema_schedule=str(d["ema_schedule"]),
+            loss_type=str(d["loss_type"]),
+        )
+
+
+def validate_jepa_signature(
+    ckpt_signature: dict[str, Any] | None,
+    current: JEPASignature,
+) -> None:
+    """Raise ValueError if any architectural JEPA field differs (§7.4)."""
+    if ckpt_signature is None:
+        return
+    for key, current_val in current.to_dict().items():
+        ckpt_val = ckpt_signature.get(key)
+        if ckpt_val != current_val:
+            raise ValueError(
+                f"checkpoint jepa_signature.{key}={ckpt_val!r} does not match "
+                f"current cfg={current_val!r}. Use the same JEPA architecture "
+                f"to resume."
+            )
+
+
 _REQUIRED_KEYS: tuple[str, ...] = (
     "step",
     "model_state",
@@ -64,6 +120,15 @@ _REQUIRED_KEYS: tuple[str, ...] = (
     "rng_state_torch",
     "rng_state_numpy",
     "lora_signature",
+)
+
+# W22 (design §7.4): all JEPA keys are optional; old W16 checkpoints without
+# them stay loadable when jepa.enabled=false.
+_OPTIONAL_JEPA_KEYS: tuple[str, ...] = (
+    "predictor_state",
+    "ema_state",
+    "ema_step",
+    "jepa_signature",
 )
 
 
@@ -118,6 +183,22 @@ def _atomic_save(payload: dict[str, Any], path: Path) -> None:
     os.replace(tmp, path)
 
 
+def _cpu_clone_tree(obj: Any) -> Any:
+    """Recursively detach/clone tensors onto CPU (checkpoint portability).
+
+    Used for the optional W22 JEPA payload: the predictor state_dict holds
+    references to live params and the fp32 EMA master may live on an
+    accelerator; both must be snapshotted before torch.save.
+    """
+    if isinstance(obj, torch.Tensor):
+        return obj.detach().cpu().clone()
+    if isinstance(obj, dict):
+        return {k: _cpu_clone_tree(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_cpu_clone_tree(v) for v in obj]
+    return obj
+
+
 def save_checkpoint(
     path: str | Path,
     model: nn.Module,
@@ -125,11 +206,17 @@ def save_checkpoint(
     step: int,
     *,
     lora_signature: LoraSignature | None = None,
+    jepa_objective: Any | None = None,
 ) -> Path:
     """Save trainable model state + optimizer state + RNG + step to .pt.
 
     On multi-rank FSDP only rank 0 performs the disk write; other ranks return
     the resolved path without writing. Parent directories are created.
+
+    ``jepa_objective`` (W22, optional): when given, the JEPA payload keys
+    (``predictor_state`` / ``ema_state`` / ``ema_step`` / ``jepa_signature``,
+    see ``_OPTIONAL_JEPA_KEYS``) are added. The predictor never participates
+    in FSDP (design §8.1), so its state_dict needs no FULL_STATE_DICT path.
 
     Returns the resolved path.
     """
@@ -154,6 +241,13 @@ def save_checkpoint(
         "lora_signature": lora_signature.to_dict() if lora_signature else None,
     }
 
+    if jepa_objective is not None:
+        jepa_state = jepa_objective.state_dict()
+        payload["predictor_state"] = _cpu_clone_tree(jepa_state["predictor_state"])
+        payload["ema_state"] = _cpu_clone_tree(jepa_state["ema_state"])
+        payload["ema_step"] = int(jepa_state["ema_step"])
+        payload["jepa_signature"] = dict(jepa_state["jepa_signature"])
+
     if world_size > 1 and _is_fsdp_module(model) and rank != 0:
         return path
 
@@ -168,14 +262,23 @@ def load_checkpoint(
     optimizer: Optimizer,
     *,
     map_location: str | torch.device = "cpu",
+    jepa_objective: Any | None = None,
 ) -> dict[str, Any]:
     """Load .pt, restore trainable params + optimizer + RNG. Returns {step, lora_signature}.
+
+    ``jepa_objective`` (W22, optional): when given, the checkpoint MUST carry
+    the JEPA payload keys — a pre-W22 checkpoint raises KeyError telling the
+    caller to disable jepa.enabled or train from scratch (design §7.4). The
+    stored ``jepa_signature`` is validated against the live objective
+    (architectural mismatch -> ValueError) before any state is restored.
 
     Raises:
         FileNotFoundError: path doesn't exist.
         IOError: torch.load fails (corrupted file / wrong format).
-        KeyError: payload missing required keys.
+        KeyError: payload missing required keys (or JEPA keys when a
+            jepa_objective is supplied).
         RuntimeError: model param not found (LoRA config changed) or shape mismatch.
+        ValueError: jepa_signature architectural mismatch.
     """
     path = Path(path)
     if not path.is_file():
@@ -189,6 +292,19 @@ def load_checkpoint(
     missing = [k for k in _REQUIRED_KEYS if k not in payload]
     if missing:
         raise KeyError(f"checkpoint {path} missing keys: {missing}")
+
+    if jepa_objective is not None:
+        jepa_missing = [k for k in _OPTIONAL_JEPA_KEYS if k not in payload]
+        if jepa_missing:
+            raise KeyError(
+                f"checkpoint {path} does not contain JEPA state "
+                f"(missing {jepa_missing}); this checkpoint predates W22 — "
+                f"disable jepa.enabled or train from scratch."
+            )
+        validate_jepa_signature(
+            payload["jepa_signature"],
+            JEPASignature.from_dict(jepa_objective.signature()),
+        )
 
     model_state: dict[str, torch.Tensor] = payload["model_state"]
 
@@ -224,10 +340,19 @@ def load_checkpoint(
     torch.set_rng_state(payload["rng_state_torch"])
     np.random.set_state(payload["rng_state_numpy"])
 
-    return {
+    if jepa_objective is not None:
+        jepa_objective.load_state_dict({
+            "predictor_state": payload["predictor_state"],
+            "ema_state": payload["ema_state"],
+        })
+
+    result = {
         "step": int(payload["step"]),
         "lora_signature": payload.get("lora_signature"),
     }
+    if "ema_step" in payload:
+        result["ema_step"] = int(payload["ema_step"])
+    return result
 
 
 def validate_lora_signature(

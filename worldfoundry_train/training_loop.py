@@ -55,8 +55,13 @@ def run_training_step(
     strategy: DistributedStrategy,
     optimizer: Optimizer,
     loss_fn: LossFn | None = None,
+    post_step_hook: Callable[[], None] | None = None,
 ) -> float:
     """One training step: forward + loss + strategy.backward(loss) + optimizer.step().
+
+    ``post_step_hook`` (if given) is invoked immediately after
+    ``strategy.step(optimizer)`` — i.e. once per optimizer step, after the
+    weights have moved. This is where the JEPA EMA update hooks in (W22).
 
     Returns the scalar loss value as a Python float for logging/assertions.
 
@@ -75,6 +80,8 @@ def run_training_step(
         )
     strategy.backward(loss)
     strategy.step(optimizer)
+    if post_step_hook is not None:
+        post_step_hook()
     return float(loss.detach().item())
 
 
@@ -106,6 +113,7 @@ def run_training_loop(
     loss_fn: LossFn | None = None,
     step_callback: Callable[[int, float], None] | None = None,
     grad_accum: int = 1,
+    post_step_hook: Callable[[], None] | None = None,
 ) -> list[float]:
     """Run ``num_steps`` micro-batch steps with gradient accumulation.
 
@@ -121,6 +129,13 @@ def run_training_loop(
     DDP/FSDP skip cross-rank gradient sync until the window closes.
     Strategies without sync suppression fall back to a null context
     (correct, just extra sync traffic).
+
+    ``post_step_hook`` semantics: invoked immediately after every
+    ``strategy.step(optimizer)`` — exactly once per optimizer step (never
+    per micro-batch), including the flushed tail window — and BEFORE
+    ``step_callback``, so checkpointing inside ``step_callback`` observes
+    post-hook state (W22: this is where the JEPA EMA update lives, and EMA
+    state must already be advanced when a checkpoint is written).
 
     ``step_callback`` semantics: called only on optimizer steps as
     ``step_callback(optimizer_step_no, window_mean_loss)`` with a 1-indexed
@@ -166,6 +181,8 @@ def run_training_loop(
             if window_size < grad_accum:
                 _rescale_grads(optimizer, grad_accum / window_size)
             strategy.step(optimizer)
+            if post_step_hook is not None:
+                post_step_hook()
             optimizer_step += 1
             window_mean = sum(window_losses) / window_size
             losses.append(window_mean)
