@@ -14,7 +14,7 @@ echo "==== Phase-1 AC finetuning ===="
 echo "model:    $MODEL_PATH"
 echo "manifest: $MANIFEST"
 
-python -m worldforge_rl.train_ac \
+python -m worldfoundry_rl.train_ac \
     --model "$MODEL_PATH" \
     --manifest "$MANIFEST" \
     --epochs "${WORLDFORGE_AC_EPOCHS:-100}" \

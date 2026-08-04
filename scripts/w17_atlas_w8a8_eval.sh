@@ -4,7 +4,7 @@
 # Usage:
 #     bash scripts/w17_atlas_w8a8_eval.sh
 #
-# Runs in worldforge-base:phase1 Docker container on Atlas 8x NPU host.
+# Runs in worldfoundry-base:phase1 Docker container on Atlas 8x NPU host.
 # Produces docs/superpowers/specs/W11_W12_QUANT_REPORT.md populated with
 # measured metrics + GO/NO-GO verdict.
 #
@@ -50,7 +50,7 @@ run_w17() {
 
     # Step 1: W8A8 quantize
     run_step "QUANTIZE: bf16 -> W8A8" "w17-quantize" \
-        python -m worldforge_inf.compile.quantize \
+        python -m worldfoundry_inf.compile.quantize \
             "$MODEL_DIR" "$OUTPUT_DIR" \
             --quant-type w8a8 \
             --calibration-dataset videomix22m-512 || return $?
@@ -60,7 +60,7 @@ run_w17() {
         python -c "
 from pathlib import Path
 import json
-from worldforge_inf.eval.quant_eval import cosine_similarity
+from worldfoundry_inf.eval.quant_eval import cosine_similarity
 report = cosine_similarity(
     baseline_path=Path('$MODEL_DIR'),
     quantized_path=Path('$OUTPUT_DIR'),
@@ -92,7 +92,7 @@ else
         -v "$ROOT:/workspace" -v /data:/data \
         -e WORLDFORGE_QUANT_MODEL="$MODEL_DIR" \
         -e WORLDFORGE_QUANT_OUTPUT="$OUTPUT_DIR" \
-        worldforge-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_w17) && run_w17"
+        worldfoundry-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_w17) && run_w17"
 fi
 
 # Step 3: report populate (separate Python script — see T2)
