@@ -48,7 +48,7 @@ def test_preflight_fails_on_missing_torch_npu(w17_preflight, monkeypatch):
 def test_preflight_fails_on_missing_msmodelslim(w17_preflight, monkeypatch):
     monkeypatch.setattr(w17_preflight, "_have_torch_npu", lambda: (True, ""))
     monkeypatch.setattr(w17_preflight, "_have_msmodelslim",
-                        lambda: (False, "pip install worldforge[quant]"))
+                        lambda: (False, "pip install worldfoundry[quant]"))
     monkeypatch.setattr(w17_preflight, "_have_weights", lambda: (True, ""))
     monkeypatch.setattr(w17_preflight, "_have_cann_driver", lambda: (True, ""))
     ok, failures = w17_preflight.preflight()

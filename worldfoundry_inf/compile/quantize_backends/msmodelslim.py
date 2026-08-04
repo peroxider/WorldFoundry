@@ -31,7 +31,7 @@ except ImportError:  # pragma: no cover - environment dependent
 
 _INSTALL_HINT = (
     "W8A8 quantization requires msModelSlim, which is not installed. "
-    "Run: pip install worldforge[quant]"
+    "Run: pip install worldfoundry[quant]"
 )
 
 SUPPORTED_CALIBRATION_DATASETS = ("videomix22m-512",)

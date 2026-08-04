@@ -4,7 +4,7 @@ Run with: WORLDFORGE_RUN_QUANT_E2E=1 pytest worldfoundry_inf/tests/test_quant_in
 
 Requires:
 - torch_npu installed + NPU available
-- msmodelslim installed (worldforge[quant])
+- msmodelslim installed (worldfoundry[quant])
 - V-JEPA 2 vitl-1.2b weights downloaded to models/vjepa2-vitl-1.2b/
 
 Uses a smaller surrogate ViT (facebook/dino-vits8, ~5M params) for CI;

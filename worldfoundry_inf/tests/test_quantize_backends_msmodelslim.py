@@ -149,7 +149,7 @@ def test_w8a8_backend_raises_actionable_error_when_msmodelslim_absent(tmp_path):
 
     with patch.object(ms_mod, "_MSMODELSLIM_AVAILABLE", False):
         backend = ms_mod.W8A8Backend()
-        with pytest.raises(ImportError, match=r"pip install worldforge\[quant\]"):
+        with pytest.raises(ImportError, match=r"pip install worldfoundry\[quant\]"):
             backend.quantize(src, out, calibration_dataset=None)
 
 

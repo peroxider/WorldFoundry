@@ -50,7 +50,7 @@ def test_facade_backend_unavailable_raises_import_error():
     out = Path("/fake/w8a8")
     with patch(
         "worldfoundry_inf.compile.quantize.backend_available",
-        return_value=(False, "pip install worldforge[quant]"),
+        return_value=(False, "pip install worldfoundry[quant]"),
     ):
-        with pytest.raises(ImportError, match="pip install worldforge\\[quant\\]"):
+        with pytest.raises(ImportError, match="pip install worldfoundry\\[quant\\]"):
             quantize_model(src, out, quant_type="w8a8")

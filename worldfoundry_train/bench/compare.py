@@ -52,7 +52,7 @@ def _missing_file_report(eval_path: Path) -> str:
         "## 决策\n\n"
         "- **保留 FSDP** 作为生产 trainer（`select_strategy(\"train\")` 默认）\n"
         "- **Tasks 8/9 跳过** per plan §7 decision gate\n"
-        "- **重新打开路径**：在真实 Atlas 800 A2 / 910B × 8 + `worldforge-base:phase1` 容器内重跑 "
+        "- **重新打开路径**：在真实 Atlas 800 A2 / 910B × 8 + `worldfoundry-base:phase1` 容器内重跑 "
         "`bash scripts/w9_eval.sh`，让 MM bench 有机会产出 JSON；结果会覆盖本报告。\n\n"
         "## 失败项\n\n"
         f"- `{eval_path}` 缺失（MM stub 在 `wrap()` 阶段 raise `NotImplementedError`，未产生 JSON）\n"
