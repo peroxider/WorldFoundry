@@ -97,17 +97,36 @@ def _tiny_vjepa2():
     return VJEPA2Model(cfg)
 
 
-def _dry_batch(i: int) -> dict[str, torch.Tensor]:
-    """Deterministic per-index batch — identical sequence across arms."""
+def _dry_batch(i: int, num_masks: int = 1) -> dict[str, torch.Tensor]:
+    """Deterministic per-index batch — identical sequence across arms.
+
+    ``num_masks=1`` (the W22.7 default) emits only ``bool_masked_pos`` and is
+    byte-for-byte equivalent to the pre-W22.8 batch. ``num_masks>1`` also
+    emits ``bool_masked_pos_k`` so the W22.8 K>1 dispatch in
+    ``JEPAObjective.loss_fn`` is actually exercised end-to-end; mask 0 of
+    ``bool_masked_pos_k`` equals the K=1 ``bool_masked_pos``.
+    """
     rng = np.random.default_rng(i)
-    return {
+    bool_masked_pos = torch.from_numpy(
+        rng.integers(0, 2, size=(1, DRY_N), dtype=bool)
+    )
+    batch: dict[str, torch.Tensor] = {
         "pixel_values_videos": torch.from_numpy(
             rng.random((1, 1, 3, 224, 224), dtype=np.float32)
         ),
-        "bool_masked_pos": torch.from_numpy(
-            rng.integers(0, 2, size=(1, DRY_N), dtype=bool)
-        ),
+        "bool_masked_pos": bool_masked_pos,
     }
+    if num_masks > 1:
+        # Draw K-1 additional independent masks from the same per-step rng;
+        # the first mask is reused so the K=1 path would have produced the
+        # same mask[0] given the same rng state.
+        masks = [bool_masked_pos]
+        for _ in range(num_masks - 1):
+            masks.append(torch.from_numpy(
+                rng.integers(0, 2, size=(1, DRY_N), dtype=bool)
+            ))
+        batch["bool_masked_pos_k"] = torch.stack(masks, dim=1)  # (1, K, N)
+    return batch
 
 
 class _DryDataset:
@@ -127,7 +146,7 @@ class _DryDataset:
         }
 
 
-def _dry_cfg(arm: str) -> dict:
+def _dry_cfg(arm: str, num_masks: int = 1) -> dict:
     cfg = {
         "data": {"manifest": "/dry", "mask_tubelet_size": [1, 14, 14],
                  "mask_ratio": 0.5 if arm != "c" else 0.0},
@@ -142,7 +161,7 @@ def _dry_cfg(arm: str) -> dict:
             "ema": {"momentum_start": 0.9, "momentum_end": 0.99,
                     "schedule": "cosine", "schedule_steps": None,
                     "update_every": 1},
-            "loss": {"type": "smooth_l1", "beta": 1.0, "num_masks": 1},
+            "loss": {"type": "smooth_l1", "beta": 1.0, "num_masks": num_masks},
         })
     return cfg
 
@@ -284,7 +303,8 @@ class _StepProbe:
         self.mem_mb.append(self.sample_mem())
 
 
-def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str) -> dict:
+def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str,
+                  num_masks: int = 1) -> dict:
     """Short pilot run + early-stop verdict. Returns the verdict dict.
 
     Artifacts go to <out_dir>/<arm>/pilot/ so formal-run artifacts are never
@@ -313,11 +333,11 @@ def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str) -> dict:
     probe = _StepProbe()
     try:
         if backend == "dry":
-            cfg = _dry_cfg(arm)
+            cfg = _dry_cfg(arm, num_masks=num_masks)
             trainer_mod._build_dataset = lambda c: _DryDataset()
             run_kwargs: dict = dict(
                 base_model=_tiny_vjepa2(), num_steps=steps,
-                batch_fn=_dry_batch,
+                batch_fn=lambda i: _dry_batch(i, num_masks=num_masks),
             )
         else:
             import yaml
@@ -444,12 +464,13 @@ def _restore_for_probing(arm: str, ckpt: Path, cfg: dict):
     return model, objective
 
 
-def run_arm_dry(arm: str, out_dir: Path, steps: int, save_every_n: int) -> dict:
+def run_arm_dry(arm: str, out_dir: Path, steps: int, save_every_n: int,
+                num_masks: int = 1) -> dict:
     import worldfoundry_train.trainer as trainer_mod
 
     torch.manual_seed(SEED)
     np.random.seed(SEED)
-    cfg = _dry_cfg(arm)
+    cfg = _dry_cfg(arm, num_masks=num_masks)
 
     captured: list[JEPAObjective] = []
     original_cls = trainer_mod.JEPAObjective.from_online_model
@@ -467,7 +488,8 @@ def run_arm_dry(arm: str, out_dir: Path, steps: int, save_every_n: int) -> dict:
         t0 = time.perf_counter()
         losses = run_training(
             cfg, FSDPStrategy(), base_model=_tiny_vjepa2(),
-            num_steps=steps, batch_fn=_dry_batch,
+            num_steps=steps,
+            batch_fn=lambda i: _dry_batch(i, num_masks=num_masks),
             logger=lambda s, _loss: None,
             checkpoint_dir=ckpt_dir, save_every_n=save_every_n,
         )
@@ -580,11 +602,14 @@ def main() -> int:
                          "W22_7_PILOT_STEPS=200 atlas / 40 dry; atlas default = cfg epochs)")
     ap.add_argument("--save-every-n", type=int, default=0)
     ap.add_argument("--out", type=Path, default=Path("bench_results/w22_7"))
+    ap.add_argument("--num-masks", type=int, default=1,
+                    help="jepa.loss.num_masks for B/C arms in dry mode (W22.8; "
+                         "default 1 preserves the W22.7 byte-for-byte behaviour)")
     args = ap.parse_args()
 
     if args.mode == "dry":
         run_arm_dry(args.arm, args.out, args.steps or 12,
-                    args.save_every_n or 4)
+                    args.save_every_n or 4, num_masks=args.num_masks)
     elif args.mode == "pilot":
         backend = args.backend or "atlas"
         default_steps = int(os.environ.get(
@@ -592,7 +617,8 @@ def main() -> int:
             str(DEFAULT_PILOT_STEPS_ATLAS if backend == "atlas"
                 else DEFAULT_PILOT_STEPS_DRY)))
         verdict = run_arm_pilot(args.arm, args.out,
-                                args.steps or default_steps, backend)
+                                args.steps or default_steps, backend,
+                                num_masks=args.num_masks)
         return 0 if verdict["verdict"] == "GO" else 3
     else:
         default_cfg = default_arm_config(args.arm)

@@ -1,0 +1,10 @@
+{"step": 4, "arm": "b", "token_variance": 0.9948399662971497, "effective_rank": 61.62150836507954, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.02001205086708069}
+{"step": 8, "arm": "b", "token_variance": 0.9948341846466064, "effective_rank": 61.62320308717243, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.022192256525158882}
+{"step": 12, "arm": "b", "token_variance": 0.9948280453681946, "effective_rank": 61.621342402698765, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.018985308706760406}
+{"step": 16, "arm": "b", "token_variance": 0.9948182702064514, "effective_rank": 61.61474517682614, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.01908508688211441}
+{"step": 20, "arm": "b", "token_variance": 0.9948071837425232, "effective_rank": 61.60339835215136, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.021163716912269592}
+{"step": 24, "arm": "b", "token_variance": 0.994797945022583, "effective_rank": 61.59109508584278, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.02189701236784458}
+{"step": 28, "arm": "b", "token_variance": 0.9947904944419861, "effective_rank": 61.57038555976184, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.020791610702872276}
+{"step": 32, "arm": "b", "token_variance": 0.9947904944419861, "effective_rank": 61.58061303191791, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.018458494916558266}
+{"step": 36, "arm": "b", "token_variance": 0.9947929382324219, "effective_rank": 61.5927504244588, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.016520768404006958}
+{"step": 40, "arm": "b", "token_variance": 0.9947939515113831, "effective_rank": 61.59876792402688, "linear_probe_acc": 1.0, "knn_hit_rate": 1.0, "recon_cosine": 0.01580529659986496}
