@@ -10,7 +10,7 @@
 
 ## 0. 摘要（TL;DR）
 
-WorldForge 当前是 **"昇腾上的 V-JEPA 2 编码器微调 + 特征服务平台" Phase-1 原型**（部分 Phase-2 W9–W19 已落地）。昇腾工程骨架扎实（版本锁定、HCCL、vLLM-Ascend 插件、量化链路），微调在 CPU 路径完整闭环；但对照"JEPA2 训推一体"四象限目标：
+WorldFoundry 当前是 **"昇腾上的 V-JEPA 2 编码器微调 + 特征服务平台" Phase-1 原型**（部分 Phase-2 W9–W19 已落地）。昇腾工程骨架扎实（版本锁定、HCCL、vLLM-Ascend 插件、量化链路），微调在 CPU 路径完整闭环；但对照"JEPA2 训推一体"四象限目标：
 
 | 能力象限 | 现状评级 | 一句话 |
 |---|---|---|
@@ -53,37 +53,37 @@ WorldForge 当前是 **"昇腾上的 V-JEPA 2 编码器微调 + 特征服务平�
 
 | 组件 | 状态 | 证据 |
 |---|---|---|
-| 版本锁定 | ✅ CANN 8.5.1 + torch_npu 2.9.0 + vllm-ascend 0.18.0 + transformers 4.55.0 | `worldforge_common/npu_env.py:15-21`、`docker/worldforge-base/Dockerfile:1-4` |
-| Docker 镜像 | ✅ Ascend 基础镜像 | `docker/worldforge-base/Dockerfile:4` |
-| 设备探测/分布式 | ✅ `is_npu_available()` / `init_distributed(backend="hccl")`，CPU 降级 gloo + warning | `worldforge_common/npu_env.py:63-103` |
-| FSDP/DDP | ✅ HCCL 分支 + `torch.npu.set_device` | `worldforge_train/parallel/fsdp.py:42-50`、`parallel/ddp.py:27-29` |
-| vLLM-Ascend 插件 | ⚠️ 结构完整，Atlas 上机验证 deferred（W19b） | `worldforge_inf/_vllm_ascend_plugin.py:37-71`、`vllm_ascend_worker.py:20-22` |
-| 量化 | ⚠️ msmodelslim W8A8 后端 + W17 验证脚本齐备，需真实硬件执行；W4A8 deferred | `worldforge_inf/compile/quantize_backends/msmodelslim.py`、`scripts/w17_atlas_w8a8_eval.sh` |
-| 数据解码 | ⚠️ DVPP 硬件解码为 stub，`_dvpp_available()` 恒 False，走 decord CPU 兜底 | `worldforge_train/data/video_source.py:16,38-44` |
-| MindSpeed | ❌ W9 评估 NO-GO，`MMStrategy` 为 NotImplementedError 桩 | `docs/superpowers/specs/W9_EVAL_REPORT.md:5`、`worldforge_train/parallel/mindspeed.py:12-25` |
-| MindIE-SD 编译 | ❌ `compile_to_om` 只写占位 .om | `worldforge_inf/compile/mindie_sd.py:1-8` |
+| 版本锁定 | ✅ CANN 8.5.1 + torch_npu 2.9.0 + vllm-ascend 0.18.0 + transformers 4.55.0 | `worldfoundry_common/npu_env.py:15-21`、`docker/worldfoundry-base/Dockerfile:1-4` |
+| Docker 镜像 | ✅ Ascend 基础镜像 | `docker/worldfoundry-base/Dockerfile:4` |
+| 设备探测/分布式 | ✅ `is_npu_available()` / `init_distributed(backend="hccl")`，CPU 降级 gloo + warning | `worldfoundry_common/npu_env.py:63-103` |
+| FSDP/DDP | ✅ HCCL 分支 + `torch.npu.set_device` | `worldfoundry_train/parallel/fsdp.py:42-50`、`parallel/ddp.py:27-29` |
+| vLLM-Ascend 插件 | ⚠️ 结构完整，Atlas 上机验证 deferred（W19b） | `worldfoundry_inf/_vllm_ascend_plugin.py:37-71`、`vllm_ascend_worker.py:20-22` |
+| 量化 | ⚠️ msmodelslim W8A8 后端 + W17 验证脚本齐备，需真实硬件执行；W4A8 deferred | `worldfoundry_inf/compile/quantize_backends/msmodelslim.py`、`scripts/w17_atlas_w8a8_eval.sh` |
+| 数据解码 | ⚠️ DVPP 硬件解码为 stub，`_dvpp_available()` 恒 False，走 decord CPU 兜底 | `worldfoundry_train/data/video_source.py:16,38-44` |
+| MindSpeed | ❌ W9 评估 NO-GO，`MMStrategy` 为 NotImplementedError 桩 | `docs/superpowers/specs/W9_EVAL_REPORT.md:5`、`worldfoundry_train/parallel/mindspeed.py:12-25` |
+| MindIE-SD 编译 | ❌ `compile_to_om` 只写占位 .om | `worldfoundry_inf/compile/mindie_sd.py:1-8` |
 
-**关键缺口（H1）**：`worldforge_train/trainer.py:129-144` 中模型经 `AutoModel.from_pretrained` 加载后**没有任何 `.to("npu")` 设备迁移**；现有训练测试全部走 CPU/gloo（trainer docstring 自述 "CPU-runnable"）。NPU 分布式原语齐了，端到端"模型上 NPU 训练"链路未闭合。
+**关键缺口（H1）**：`worldfoundry_train/trainer.py:129-144` 中模型经 `AutoModel.from_pretrained` 加载后**没有任何 `.to("npu")` 设备迁移**；现有训练测试全部走 CPU/gloo（trainer docstring 自述 "CPU-runnable"）。NPU 分布式原语齐了，端到端"模型上 NPU 训练"链路未闭合。
 
 ### 2.2 训练 · 微调 —— 🟡 CPU 闭环
 
 已实现（真实代码，非 stub）：
 
-- 完整训练循环：forward + loss + backward + step（`worldforge_train/training_loop.py:51-106`）
-- LoRA：PEFT 包装 + G4 防静默零训练校验（匹配 0 模块/0 可训练参数直接 raise）（`worldforge_train/model/lora_wrapper.py:31-76`），target = q/k/v/o_proj + mlp.fc1/fc2（`lora_wrapper.py:17-20`）
-- 分布式：DDP 默认；FSDP 完整（FULL_SHARD/HYBRID、bf16 混合精度、activation checkpointing、CPU offload）（`worldforge_train/parallel/fsdp.py:85-180`）
-- Checkpoint：原子保存（tmp+rename），含 optimizer state/RNG/step/LoRA 签名，支持 resume + 签名校验（`worldforge_train/checkpoint.py`、`worldforge_train/trainer.py:146-211`）
+- 完整训练循环：forward + loss + backward + step（`worldfoundry_train/training_loop.py:51-106`）
+- LoRA：PEFT 包装 + G4 防静默零训练校验（匹配 0 模块/0 可训练参数直接 raise）（`worldfoundry_train/model/lora_wrapper.py:31-76`），target = q/k/v/o_proj + mlp.fc1/fc2（`lora_wrapper.py:17-20`）
+- 分布式：DDP 默认；FSDP 完整（FULL_SHARD/HYBRID、bf16 混合精度、activation checkpointing、CPU offload）（`worldfoundry_train/parallel/fsdp.py:85-180`）
+- Checkpoint：原子保存（tmp+rename），含 optimizer state/RNG/step/LoRA 签名，支持 resume + 签名校验（`worldfoundry_train/checkpoint.py`、`worldfoundry_train/trainer.py:146-211`）
 
 缺口：
 
-- **T1c JEPA 目标是数学代理**：损失为 masked-feature MSE，target 来自同一 encoder 的 no_grad 二次前向（自蒸馏代理）；docstring 明确生产目标应为 "EMA target encoder + cosine similarity"（`worldforge_train/training_loop.py:32-48`）。**没有独立 predictor 模块**，损失在数学上接近恒等回归，无法学到有意义的预测表征。
+- **T1c JEPA 目标是数学代理**：损失为 masked-feature MSE，target 来自同一 encoder 的 no_grad 二次前向（自蒸馏代理）；docstring 明确生产目标应为 "EMA target encoder + cosine similarity"（`worldfoundry_train/training_loop.py:32-48`）。**没有独立 predictor 模块**，损失在数学上接近恒等回归，无法学到有意义的预测表征。
 - **T1b 无全参微调入口**，只有 LoRA；无 SFT 数据格式定义。
-- 多卡 FSDP checkpoint 保存 deferred 到 Phase-2（`worldforge_train/checkpoint.py:7`）。
+- 多卡 FSDP checkpoint 保存 deferred 到 Phase-2（`worldfoundry_train/checkpoint.py:7`）。
 - `bench_results/fsdp-baseline.json` 自述 "local smoke, not hardware baseline"（4332 clips/s 为 CPU 数字，非 Atlas 实测）。
 
 ### 2.3 训练 · 仿真 RL —— 🔴 纯桩
 
-`worldforge_rl/` 三文件合计 113 行：
+`worldfoundry_rl/` 三文件合计 113 行：
 
 - `train_ac.py:37-43`："训练循环"仅遍历样本数并 print，**无梯度更新、无 PPO、无 reward**
 - `env_droid.py:1-6`：`DroidEnv` 为 CSV 离线回放，自述 "no live simulator；MuJoCo/SAPIEN lands in Phase-2 W14"
@@ -99,8 +99,8 @@ FastAPI 服务三端点，均有 HMAC 鉴权、adapter 路由、批处理骨架�
 
 | 端点 | 现状 | 证据 |
 |---|---|---|
-| `POST /v1/world/encode` | ✅ 真实可用（video → dense features） | `worldforge_inf/api/encode.py`、`vjepa2_worker.py:38-48` |
-| `POST /v1/world/predict` | ⚠️ 浅层代理：输出 encoder `last_hidden_state` 的 masked 重建；`loss_score = (pred**2).mean()` 形式分 | `worldforge_inf/api/predict.py` |
+| `POST /v1/world/encode` | ✅ 真实可用（video → dense features） | `worldfoundry_inf/api/encode.py`、`vjepa2_worker.py:38-48` |
+| `POST /v1/world/predict` | ⚠️ 浅层代理：输出 encoder `last_hidden_state` 的 masked 重建；`loss_score = (pred**2).mean()` 形式分 | `worldfoundry_inf/api/predict.py` |
 | `POST /v1/world/plan` | ⚠️ 纯 passthrough：返回 encode 特征 + 原样回传输入 actions；真实 AC predictor deferred 到 Phase-2 W4 | `vjepa2_worker.py:56-66`、`vllm_ascend_worker.py:164-172` |
 
 缺口：
@@ -112,7 +112,7 @@ FastAPI 服务三端点，均有 HMAC 鉴权、adapter 路由、批处理骨架�
 
 - 全库无解码器/VAE/扩散/渲染模型代码；三端点返回均为 features/actions，无像素输出路径
 - V-JEPA 2 的设计哲学即"latent 空间预测、不生成像素"，项目忠实于此
-- `mindie_sd.py` 提及 diffusion compile backend，但仅指工具链来源且为占位 stub（`worldforge_inf/compile/mindie_sd.py:1-8`）
+- `mindie_sd.py` 提及 diffusion compile backend，但仅指工具链来源且为占位 stub（`worldfoundry_inf/compile/mindie_sd.py:1-8`）
 
 **I3a/I3b 需要新增整条 latent→pixel decoder 模型线（如冻结 encoder + 训练 pixel decoder / 扩散解码器），属超出当前设计范围的新增投入，需单独技术选型决策。**
 
@@ -171,11 +171,11 @@ FastAPI 服务三端点，均有 HMAC 鉴权、adapter 路由、批处理骨架�
 | W# | 任务 | 覆盖 Gap | 验收标准 |
 |---|---|---|---|
 | W30 | 仿真环境选型决策（MuJoCo vs SAPIEN vs CARLA）+ 仿真在 NPU 集群的部署形态（CPU 仿真节点 + NPU  learner 的分体架构） | G6 前置 | ADR 评审通过 |
-| W31 | 环境接入层：EnvPool 抽象 + 首选环境的向量化封装（对接 `worldforge_rl`） | G6 | 向量化 env step 吞吐基准达标 |
+| W31 | 环境接入层：EnvPool 抽象 + 首选环境的向量化封装（对接 `worldfoundry_rl`） | G6 | 向量化 env step 吞吐基准达标 |
 | W32 | AC latent-action head 实现（替换 actor passthrough）：encoder latent + action → 下一 latent | G8（T2c 侧） | 单测 + 离线数据预训练收敛 |
 | W33 | plan 端点接入 AC predictor（Phase-2 W4 遗留项收口） | G8, G10（I2b） | `/v1/world/plan` 返回动作条件下的真实预测 latent |
 | W34 | PPO 训练器落地：rollout 收集 → advantage 估计 → 梯度更新闭环（先自研最小实现，验证正确性） | G7 | 仿真任务上 reward 曲线上升 |
-| W35 | verl 集成评估与迁移（替换或共存自研 PPO；GRPO 支持评估） | G7 | verl 路径 reward 曲线与 W34 对齐 |
+| W35 | RL 框架选型验证（verl vs RLinf vs 自研，按 ADR-W35 执行验证门 W35.1–W35.4）：首选 RLinf（仿真器生态 + 训推编排），verl 为备选（昇腾一方适配最深），自研 PPO（W34）为基线 | G6, G7, G14 | 验证门通过，框架决策生效；详见 `docs/superpowers/specs/2026-08-04-w35-rl-framework-adr.md` |
 | W36 | Reward model / 任务奖励接口定义（含从世界模型 latent 距离构造 intrinsic reward 的选项） | G9 | reward 接口文档 + 至少 1 个任务的 reward 实现 |
 | W37 | RL 训练与主训练栈集成：共用 checkpoint/LoRA 体系、ActorPool/EnvPool/LearnerPool 编排（按设计文档 §RL 架构图落地） | G7, G14 | 分布式 RL 训练 smoke 通过 |
 | W38 | 世界模型辅助 RL（model-based）：用 predictor 做 imagination rollout 降低真实仿真步数 | G8, G7 | 样本效率对照实验报告 |
@@ -237,10 +237,10 @@ FastAPI 服务三端点，均有 HMAC 鉴权、adapter 路由、批处理骨架�
 ## 附录 A：证据文件索引
 
 - 项目定位：`README.md:1-5`、`pyproject.toml:8`
-- NPU 环境：`worldforge_common/npu_env.py:15-21,63-103`
-- 训练：`worldforge_train/trainer.py:129-211`、`training_loop.py:32-106`、`model/lora_wrapper.py:17-76`、`parallel/fsdp.py:42-180`、`checkpoint.py`
-- RL：`worldforge_rl/train_ac.py:37-43`、`env_droid.py:1-6`、`actor.py:29-40`
-- 推理：`worldforge_inf/vjepa2_worker.py:38-66`、`vllm_ascend_worker.py:20-22,148,164-172`、`_vllm_ascend_plugin.py:37-83`、`api/encode.py`、`api/predict.py`
-- 编译/量化：`worldforge_inf/compile/mindie_sd.py:1-8`、`compile/quantize_backends/msmodelslim.py`
-- 数据：`worldforge_train/data/video_source.py:16,38-44`
+- NPU 环境：`worldfoundry_common/npu_env.py:15-21,63-103`
+- 训练：`worldfoundry_train/trainer.py:129-211`、`training_loop.py:32-106`、`model/lora_wrapper.py:17-76`、`parallel/fsdp.py:42-180`、`checkpoint.py`
+- RL：`worldfoundry_rl/train_ac.py:37-43`、`env_droid.py:1-6`、`actor.py:29-40`
+- 推理：`worldfoundry_inf/vjepa2_worker.py:38-66`、`vllm_ascend_worker.py:20-22,148,164-172`、`_vllm_ascend_plugin.py:37-83`、`api/encode.py`、`api/predict.py`
+- 编译/量化：`worldfoundry_inf/compile/mindie_sd.py:1-8`、`compile/quantize_backends/msmodelslim.py`
+- 数据：`worldfoundry_train/data/video_source.py:16,38-44`
 - 设计文档：`docs/superpowers/specs/2026-07-27-ascend-world-model-design.md:198-201,307-336`、`docs/superpowers/specs/W9_EVAL_REPORT.md:5`

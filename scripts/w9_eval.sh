@@ -4,7 +4,7 @@
 # Usage:
 #     bash scripts/w9_eval.sh
 #
-# Runs in worldforge-base:phase1 Docker container on 8x NPU host.
+# Runs in worldfoundry-base:phase1 Docker container on 8x NPU host.
 # Produces docs/superpowers/specs/W9_EVAL_REPORT.md with GO/NO-GO verdict.
 set -uo pipefail  # NOTE: not -e: we want to continue past bench failures to write report
 
@@ -39,12 +39,12 @@ run_step() {
 run_benches() {
     # 1. FSDP baseline (always succeeds)
     run_step "BENCH: FSDP baseline (train profile)" "fsdp-baseline" \
-        python -m worldforge_train.bench \
+        python -m worldfoundry_train.bench \
             --profile train --steps 200 --warmup 50 --tag fsdp-baseline || true
 
     # 2. MM eval (may fail — that's the point)
     run_step "BENCH: MM eval (train-mmspeed profile)" "mindspeed-eval" \
-        python -m worldforge_train.bench \
+        python -m worldfoundry_train.bench \
             --profile train-mmspeed --steps 200 --warmup 50 --tag mindspeed-eval || true
 }
 
@@ -62,14 +62,14 @@ else
         -v /usr/local/Ascend/driver:/usr/local/Ascend/driver:ro \
         -v "$ROOT:/workspace" -v /data:/data \
         -e WORLDFORGE_PROFILE=train-mmspeed \
-        worldforge-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_benches) && run_benches"
+        worldfoundry-base:phase1 bash -c "cd /workspace && $(declare -f run_step run_benches) && run_benches"
 fi
 
 # 3. Compare + write report
 echo "==== COMPARE: writing W9_EVAL_REPORT.md ===="
 python -c "
 from pathlib import Path
-from worldforge_train.bench.compare import compare
+from worldfoundry_train.bench.compare import compare
 verdict = compare(
     Path('bench_results/fsdp-baseline.json'),
     Path('bench_results/mindspeed-eval.json'),

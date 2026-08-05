@@ -9,9 +9,9 @@
 ## Run training (DDP LoRA)
 
 ```bash
-docker run --rm -it --device /dev/davinci0 .../worldforge-base:phase1 \
+docker run --rm -it --device /dev/davinci0 .../worldfoundry-base:phase1 \
     torchrun --nproc_per_node=8 \
-        worldforge_train/train.py \
+        worldfoundry_train/train.py \
         --model facebook/vjepa2-vitl-1.2b \
         --dataset /data/videomix22m \
         --parallel ddp \
@@ -23,8 +23,8 @@ docker run --rm -it --device /dev/davinci0 .../worldforge-base:phase1 \
 ## Run inference service
 
 ```bash
-docker run --rm -it -p 8080:8080 .../worldforge-base:phase1 \
-    python -m worldforge_inf.server \
+docker run --rm -it -p 8080:8080 .../worldfoundry-base:phase1 \
+    python -m worldfoundry_inf.server \
         --model models/vjepa2-vitl-1.2b \
         --port 8080
 

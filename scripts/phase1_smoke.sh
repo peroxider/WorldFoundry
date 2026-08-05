@@ -30,28 +30,28 @@ run_step() {
 }
 
 # 1. Data
-run_step "DATA: build sample dataset" python -m worldforge_train.data.dataset --self-test
+run_step "DATA: build sample dataset" python -m worldfoundry_train.data.dataset --self-test
 
 # 2. Train (DDP LoRA, single-rank CPU fallback)
 if [[ "$CPU_FLAG" == "--cpu" ]]; then
     run_step "TRAIN: DDP LoRA on CPU stub" \
-        python -m worldforge_train.train \
-            --config worldforge_train/configs/vjepa2_vitl_1.2b.yaml \
+        python -m worldfoundry_train.train \
+            --config worldfoundry_train/configs/vjepa2_vitl_1.2b.yaml \
             --parallel ddp
 fi
 
 # 3. Quantize
 run_step "QUANTIZE: W8A8" \
-    python -c "from pathlib import Path; from worldforge_inf.compile.quantize import quantize_model; quantize_model(Path('models/vjepa2-vitl-1.2b'), Path('models/vjepa2-vitl-1.2b-w8a8'), quant_type='w8a8')"
+    python -c "from pathlib import Path; from worldfoundry_inf.compile.quantize import quantize_model; quantize_model(Path('models/vjepa2-vitl-1.2b'), Path('models/vjepa2-vitl-1.2b-w8a8'), quant_type='w8a8')"
 
 # 4. Compile
 run_step "COMPILE: MindIE-SD" \
-    python -c "from pathlib import Path; from worldforge_inf.compile.mindie_sd import compile_to_om; compile_to_om(Path('models/vjepa2-vitl-1.2b-w8a8'), Path('models/vjepa2-vitl-1.2b/model.om'))"
+    python -c "from pathlib import Path; from worldfoundry_inf.compile.mindie_sd import compile_to_om; compile_to_om(Path('models/vjepa2-vitl-1.2b-w8a8'), Path('models/vjepa2-vitl-1.2b/model.om'))"
 
 # 5. Serve (Defect C pre-flight fix: explicit foreground-spawn + port-readiness loop
 # replaces brief's `run_step` invocation so server-startup failures are not swallowed.)
 echo "==== SERVE: launch FastAPI on :8080 (background) ===="
-python -m worldforge_inf.server --model models/vjepa2-vitl-1.2b --port 8080 &
+python -m worldfoundry_inf.server --model models/vjepa2-vitl-1.2b --port 8080 &
 SERVER_PID=$!
 # Wait up to 30s for the port to be listening.
 for _ in $(seq 1 30); do

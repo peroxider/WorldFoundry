@@ -1,0 +1,32 @@
+{
+  "label": "w22_7 arm b dry-run (CPU; not a hardware baseline)",
+  "arm": "b",
+  "mode": "dry",
+  "jepa_enabled": true,
+  "optimizer_steps": 12,
+  "wall_time_s": 6.107,
+  "avg_step_s": 0.508914,
+  "timing": {
+    "context_forward_s": 0.09661083901301026,
+    "target_forward_s": 0.10911085491534323,
+    "loss_fn_s": 0.2057216939283535,
+    "ema_update_s": 0.008339111926034093,
+    "ema_updates": 12.0
+  },
+  "target_forward_fraction": 0.0179,
+  "ema_fraction": 0.0014,
+  "loss_curve": [
+    27.608746,
+    27.438787,
+    27.317286,
+    27.310429,
+    26.938772,
+    26.670349,
+    26.197598,
+    25.53216,
+    24.888191,
+    24.126734,
+    23.087542,
+    21.810568
+  ]
+}

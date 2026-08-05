@@ -1,0 +1,66 @@
+{
+  "arm": "b",
+  "verdict": "GO",
+  "n_steps": 30,
+  "checks": [
+    {
+      "name": "numeric_health",
+      "status": "pass",
+      "evidence": {
+        "finite": true,
+        "n_steps": 30,
+        "first_loss": 27.608745574951172,
+        "last_loss": 9.866931915283203
+      },
+      "action": ""
+    },
+    {
+      "name": "loss_decreasing",
+      "status": "pass",
+      "evidence": {
+        "first_window_median": 25.535646438598633,
+        "last_window_median": 12.023005485534668
+      },
+      "action": ""
+    },
+    {
+      "name": "memory_growth",
+      "status": "pass",
+      "evidence": {
+        "memory_source": "cpu_rss_peak",
+        "first_window_median_mb": 656.85,
+        "last_window_median_mb": 656.85,
+        "relative_growth": 0.0,
+        "last_window_slope_mb_per_step": 0.0,
+        "tolerances": {
+          "rel_growth": 0.1,
+          "rel_slope_per_step": 0.001
+        }
+      },
+      "action": ""
+    },
+    {
+      "name": "throughput_stability",
+      "status": "pass",
+      "evidence": {
+        "first_window_median_s": 0.026284,
+        "last_window_median_s": 0.024831,
+        "last_window_cv": 0.0593,
+        "degrade_factor": 1.5,
+        "target_forward_fraction": 0.2039,
+        "ema_update_fraction": 0.0143,
+        "ema_gather_s": 0.0
+      },
+      "action": ""
+    },
+    {
+      "name": "ema_movement",
+      "status": "pass",
+      "evidence": {
+        "ema_moved": true
+      },
+      "action": ""
+    }
+  ],
+  "summary": "全部硬门槛通过；警告项见 checks"
+}

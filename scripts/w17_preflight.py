@@ -31,7 +31,7 @@ def _have_torch_npu() -> tuple[bool, str]:
 
 def _have_msmodelslim() -> tuple[bool, str]:
     if importlib.util.find_spec("msmodelslim") is None:
-        return False, "msmodelslim not installed (pip install worldforge[quant])"
+        return False, "msmodelslim not installed (pip install worldfoundry[quant])"
     return True, ""
 
 
