@@ -7,7 +7,6 @@ VJEPA2WorkerPool.
 from __future__ import annotations
 
 import threading
-import time
 from concurrent.futures import Future
 from typing import Callable, Optional
 

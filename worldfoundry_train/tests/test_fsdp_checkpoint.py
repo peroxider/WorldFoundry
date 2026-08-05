@@ -5,10 +5,9 @@ check and verify that checkpoint.py uses the FSDP state-dict APIs.
 """
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-import torch
 from torch import nn
 from torch.optim import AdamW
 
@@ -30,8 +29,7 @@ def test_trainable_state_dict_uses_full_state_dict_for_fsdp(tmp_path, monkeypatc
     the full state dict via FSDP.state_dict_type(..., FULL_STATE_DICT)."""
     pytest.importorskip("torch.distributed.fsdp")
     from torch.distributed import fsdp as torch_fsdp
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp.api import FullStateDictConfig, StateDictType
+    from torch.distributed.fsdp.api import StateDictType
     from worldfoundry_train.checkpoint import _trainable_state_dict
 
     model = _make_model()
@@ -72,8 +70,7 @@ def test_save_checkpoint_calls_fsdp_optim_state_dict(tmp_path, monkeypatch):
     """FSDP save path extracts optimizer state via FSDP.optim_state_dict."""
     pytest.importorskip("torch.distributed.fsdp")
     from torch.distributed import fsdp as torch_fsdp
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp.api import FullStateDictConfig, StateDictType
+    from torch.distributed.fsdp.api import StateDictType
 
     model = _make_model()
     opt = AdamW(model.parameters(), lr=0.01)
@@ -113,8 +110,7 @@ def test_load_checkpoint_calls_fsdp_optim_state_dict_to_load(tmp_path, monkeypat
     """FSDP load path restores optimizer state via FSDP.optim_state_dict_to_load."""
     pytest.importorskip("torch.distributed.fsdp")
     from torch.distributed import fsdp as torch_fsdp
-    from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-    from torch.distributed.fsdp.api import FullStateDictConfig, StateDictType
+    from torch.distributed.fsdp.api import StateDictType
 
     model = _make_model()
     opt = AdamW(model.parameters(), lr=0.01)

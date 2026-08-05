@@ -9,7 +9,6 @@ NOT NPU-gated -- runs by default. Validates:
 """
 from __future__ import annotations
 
-import pytest
 import torch
 from transformers import VJEPA2Config, VJEPA2Model
 

@@ -119,8 +119,8 @@ def test_run_training_loop_calls_step_callback_each_step():
     batches = [dict(batch) for _ in range(5)]
     calls: list[tuple[int, float]] = []
 
-    def cb(s, l):
-        calls.append((s, l))
+    def cb(s, loss):
+        calls.append((s, loss))
 
     losses = run_training_loop(model, iter(batches), num_steps=5,
                               strategy=strategy, optimizer=optimizer,

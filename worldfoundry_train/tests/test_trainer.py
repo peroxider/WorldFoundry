@@ -117,7 +117,7 @@ def test_run_training_returns_per_step_losses():
         losses = run_training(
             cfg, strategy, base_model=model, num_steps=3,
             batch_fn=batch_fn, loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
         assert len(losses) == 3
         for v in losses:
@@ -144,7 +144,7 @@ def test_run_training_num_steps_derived_from_yaml_when_unset():
         run_training(
             cfg, strategy, base_model=model,
             batch_fn=batch_fn, loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
         assert counter["n"] == 2
     finally:
@@ -168,7 +168,7 @@ def test_run_training_cli_steps_override_beats_yaml_derivation():
         run_training(
             cfg, strategy, base_model=model, num_steps=1,
             batch_fn=batch_fn, loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
         assert counter["n"] == 1
     finally:
@@ -187,7 +187,7 @@ def test_run_training_empty_dataset_raises_value_error():
             run_training(
                 cfg, strategy, base_model=model, num_steps=1,
                 batch_fn=lambda i: _fake_batch(),
-                logger=lambda s, l: None,
+                logger=lambda s, loss: None,
             )
     finally:
         trainer_mod._build_dataset = original
@@ -207,7 +207,7 @@ def test_run_training_zero_num_steps_raises_value_error():
             run_training(
                 cfg, strategy, base_model=model,
                 batch_fn=lambda i: _fake_batch(),
-                logger=lambda s, l: None,
+                logger=lambda s, loss: None,
             )
     finally:
         trainer_mod._build_dataset = original
@@ -225,7 +225,7 @@ def test_run_training_negative_num_steps_kwarg_raises():
             run_training(
                 cfg, strategy, base_model=model, num_steps=-1,
                 batch_fn=lambda i: _fake_batch(),
-                logger=lambda s, l: None,
+                logger=lambda s, loss: None,
             )
     finally:
         trainer_mod._build_dataset = original
@@ -254,7 +254,7 @@ def test_run_training_optimizer_filters_to_trainable_params_only():
         run_training(
             cfg, strategy, base_model=model, num_steps=1,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
         # Only q_proj.weight + q_proj.bias (2 tensors)
         assert len(captured["params"]) == 2
@@ -276,7 +276,7 @@ def test_run_training_default_logger_emits_at_log_every_n():
         run_training(
             cfg, strategy, base_model=model, num_steps=4,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: log_calls.append((s, l)),
+            logger=lambda s, loss: log_calls.append((s, loss)),
         )
         assert [s for s, _ in log_calls] == [2, 4]
     finally:
@@ -296,7 +296,7 @@ def test_run_training_injected_logger_overrides_default():
         run_training(
             cfg, strategy, base_model=model, num_steps=2,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: log_calls.append((s, l)),
+            logger=lambda s, loss: log_calls.append((s, loss)),
         )
         assert len(log_calls) == 2
     finally:
@@ -321,7 +321,7 @@ def test_run_training_injected_loss_fn_overrides_default():
             cfg, strategy, base_model=model, num_steps=1,
             batch_fn=lambda i: _fake_batch(),
             loss_fn=sentinel_loss,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
         assert sentinel["called"]
     finally:
@@ -339,7 +339,7 @@ def test_run_training_strategy_wrap_called_with_lora_wrapped_model():
         run_training(
             cfg, strategy, base_model=model, num_steps=1,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
         assert len(strategy.wrapped_models) == 1
         wrapped = strategy.wrapped_models[0]
@@ -361,7 +361,7 @@ def test_run_training_strategy_backward_called_once_per_step():
         run_training(
             cfg, strategy, base_model=model, num_steps=3,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
         assert len(strategy.backward_calls) == 3
     finally:
@@ -390,7 +390,7 @@ def test_run_training_saves_final_checkpoint(tmp_path, _patch_checkpoint_safe_di
         run_training(
             cfg, _PassthroughStrategy(), base_model=model, num_steps=3,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
             checkpoint_dir=tmp_path,
         )
         saved = tmp_path / "step_3.pt"
@@ -409,7 +409,7 @@ def test_run_training_save_every_n_produces_multiple_files(tmp_path, _patch_chec
         run_training(
             cfg, _PassthroughStrategy(), base_model=model, num_steps=6,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
             checkpoint_dir=tmp_path,
             save_every_n=2,
         )
@@ -430,7 +430,7 @@ def test_run_training_save_every_n_without_dir_raises(_patch_checkpoint_safe_dis
             run_training(
                 cfg, _PassthroughStrategy(), base_model=model, num_steps=3,
                 batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-                logger=lambda s, l: None,
+                logger=lambda s, loss: None,
                 save_every_n=2,
             )
     finally:
@@ -452,14 +452,14 @@ def test_run_training_resume_from_checkpoint_continues_losses(tmp_path, _patch_c
         losses_10 = run_training(
             cfg, _PassthroughStrategy(), base_model=_TinyLinearModel(), num_steps=10,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
 
         _reset_rng()
         losses_first = run_training(
             cfg, _PassthroughStrategy(), base_model=_TinyLinearModel(), num_steps=5,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
             checkpoint_dir=tmp_path,
         )
         saved = tmp_path / "step_5.pt"
@@ -469,7 +469,7 @@ def test_run_training_resume_from_checkpoint_continues_losses(tmp_path, _patch_c
         losses_second = run_training(
             cfg, _PassthroughStrategy(), base_model=_TinyLinearModel(), num_steps=10,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
             resume_from=saved,
         )
 
@@ -495,7 +495,7 @@ def test_run_training_resume_with_lora_signature_mismatch_raises(tmp_path, _patc
         run_training(
             cfg, _PassthroughStrategy(), base_model=model, num_steps=3,
             batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
             checkpoint_dir=tmp_path,
         )
         saved = tmp_path / "step_3.pt"
@@ -510,7 +510,7 @@ def test_run_training_resume_with_lora_signature_mismatch_raises(tmp_path, _patc
             run_training(
                 cfg_changed, _PassthroughStrategy(), base_model=_TinyLinearModel(),
                 num_steps=6, batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-                logger=lambda s, l: None, resume_from=saved,
+                logger=lambda s, loss: None, resume_from=saved,
             )
     finally:
         trainer_mod._build_dataset = original_ds
@@ -527,7 +527,7 @@ def test_run_training_resume_missing_file_raises(_patch_checkpoint_safe_dist):
             run_training(
                 cfg, _PassthroughStrategy(), base_model=model, num_steps=3,
                 batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-                logger=lambda s, l: None,
+                logger=lambda s, loss: None,
                 resume_from=Path("/nonexistent/ckpt.pt"),
             )
     finally:

@@ -75,8 +75,8 @@ def run_training_step(
     loss = loss_fn(model, batch)
     if not loss.requires_grad:
         raise RuntimeError(
-            f"loss_fn returned a tensor with requires_grad=False; "
-            f"check that the model parameters have requires_grad=True."
+            "loss_fn returned a tensor with requires_grad=False; "
+            "check that the model parameters have requires_grad=True."
         )
     strategy.backward(loss)
     strategy.step(optimizer)
@@ -170,8 +170,8 @@ def run_training_loop(
             loss = loss_fn(model, batch)
             if not loss.requires_grad:
                 raise RuntimeError(
-                    f"loss_fn returned a tensor with requires_grad=False; "
-                    f"check that the model parameters have requires_grad=True."
+                    "loss_fn returned a tensor with requires_grad=False; "
+                    "check that the model parameters have requires_grad=True."
                 )
             strategy.backward(loss / grad_accum)
         window_losses.append(float(loss.detach().item()))

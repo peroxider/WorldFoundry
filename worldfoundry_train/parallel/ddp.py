@@ -8,6 +8,7 @@ unwrapped so CPU unit tests need no process group.
 """
 from __future__ import annotations
 
+import torch
 import os
 from contextlib import nullcontext
 from typing import ContextManager
@@ -96,7 +97,7 @@ class DDPStrategy(DistributedStrategy):
             return model.no_sync()
         return nullcontext()
 
-    def backward(self, loss: "torch.Tensor") -> None:
+    def backward(self, loss: torch.Tensor) -> None:
         loss.backward()
 
     def step(self, optimizer: Optimizer) -> None:

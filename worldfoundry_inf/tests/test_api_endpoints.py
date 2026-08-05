@@ -36,7 +36,9 @@ def test_encode_requires_auth(client):
 
 
 def test_encode_with_valid_auth_returns_200(client, fake_video_bytes):
-    import hmac, hashlib, time
+    import hmac
+    import hashlib
+    import time
 
     method = "POST"
     path = "/v1/world/encode"
@@ -59,7 +61,8 @@ def test_encode_with_valid_auth_returns_200(client, fake_video_bytes):
 
 
 def test_encode_rejects_stale_timestamp(client, fake_video_bytes):
-    import hmac, hashlib
+    import hmac
+    import hashlib
     method = "POST"
     path = "/v1/world/encode"
     body = f'{{"video":"{fake_video_bytes}"}}'.encode()
@@ -94,7 +97,9 @@ def predict_client(monkeypatch):
 
 
 def test_predict_with_valid_auth_returns_200(predict_client, fake_video_bytes):
-    import hmac, hashlib, time
+    import hmac
+    import hashlib
+    import time
 
     method = "POST"
     path = "/v1/world/predict"
@@ -142,7 +147,9 @@ def plan_client(monkeypatch):
 
 
 def test_plan_with_valid_auth_returns_200(plan_client, fake_video_bytes):
-    import hmac, hashlib, time
+    import hmac
+    import hashlib
+    import time
 
     method = "POST"
     path = "/v1/world/plan"
@@ -167,7 +174,9 @@ def test_plan_with_valid_auth_returns_200(plan_client, fake_video_bytes):
 
 
 def test_plan_rejects_null_actions(plan_client, fake_video_bytes):
-    import hmac, hashlib, time
+    import hmac
+    import hashlib
+    import time
 
     method = "POST"
     path = "/v1/world/plan"
@@ -184,7 +193,9 @@ def test_plan_rejects_null_actions(plan_client, fake_video_bytes):
 
 
 def test_plan_rejects_boolean_actions(plan_client, fake_video_bytes):
-    import hmac, hashlib, time
+    import hmac
+    import hashlib
+    import time
 
     method = "POST"
     path = "/v1/world/plan"
@@ -201,7 +212,9 @@ def test_plan_rejects_boolean_actions(plan_client, fake_video_bytes):
 
 
 def test_predict_rejects_malformed_video(predict_client):
-    import hmac, hashlib, time
+    import hmac
+    import hashlib
+    import time
 
     method = "POST"
     path = "/v1/world/predict"
@@ -219,7 +232,9 @@ def test_predict_rejects_malformed_video(predict_client):
 
 
 def test_plan_rejects_malformed_video(plan_client):
-    import hmac, hashlib, time
+    import hmac
+    import hashlib
+    import time
 
     method = "POST"
     path = "/v1/world/plan"

@@ -125,7 +125,8 @@ def test_step_all_reduces_and_steps(monkeypatch):
     monkeypatch.setattr(dist, "is_initialized", lambda: True)
     monkeypatch.setattr(dist, "get_world_size", lambda: 2)
     monkeypatch.setattr(dist, "all_reduce", lambda grad, **kwargs: calls.append("all_reduce"))
-    p = torch.nn.Parameter(torch.ones(1)); p.grad = torch.ones(1)
+    p = torch.nn.Parameter(torch.ones(1))
+    p.grad = torch.ones(1)
     class FakeOpt:
         param_groups = [{"params": [p]}]
         def step(self): calls.append("step")

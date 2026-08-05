@@ -91,7 +91,7 @@ def test_hook_fires_on_tail_window_flush_and_precedes_step_callback():
         strategy=strategy, optimizer=optimizer, loss_fn=_squared_loss,
         grad_accum=2,
         post_step_hook=lambda: events.append("hook"),
-        step_callback=lambda s, l: events.append(f"cb{s}"),
+        step_callback=lambda s, loss: events.append(f"cb{s}"),
     )
     # windows: [m1, m2] -> step+hook+cb1 ; [m3 flush] -> step+hook+cb2
     assert len(losses) == 2

@@ -1,6 +1,7 @@
 """MMStrategy stub (Phase-2 W10 real impl only if W9 = GO)."""
 from __future__ import annotations
 
+import torch
 from torch import nn
 from torch.optim import Optimizer
 
@@ -18,7 +19,7 @@ class MMStrategy(DistributedStrategy):
     def wrap(self, model: nn.Module) -> nn.Module:
         raise NotImplementedError(_MM_STUB_MSG)
 
-    def backward(self, loss: "torch.Tensor") -> None:
+    def backward(self, loss: torch.Tensor) -> None:
         raise NotImplementedError(_MM_STUB_MSG)
 
     def step(self, optimizer: Optimizer) -> None:

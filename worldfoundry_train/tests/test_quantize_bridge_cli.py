@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import sys
 
-import pytest
 import yaml
 
 from worldfoundry_train import train as train_mod

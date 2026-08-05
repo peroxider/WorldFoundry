@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 
-import pytest
 
 from worldfoundry_inf import _vllm_ascend_plugin as plugin
 

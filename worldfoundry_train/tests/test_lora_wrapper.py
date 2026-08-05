@@ -88,7 +88,7 @@ def test_build_lora_returns_peft_model():
     peft.get_peft_model = lambda base, cfg: FakePeftModel(base, cfg)
     try:
         base = _TinyVJEPA2()
-        model = build_lora_model(base, r=16, alpha=32)
+        build_lora_model(base, r=16, alpha=32)
 
         assert captured["base"] is base
         # target_modules should have been auto-discovered from the actual names

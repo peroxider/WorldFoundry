@@ -1,6 +1,7 @@
 """DistributedStrategy interface + profile-based selector (Phase-2 W9)."""
 from __future__ import annotations
 
+import torch
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
 from typing import ContextManager
@@ -20,7 +21,7 @@ class DistributedStrategy(ABC):
     def wrap(self, model: nn.Module) -> nn.Module: ...
 
     @abstractmethod
-    def backward(self, loss: "torch.Tensor") -> None:
+    def backward(self, loss: torch.Tensor) -> None:
         """Run loss backward via the parallel runtime. FSDP = passthrough;
         MM = engine.backward(loss)."""
 

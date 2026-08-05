@@ -1,7 +1,6 @@
 import importlib
 import os
 
-import pytest
 
 
 def test_fsdp_module_imports():

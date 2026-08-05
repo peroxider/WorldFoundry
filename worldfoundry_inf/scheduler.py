@@ -5,7 +5,6 @@ requests carrying `adapter_name` route to the matching worker.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from worldfoundry_common.exceptions import AdapterNotFoundError

@@ -128,7 +128,7 @@ def test_trainer_jepa_end_to_end(_patch_dataset, _capture_objective):
     losses = run_training(
         _cfg(jepa=_jepa_cfg()), _Passthrough(),
         base_model=_tiny_vjepa2(), num_steps=3, batch_fn=_batch,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
     )
     assert len(losses) == 3
     assert all(v == v and v >= 0.0 for v in losses)
@@ -151,7 +151,7 @@ def test_trainer_jepa_schedule_steps_resolve_with_grad_accum(
     losses = run_training(
         _cfg(jepa=_jepa_cfg(), grad_accum=2), _Passthrough(),
         base_model=_tiny_vjepa2(), num_steps=5, batch_fn=_batch,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
     )
     # 5 micro-batches, accum 2 -> windows [2, 2, 1flush] = 3 optimizer steps.
     assert len(losses) == 3
@@ -167,7 +167,7 @@ def test_env_override_forces_legacy_path(_patch_dataset, _capture_objective,
     losses = run_training(
         _cfg(jepa=_jepa_cfg()), _Passthrough(),
         base_model=_tiny_vjepa2(), num_steps=2, batch_fn=_batch,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
     )
     assert len(losses) == 2
     assert _capture_objective == []  # JEPA never constructed
@@ -181,13 +181,13 @@ def test_feature_flag_disabled_is_byte_equivalent_to_no_jepa_key(
     losses_plain = run_training(
         _cfg(jepa=None), _Passthrough(),
         base_model=_tiny_vjepa2(), num_steps=3, batch_fn=_batch,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
     )
     torch.manual_seed(123)
     losses_flag_off = run_training(
         _cfg(jepa={"enabled": False}), _Passthrough(),
         base_model=_tiny_vjepa2(), num_steps=3, batch_fn=_batch,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
     )
     assert losses_plain == losses_flag_off
 
@@ -198,7 +198,7 @@ def test_jepa_rejects_injected_loss_fn(_patch_dataset):
             _cfg(jepa=_jepa_cfg()), _Passthrough(),
             base_model=_tiny_vjepa2(), num_steps=1, batch_fn=_batch,
             loss_fn=lambda m, b: torch.tensor(0.0, requires_grad=True),
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
 
 
@@ -210,7 +210,7 @@ def test_jepa_rejects_cpu_offload(_patch_dataset):
         run_training(
             _cfg(jepa=_jepa_cfg()), _OffloadStrategy(),
             base_model=_tiny_vjepa2(), num_steps=1, batch_fn=_batch,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
 
 
@@ -221,7 +221,7 @@ def test_jepa_rejects_num_masks_below_one(_patch_dataset):
         run_training(
             _cfg(jepa=jepa), _Passthrough(),
             base_model=_tiny_vjepa2(), num_steps=1, batch_fn=_batch,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
 
 
@@ -240,7 +240,7 @@ def test_predictor_lr_scale_reaches_optimizer(_patch_dataset,
     run_training(
         _cfg(jepa=_jepa_cfg()), _Passthrough(),
         base_model=_tiny_vjepa2(), num_steps=1, batch_fn=_batch,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
     )
     opt = captured_opt[0]
     assert len(opt.param_groups) == 2

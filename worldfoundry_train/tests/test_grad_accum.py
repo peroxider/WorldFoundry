@@ -156,7 +156,7 @@ def test_grad_accum_tail_window_flushed_with_rescaled_grads():
         model_acc, iter(batches), num_steps=3,
         strategy=strategy, optimizer=opt_acc, loss_fn=_squared_loss,
         grad_accum=2,
-        step_callback=lambda s, l: cb_calls.append((s, l)),
+        step_callback=lambda s, loss: cb_calls.append((s, loss)),
     )
 
     assert strategy.step_calls == 2
@@ -212,7 +212,7 @@ def test_step_callback_counts_optimizer_steps_with_window_mean_loss():
         model, iter(batches), num_steps=4,
         strategy=strategy, optimizer=optimizer, loss_fn=_squared_loss,
         grad_accum=2,
-        step_callback=lambda s, l: cb_calls.append((s, l)),
+        step_callback=lambda s, loss: cb_calls.append((s, loss)),
     )
     assert [s for s, _ in cb_calls] == [1, 2]
     assert len(losses) == 2
@@ -245,7 +245,7 @@ def test_grad_accum_one_matches_legacy_step_loop():
         model_acc, iter(batches), num_steps=4,
         strategy=strategy_acc, optimizer=opt_acc, loss_fn=_squared_loss,
         grad_accum=1,
-        step_callback=lambda s, l: cb_calls.append((s, l)),
+        step_callback=lambda s, loss: cb_calls.append((s, loss)),
     )
 
     assert losses == pytest.approx(legacy_losses)
@@ -336,7 +336,7 @@ def test_trainer_consumes_grad_accum_from_cfg(_patch_dataset):
     losses = run_training(
         cfg, strategy, base_model=_TinyLinearModel(), num_steps=4,
         batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
     )
     assert len(strategy.backward_calls) == 4  # all micro-batches backward
     assert strategy.step_calls == 2           # one optimizer step per window
@@ -349,7 +349,7 @@ def test_trainer_rejects_grad_accum_below_one(_patch_dataset):
         run_training(
             cfg, _RecordingStrategy(), base_model=_TinyLinearModel(),
             num_steps=2, batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
 
 
@@ -361,7 +361,7 @@ def test_trainer_checkpoint_step_counts_optimizer_steps(
     run_training(
         cfg, _RecordingStrategy(), base_model=_TinyLinearModel(), num_steps=4,
         batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
         checkpoint_dir=tmp_path,
     )
     saved = sorted(p.name for p in tmp_path.glob("step_*.pt"))
@@ -378,7 +378,7 @@ def test_trainer_resume_converts_optimizer_step_to_micro_batches(
     run_training(
         cfg, _RecordingStrategy(), base_model=_TinyLinearModel(), num_steps=4,
         batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
         checkpoint_dir=tmp_path,
     )
     saved = tmp_path / "step_2.pt"
@@ -387,7 +387,7 @@ def test_trainer_resume_converts_optimizer_step_to_micro_batches(
     losses = run_training(
         cfg, _RecordingStrategy(), base_model=_TinyLinearModel(), num_steps=6,
         batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
-        logger=lambda s, l: None,
+        logger=lambda s, loss: None,
         resume_from=saved,
         checkpoint_dir=tmp_path,
     )

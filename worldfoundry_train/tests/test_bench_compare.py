@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-import pytest
 
 
 def _write_json(path: Path, payload: dict) -> Path:

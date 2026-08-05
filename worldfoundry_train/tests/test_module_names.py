@@ -11,7 +11,6 @@ class FakeLinear(nn.Module):
 
 
 def test_discover_returns_only_present_names():
-    import torch
 
     class TinyModel(nn.Module):
         def __init__(self):
@@ -32,7 +31,6 @@ def test_discover_returns_only_present_names():
 
 
 def test_discover_supports_nested_module_names():
-    import torch
 
     class MLP(nn.Module):
         def __init__(self):

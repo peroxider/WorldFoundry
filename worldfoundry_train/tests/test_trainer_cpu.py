@@ -133,7 +133,7 @@ def test_real_vjepa2_three_step_training_via_trainer():
             num_steps=3,
             batch_fn=_synthetic_batch,
             loss_fn=None,  # default_loss_fn
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
     finally:
         trainer_mod._build_dataset = original
@@ -162,7 +162,7 @@ def test_trainer_loss_decreases_or_weights_change_on_real_vjepa2():
             num_steps=3,
             batch_fn=_synthetic_batch,
             loss_fn=None,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
     finally:
         trainer_mod._build_dataset = original
@@ -193,7 +193,7 @@ def test_trainer_collator_round_trip_with_fake_dataset():
             strategy=_Passthrough(),
             base_model=model,
             loss_fn=loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
         # epochs=1, ds_size=8, batch=2 -> 4 steps (cfg overrides via _tiny_cfg
         # is unnecessary -- _cfg uses per_device_batch=1: 8 // 1 = 8 steps)
@@ -226,7 +226,7 @@ def test_trainer_uses_real_ds_len_for_num_steps_when_no_override():
             strategy=_Passthrough(),
             base_model=model,
             loss_fn=loss_fn,
-            logger=lambda s, l: None,
+            logger=lambda s, loss: None,
         )
     finally:
         trainer_mod._build_dataset = original

@@ -18,7 +18,6 @@ so importing this module never breaks the rest of ``worldfoundry_inf``.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 __all__ = ["register", "register_model"]
 

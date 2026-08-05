@@ -7,7 +7,6 @@ passthrough used to collect the series.
 from __future__ import annotations
 
 import numpy as np
-import pytest
 import torch
 from torch import nn
 
@@ -205,8 +204,8 @@ def test_trainer_step_callback_fires_per_optimizer_step(monkeypatch):
     losses = trainer_mod.run_training(
         cfg, _Noop(), base_model=_TinyModel(), num_steps=4,
         batch_fn=lambda i: batch, loss_fn=loss_fn,
-        logger=lambda s, l: None,
-        step_callback=lambda s, l: calls.append((s, l)),
+        logger=lambda s, loss: None,
+        step_callback=lambda s, loss: calls.append((s, loss)),
     )
     # 4 micro-batches, grad_accum=2 -> 2 optimizer steps, 1-indexed.
     assert [s for s, _ in calls] == [1, 2]
