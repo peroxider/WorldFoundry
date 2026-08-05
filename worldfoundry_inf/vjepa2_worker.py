@@ -118,6 +118,112 @@ class VJEPA2Worker:
         return out.last_hidden_state
 
     @torch.no_grad()
+    def predict_masked_batch(
+        self,
+        videos: list[torch.Tensor],
+        mask_ratios: list[float],
+    ) -> list[torch.Tensor]:
+        """Batched masked-mode prediction (W25 dynamic batcher).
+
+        Stacks ``videos`` (each ``(T, C, H, W)``) into ``(B, T, C, H, W)`` and
+        builds a per-sample bool mask, then runs a single forward. Returns
+        per-sample outputs in the same order. All videos must share
+        ``T``/``C``/``H``/``W``; mixed-shape batches raise ValueError.
+        """
+        if len(videos) != len(mask_ratios):
+            raise ValueError(
+                f"videos ({len(videos)}) and mask_ratios ({len(mask_ratios)}) "
+                f"length mismatch"
+            )
+        if not videos:
+            return []
+        ref = videos[0].shape
+        for i, v in enumerate(videos):
+            if tuple(v.shape) != tuple(ref):
+                raise ValueError(
+                    f"video[{i}] has shape {tuple(v.shape)} != reference "
+                    f"{tuple(ref)}; batched masked predict requires uniform "
+                    f"shape"
+                )
+        batched = torch.stack(videos, dim=0)
+        b, t = batched.shape[:2]
+        mask = torch.zeros(b, t, dtype=torch.bool)
+        for i, r in enumerate(mask_ratios):
+            mask[i, : int(r * t)] = True
+        out = self.model(pixel_values_videos=batched, bool_masked_pos=mask)
+        return [out.last_hidden_state[i] for i in range(b)]
+
+    @torch.no_grad()
+    def predict_temporal_batch(
+        self,
+        videos: list[torch.Tensor],
+        past_frames_list: list[int],
+        future_frames_list: list[int],
+    ) -> list[tuple[torch.Tensor, float]]:
+        """Batched temporal-mode prediction (W25 dynamic batcher).
+
+        Each video must have at least ``past + future`` frames; the batcher
+        requires uniform ``past_frames`` and ``future_frames`` across the
+        batch (matching this worker's configured grid). Returns
+        ``(predicted_features, confidence)`` per request in input order.
+        """
+        if not (len(videos) == len(past_frames_list) == len(future_frames_list)):
+            raise ValueError(
+                "videos, past_frames_list, future_frames_list must be the "
+                "same length"
+            )
+        if not videos:
+            return []
+        if self.bundle is None:
+            raise RuntimeError(
+                "predict_temporal_batch() requires a worker constructed with "
+                "predictor_ckpt; current worker is masked-mode only"
+            )
+        k = past_frames_list[0]
+        h = future_frames_list[0]
+        if any(pk != k for pk in past_frames_list) or any(fh != h for fh in future_frames_list):
+            raise ValueError(
+                "temporal-mode batch requires uniform past_frames and "
+                "future_frames across the batch; got "
+                f"past_frames={set(past_frames_list)}, "
+                f"future_frames={set(future_frames_list)}"
+            )
+        if k != self.past_frames or h != self.future_frames:
+            raise RuntimeError(
+                f"batch past/future frames ({k}/{h}) don't match worker "
+                f"grid ({self.past_frames}/{self.future_frames})"
+            )
+
+        ref = videos[0].shape
+        for i, v in enumerate(videos):
+            if tuple(v.shape) != tuple(ref):
+                raise ValueError(
+                    f"video[{i}] has shape {tuple(v.shape)} != reference "
+                    f"{tuple(ref)}; batched temporal predict requires "
+                    f"uniform shape"
+                )
+        batched = torch.stack(videos, dim=0)  # (B, T, C, H, W)
+        past_video = batched[:, :k]
+        future_video = batched[:, k:k + h]
+
+        past_feats = self.bundle.online(
+            pixel_values_videos=past_video
+        ).last_hidden_state
+        predicted = self.bundle.temporal_predictor(
+            past_feats, future_grid=self._future_grid
+        )
+        target = self.bundle.target(
+            pixel_values_videos=future_video
+        ).last_hidden_state
+
+        sim = torch.nn.functional.cosine_similarity(predicted, target, dim=-1)
+        confidence_per_sample = sim.mean(dim=-1)  # (B,)
+        return [
+            (predicted[i], float(confidence_per_sample[i]))
+            for i in range(batched.shape[0])
+        ]
+
+    @torch.no_grad()
     def predict_temporal(
         self,
         video_tensor: torch.Tensor,

@@ -171,6 +171,27 @@ class VJEPA2NPUWorker(_resolve_base_class()):
         return out.last_hidden_state
 
     @torch.no_grad()
+    def predict_masked_batch(
+        self, videos: list[torch.Tensor], mask_ratios: list[float],
+    ) -> list[torch.Tensor]:
+        """NPU-accelerated batched masked prediction (W25)."""
+        raise NotImplementedError(
+            "W25 NPU batched masked prediction deferred to Atlas pilot; "
+            "use the CPU VJEPA2Worker for batched inference."
+        )
+
+    @torch.no_grad()
+    def predict_temporal_batch(
+        self, videos: list[torch.Tensor],
+        past_frames_list: list[int], future_frames_list: list[int],
+    ) -> list[tuple[torch.Tensor, float]]:
+        """NPU-accelerated batched temporal prediction (W25)."""
+        raise NotImplementedError(
+            "W25 NPU batched temporal prediction deferred to Atlas pilot; "
+            "use the CPU VJEPA2Worker for batched inference."
+        )
+
+    @torch.no_grad()
     def plan(self, video_tensor: torch.Tensor, actions: list[int]) -> tuple[torch.Tensor, list[int]]:
         """NPU-accelerated V-JEPA 2-AC action-conditioned prediction.
 

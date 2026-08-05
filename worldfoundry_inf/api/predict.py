@@ -11,6 +11,10 @@ Per spec §4.3 + W24 (Phase-3):
   confidence. Returns ``{future_features, confidence, mode}``.
 
 Both modes share the same HMAC contract (``_check_auth`` is unchanged).
+
+W25: each request is routed through the per-adapter ``PredictBatcher``
+which aggregates up to ``max_batch`` requests or ``max_latency_ms``
+deadline before dispatching a single batched worker call.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ import torch
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from worldfoundry_common.exceptions import AdapterNotFoundError
+from worldfoundry_inf.predict_batcher import PredictBatcher, PredictRequest
 from worldfoundry_inf.security import HmacTokenAuth
 
 router = APIRouter()
@@ -56,29 +61,40 @@ async def predict(request: Request, auth: HmacTokenAuth = Depends(lambda: None))
         raise HTTPException(status_code=404, detail=f"adapter {adapter_name!r} not registered") from exc
 
     tensor = torch.from_numpy(video).float().permute(0, 3, 1, 2).unsqueeze(0)
+    # W25: /predict uses the per-adapter batcher to amortize GPU compute;
+    # /encode and /plan still call the worker directly. The batcher is
+    # optional — fall back to direct calls when not configured.
+    batcher = getattr(request.app.state, "predict_batcher", None)
 
     if mode == "masked":
-        return _handle_masked(payload, tensor, worker)
-    return _handle_temporal(payload, tensor, worker)
+        return _handle_masked(payload, tensor, worker, batcher)
+    return _handle_temporal(payload, tensor, worker, batcher)
 
 
-def _handle_masked(payload: dict, tensor: torch.Tensor, worker: object) -> dict:
+def _handle_masked(payload: dict, tensor: torch.Tensor, worker: object, batcher: PredictBatcher | None) -> dict:
     if "mask_ratio" not in payload:
         raise HTTPException(status_code=400, detail="missing 'mask_ratio'")
     mask_ratio = float(payload["mask_ratio"])
     if not 0.0 <= mask_ratio <= 1.0:
         raise HTTPException(status_code=400, detail="mask_ratio must be in [0,1]")
-    mask = torch.zeros(1, tensor.shape[1], dtype=torch.bool)
-    n_masked = int(mask_ratio * tensor.shape[1])
-    mask[0, :n_masked] = True
-    pred = worker.predict(tensor, mask)
+    if batcher is not None and hasattr(worker, "predict_masked_batch"):
+        req = PredictRequest(video=tensor[0], mode="masked", mask_ratio=mask_ratio)
+        try:
+            pred = batcher.submit(req).result(timeout=2.0)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"predict batcher failed: {exc}") from exc
+    else:
+        mask = torch.zeros(1, tensor.shape[1], dtype=torch.bool)
+        n_masked = int(mask_ratio * tensor.shape[1])
+        mask[0, :n_masked] = True
+        pred = worker.predict(tensor, mask)
     return {
         "predicted_features": pred.tolist(),
         "loss_score": float((pred ** 2).mean()),
     }
 
 
-def _handle_temporal(payload: dict, tensor: torch.Tensor, worker: object) -> dict:
+def _handle_temporal(payload: dict, tensor: torch.Tensor, worker: object, batcher: PredictBatcher | None) -> dict:
     if "past_frames" not in payload or "future_frames" not in payload:
         raise HTTPException(
             status_code=400,
@@ -107,12 +123,26 @@ def _handle_temporal(payload: dict, tensor: torch.Tensor, worker: object) -> dic
             "CPU VJEPA2Worker on a worker that supports it)",
         )
 
-    try:
-        future_features, confidence = worker.predict_temporal(
-            tensor, past_frames, future_frames,
+    if batcher is not None and hasattr(worker, "predict_temporal_batch"):
+        req = PredictRequest(
+            video=tensor[0],
+            mode="temporal",
+            past_frames=past_frames,
+            future_frames=future_frames,
         )
-    except NotImplementedError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        try:
+            future_features, confidence = batcher.submit(req).result(timeout=2.0)
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"predict batcher failed: {exc}") from exc
+    else:
+        try:
+            future_features, confidence = worker.predict_temporal(
+                tensor, past_frames, future_frames,
+            )
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return {
         "future_features": future_features.tolist(),
@@ -129,3 +159,4 @@ def _check_auth(request: Request, auth: HmacTokenAuth, body_bytes: bytes) -> Non
     sig = hdr[len("HMAC "):]
     if not auth.verify(request.method, request.url.path, body_bytes, ts, sig):
         raise HTTPException(status_code=401, detail="HMAC verification failed")
+
