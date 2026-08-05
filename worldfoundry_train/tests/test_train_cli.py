@@ -18,7 +18,7 @@ def test_cli_help_lists_parallel_and_steps():
     r = subprocess.run(
         [sys.executable, "-m", "worldfoundry_train.train", "--help"],
         capture_output=True, text=True,
-        cwd="/mnt/c/WorkSpace/WorldForge",
+        cwd="/mnt/c/WorkSpace/WorldFoundry",
     )
     assert r.returncode == 0
     assert "--parallel" in r.stdout
@@ -29,7 +29,7 @@ def test_cli_help_advertises_ddp_and_fsdp_choices():
     r = subprocess.run(
         [sys.executable, "-m", "worldfoundry_train.train", "--help"],
         capture_output=True, text=True,
-        cwd="/mnt/c/WorkSpace/WorldForge",
+        cwd="/mnt/c/WorkSpace/WorldFoundry",
     )
     assert "ddp" in r.stdout and "fsdp" in r.stdout
 
@@ -52,7 +52,7 @@ def test_cli_missing_manifest_exits_nonzero_with_explicit_error():
          "--config", "/nonexistent/manifest.yaml",
          "--steps", "1"],
         capture_output=True, text=True,
-        cwd="/mnt/c/WorkSpace/WorldForge",
+        cwd="/mnt/c/WorkSpace/WorldFoundry",
     )
     assert r.returncode != 0
     assert "Manifest not found" in r.stderr or "FileNotFoundError" in r.stderr
@@ -63,7 +63,7 @@ def test_cli_rejects_unknown_parallel_value():
         [sys.executable, "-m", "worldfoundry_train.train",
          "--config", "x.yaml", "--parallel", "bogus"],
         capture_output=True, text=True,
-        cwd="/mnt/c/WorkSpace/WorldForge",
+        cwd="/mnt/c/WorkSpace/WorldFoundry",
     )
     assert r.returncode == 2  # argparse default for invalid choice
 
@@ -87,7 +87,7 @@ def test_cli_help_includes_checkpoint_flags():
     r = subprocess.run(
         [sys.executable, "-m", "worldfoundry_train.train", "--help"],
         capture_output=True, text=True,
-        cwd="/mnt/c/WorkSpace/WorldForge",
+        cwd="/mnt/c/WorkSpace/WorldFoundry",
     )
     assert r.returncode == 0
     assert "--checkpoint-dir" in r.stdout
