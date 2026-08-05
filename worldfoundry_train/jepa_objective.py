@@ -240,9 +240,18 @@ class JEPAObjective:
         ``model`` is the online (PEFT-wrapped) encoder. See the module
         docstring for why ``bool_masked_pos`` is NOT forwarded to the HF
         encoder and why both forwards pass ``skip_predictor=True``.
+
+        Multi-mask (W22.8 design §4.1): when the collator supplies
+        ``bool_masked_pos_k`` of shape ``(B, K, N)`` the loss averages over
+        all K masks. Both encoder forwards are mask-independent, so K scales
+        only the predictor and loss work, never the backbone.
         """
         x = batch["pixel_values_videos"]
-        mask = batch["bool_masked_pos"]
+        if "bool_masked_pos_k" in batch:
+            mk = batch["bool_masked_pos_k"]  # (B, K, N)
+            masks = [mk[:, i] for i in range(mk.shape[1])]  # K x (B, N)
+        else:
+            masks = [batch["bool_masked_pos"]]  # K=1 path (W22 contract)
 
         t0 = time.perf_counter() if self.timing is not None else None
         h_ctx = model(
@@ -253,7 +262,7 @@ class JEPAObjective:
             h_tgt = self.target_encoder(
                 pixel_values_videos=x, skip_predictor=True
             ).last_hidden_state  # (B, N, D), stop-gradient
-        loss = self._loss_for_masks(h_ctx, h_tgt, [mask])
+        loss = self._loss_for_masks(h_ctx, h_tgt, masks)
         if self.timing is not None:
             t2 = time.perf_counter()
             self.timing["context_forward_s"] = (
@@ -275,10 +284,11 @@ class JEPAObjective:
     ) -> torch.Tensor:
         """Mean loss over K independently sampled masks (design §6.2).
 
-        v1 uses K=1 (the batch's ``bool_masked_pos``); K>1 is reserved for
-        the multi-mask data pipeline (W23+, non-goal §2.2). An all-False mask
-        is skipped; if every mask is empty the loss is a graph-attached zero
-        so backward stays well-defined.
+        K comes from ``jepa.loss.num_masks``: K=1 uses the batch's
+        ``bool_masked_pos``, K>1 the collator's ``bool_masked_pos_k``
+        (W22.8 multi-mask pipeline). An all-False mask is skipped; if every
+        mask is empty the loss is a graph-attached zero so backward stays
+        well-defined.
         """
         if h_tgt.requires_grad:
             raise RuntimeError("target features must be stop-gradient")

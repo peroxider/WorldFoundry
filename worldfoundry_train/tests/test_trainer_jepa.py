@@ -4,7 +4,7 @@ Covers: jepa.enabled=true end-to-end (predictor built, EMA advances per
 optimizer step, ema_schedule_steps=null resolution with grad_accum), env
 override WORLDFORGE_JEPA=off, feature-flag equivalence (jepa.enabled=false
 == no jepa key, byte-for-byte), cpu_offload mutual exclusion, loss_fn
-conflict, and num_masks>1 rejection.
+conflict, and num_masks<1 rejection.
 """
 from __future__ import annotations
 
@@ -214,9 +214,9 @@ def test_jepa_rejects_cpu_offload(_patch_dataset):
         )
 
 
-def test_jepa_rejects_num_masks_above_one(_patch_dataset):
+def test_jepa_rejects_num_masks_below_one(_patch_dataset):
     jepa = _jepa_cfg()
-    jepa["loss"] = {"type": "smooth_l1", "beta": 1.0, "num_masks": 2}
+    jepa["loss"] = {"type": "smooth_l1", "beta": 1.0, "num_masks": 0}
     with pytest.raises(ValueError, match="num_masks"):
         run_training(
             _cfg(jepa=jepa), _Passthrough(),

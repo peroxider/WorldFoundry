@@ -72,9 +72,16 @@ def _build_dataset(cfg: dict) -> Vjepa2Dataset:
     ratio = float(cfg["data"]["mask_ratio"])
     def mask_fn(shape, rng):
         return tubelet_mask(shape, tubelet, mask_ratio=ratio, rng=rng)
+    # W22.8 multi-mask: K>1 drives the dataset to sample that many masks
+    # per item. The full .get chain keeps cfgs that lack a jepa/loss
+    # section (most of the legacy test cfg dicts) buildable with K=1.
+    num_masks = int(
+        cfg.get("jepa", {}).get("loss", {}).get("num_masks", 1)
+    )
     return Vjepa2Dataset(
         manifest_path=cfg["data"]["manifest"],
         mask_fn=mask_fn,
+        mask_count=num_masks,
     )
 
 
@@ -136,10 +143,9 @@ def _build_jepa_objective(
 
     encoder_dim = int(peft_model.config.hidden_size)
     num_masks = int(loss_cfg.get("num_masks", 1))
-    if num_masks != 1:
+    if num_masks < 1:
         raise ValueError(
-            f"jepa.loss.num_masks={num_masks} requires the multi-mask data "
-            f"pipeline (W23+, design §2.2 non-goal); v1 supports num_masks=1."
+            f"jepa.loss.num_masks={num_masks} must be >= 1."
         )
 
     predictor = JEPAPredictor(

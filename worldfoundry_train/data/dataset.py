@@ -5,6 +5,10 @@ each video via the project's `build_video_source` factory, normalizes
 frames to float32 in [0, 1], transposes to (T, 3, H, W), and invokes a
 caller-supplied `mask_fn` with the per-token patch grid derived from
 `patch_size` (default 14, V-JEPA 2 ViT-L).
+
+Multi-mask (W22.8): `mask_count` > 1 samples K masks per item and adds a
+`masks` key holding all K. `mask` always carries mask 0, so K=1 output is
+identical to the pre-W22.8 shape.
 """
 from __future__ import annotations
 
@@ -30,14 +34,18 @@ class Vjepa2Dataset:
         manifest_path: Path,
         mask_fn: MaskFn,
         patch_size: int = 14,
+        mask_count: int = 1,
     ) -> None:
         if patch_size <= 0:
             raise ValueError(f"patch_size must be > 0; got {patch_size}")
+        if mask_count < 1:
+            raise ValueError(f"mask_count must be >= 1; got {mask_count}")
         self.manifest_path = Path(manifest_path)
         if not self.manifest_path.exists():
             raise FileNotFoundError(f"Manifest not found: {self.manifest_path}")
         self.mask_fn = mask_fn
         self.patch_size = patch_size
+        self.mask_count = mask_count
         self.entries: list[dict[str, str]] = []
         with self.manifest_path.open() as f:
             reader = csv.DictReader(f)
@@ -73,8 +81,21 @@ class Vjepa2Dataset:
         frames = np.transpose(frames, (0, 3, 1, 2))  # (T, 3, H, W)
         T, _, H, W = frames.shape
         grid = (T, H // self.patch_size, W // self.patch_size)
-        mask = self.mask_fn(grid, np.random.default_rng(idx))
-        return {"frames": frames, "mask": mask}
+        # Seed = idx * K + i so the K masks of one sample differ from each
+        # other while staying reproducible across epochs. At K=1 this
+        # collapses to `idx`, byte-identical to the pre-W22.8 behaviour that
+        # the W22.7 A/B baseline curves were produced with.
+        masks = [
+            self.mask_fn(grid, np.random.default_rng(idx * self.mask_count + i))
+            for i in range(self.mask_count)
+        ]
+        # "mask" is always present (= mask 0) so consumers that predate
+        # multi-mask keep working; "masks" appears only for K > 1 so the
+        # collator can dispatch on its presence without ambiguity.
+        out: dict[str, np.ndarray] = {"frames": frames, "mask": masks[0]}
+        if self.mask_count > 1:
+            out["masks"] = masks  # type: ignore[assignment]
+        return out
 
 
 def _self_test() -> int:

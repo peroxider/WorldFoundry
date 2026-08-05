@@ -48,7 +48,7 @@ jepa:
   loss:
     type: smooth_l1            # smooth_l1 | l1 | cosine
     beta: 1.0                  # Huber beta for smooth_l1
-    num_masks: 1               # >1 needs the multi-mask data pipeline (W23+)
+    num_masks: 1               # >1 drives the multi-mask data pipeline (W22.8); v1 recommends K=2
 
 # Optional: quantize the baseline weights before training (W18+).
 # Requires `worldfoundry_inf` and a saved local model dir in `source_dir`.
