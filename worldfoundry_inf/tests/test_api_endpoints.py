@@ -21,7 +21,10 @@ def client(monkeypatch):
             import torch
             return torch.zeros(1, 196, 1024)
 
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
+    monkeypatch.setattr(
+        "worldfoundry_inf.vjepa2_worker.VJEPA2Worker",
+        lambda *a, **kw: _StubWorker(),
+    )
 
     app = create_app(model_path="/fake/model", secret="test-secret")
     return TestClient(app)
@@ -83,7 +86,10 @@ def predict_client(monkeypatch):
             import torch
             return torch.zeros(1, 196, 1024)
 
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
+    monkeypatch.setattr(
+        "worldfoundry_inf.vjepa2_worker.VJEPA2Worker",
+        lambda *a, **kw: _StubWorker(),
+    )
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
 
 
@@ -128,7 +134,10 @@ def plan_client(monkeypatch):
             import torch
             return torch.zeros(1, 196, 1024), [int(a) for a in actions]
 
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker.VJEPA2Worker", lambda p: _StubWorker())
+    monkeypatch.setattr(
+        "worldfoundry_inf.vjepa2_worker.VJEPA2Worker",
+        lambda *a, **kw: _StubWorker(),
+    )
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
 
 
@@ -225,3 +234,152 @@ def test_plan_rejects_malformed_video(plan_client):
                  "Content-Type": "application/json"},
     )
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# W24: temporal-mode predict (mode="temporal")
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def temporal_client(monkeypatch):
+    """Test client whose stub worker exposes ``predict_temporal``."""
+    class _TemporalStubWorker:
+        def encode(self, x):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+        def predict(self, x, mask):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+        def predict_temporal(self, x, past_frames, future_frames):
+            import torch
+            # (B, N_future, hidden_dim), confidence in [-1, 1]
+            return torch.zeros(1, future_frames * 196, 1024), 0.5
+
+    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker.VJEPA2Worker", lambda *a, **kw: _TemporalStubWorker())
+    return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
+
+
+def _sign_request(secret: str, method: str, path: str, body: bytes) -> dict:
+    import hashlib
+    import hmac
+    import time
+    ts = str(int(time.time()))
+    canonical = f"{method}\n{path}\n{len(body)}\n{ts}".encode() + body
+    sig = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+    return {
+        "Authorization": f"HMAC {sig}",
+        "X-WorldFoundry-Timestamp": ts,
+        "Content-Type": "application/json",
+    }
+
+
+def test_predict_temporal_with_valid_auth_returns_future_features_and_confidence(
+    temporal_client, fake_video_bytes,
+):
+    method = "POST"
+    path = "/v1/world/predict"
+    # fake_video_bytes is 10 frames; past_frames=2 + future_frames=2 = 4 <= 10.
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"temporal",'
+        f'"past_frames":2,"future_frames":2}}'
+    ).encode()
+    resp = temporal_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["mode"] == "temporal"
+    assert "future_features" in payload
+    assert isinstance(payload["confidence"], float)
+    assert -1.0 <= payload["confidence"] <= 1.0
+
+
+def test_predict_temporal_rejects_past_frames_below_one(temporal_client, fake_video_bytes):
+    method = "POST"
+    path = "/v1/world/predict"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"temporal",'
+        f'"past_frames":0,"future_frames":2}}'
+    ).encode()
+    resp = temporal_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 400
+    assert "past_frames" in resp.json()["detail"]
+
+
+def test_predict_temporal_rejects_future_frames_below_one(temporal_client, fake_video_bytes):
+    method = "POST"
+    path = "/v1/world/predict"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"temporal",'
+        f'"past_frames":2,"future_frames":0}}'
+    ).encode()
+    resp = temporal_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 400
+    assert "future_frames" in resp.json()["detail"]
+
+
+def test_predict_temporal_rejects_past_plus_future_exceeding_video_length(
+    temporal_client, fake_video_bytes,
+):
+    method = "POST"
+    path = "/v1/world/predict"
+    # fake_video_bytes has 10 frames; past=8 + future=8 = 16 > 10.
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"temporal",'
+        f'"past_frames":8,"future_frames":8}}'
+    ).encode()
+    resp = temporal_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 400
+    assert "exceeds video length" in resp.json()["detail"]
+
+
+def test_predict_temporal_returns_503_when_worker_has_no_predict_temporal_method(
+    predict_client, fake_video_bytes,
+):
+    """predict_client's stub has only encode() + predict(), no predict_temporal()."""
+    method = "POST"
+    path = "/v1/world/predict"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"temporal",'
+        f'"past_frames":2,"future_frames":2}}'
+    ).encode()
+    resp = predict_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 503
+    assert "temporal mode" in resp.json()["detail"]
+
+
+def test_predict_temporal_requires_auth(temporal_client, fake_video_bytes):
+    """No HMAC headers -> 401, even in temporal mode."""
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"temporal",'
+        f'"past_frames":2,"future_frames":2}}'
+    ).encode()
+    resp = temporal_client.post(
+        "/v1/world/predict", content=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 401
+
+
+def test_predict_unknown_mode_returns_400(temporal_client, fake_video_bytes):
+    method = "POST"
+    path = "/v1/world/predict"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"bogus"}}'
+    ).encode()
+    resp = temporal_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 400
+    assert "mode must be" in resp.json()["detail"]

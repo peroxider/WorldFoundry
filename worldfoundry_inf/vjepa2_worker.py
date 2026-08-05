@@ -6,6 +6,13 @@ Per spec §4.1 + §4.2:
   that exposes encode/predict/plan methods, sharing the operator library
   (FlashAttention, RMSNorm, quant).
 - Phase-1: minimal skeleton; Phase-2 W3 wires the full Hardware Pluggable registration.
+
+W24 (Phase-3): the worker optionally loads a W22 JEPA training checkpoint
+(``predictor_ckpt``) to expose :meth:`predict_temporal` — past K frames ->
+future H frame latents. When ``predictor_ckpt`` is None, the worker is
+byte-compatible with the W22 surface (``encode`` / ``predict`` / ``plan``
+only); when set, ``predict_temporal`` is enabled and the bundle's
+online/target encoders + temporal predictor are used for the temporal path.
 """
 from __future__ import annotations
 
@@ -13,6 +20,15 @@ from pathlib import Path
 from typing import Optional
 
 import torch
+
+from worldfoundry_train.model.jepa_inference import (
+    JEPInferenceBundle,
+    load_jepa_inference_model,
+)
+
+# V-JEPA 2 ViT-L: image_size=224, patch_size=16 -> 14x14 patch grid per frame.
+DEFAULT_PATCH_SIZE = 16
+DEFAULT_IMAGE_SIZE = 224
 
 
 def _load_hf_model(path: Path, dtype: torch.dtype = torch.bfloat16):
@@ -22,18 +38,66 @@ def _load_hf_model(path: Path, dtype: torch.dtype = torch.bfloat16):
 
 
 class VJEPA2Worker:
-    """Wraps a V-JEPA 2 model for batch inference."""
+    """Wraps a V-JEPA 2 model for batch inference.
+
+    Args:
+        model_path: path to the HF V-JEPA 2 model directory.
+        adapter_name: optional LoRA adapter name (Phase-2 W3).
+        dtype: model dtype for HF model load.
+        predictor_ckpt: optional path to a W22 JEPA training checkpoint
+            (``load_jepa_inference_model``). When set, :meth:`predict_temporal`
+            is enabled and ``past_frames`` / ``future_frames`` configure the
+            :class:`TemporalPredictor` grid.
+        past_frames: K (past-frame count) for the temporal predictor's input
+            grid; defaults to 1.
+        future_frames: H (future-frame count) for the temporal predictor's
+            output grid; defaults to 1.
+        patch_size: ViT patch size (16 for ViT-L).
+        image_size: encoder input spatial size (224 for ViT-L).
+    """
 
     def __init__(
         self,
         model_path: Path,
         adapter_name: Optional[str] = None,
         dtype: torch.dtype = torch.bfloat16,
+        predictor_ckpt: Path | str | None = None,
+        past_frames: int = 1,
+        future_frames: int = 1,
+        patch_size: int = DEFAULT_PATCH_SIZE,
+        image_size: int = DEFAULT_IMAGE_SIZE,
     ) -> None:
         self.model_path = Path(model_path)
         self.adapter_name = adapter_name
         self.dtype = dtype
         self.model = _load_hf_model(self.model_path, dtype=self.dtype)
+
+        # W24: optional JEPA bundle (online/target encoders + predictors).
+        # When predictor_ckpt is None, ``self.bundle`` stays None and
+        # ``predict_temporal`` raises RuntimeError (the API endpoint maps
+        # that to 503 "temporal mode not enabled for this worker").
+        self.bundle: Optional[JEPInferenceBundle] = None
+        self.past_frames = past_frames
+        self.future_frames = future_frames
+        self.patch_size = patch_size
+        self.image_size = image_size
+        self._past_grid: tuple[int, int, int] | None = None
+        self._future_grid: tuple[int, int, int] | None = None
+        if predictor_ckpt is not None:
+            self.bundle = self._build_bundle(predictor_ckpt)
+
+    def _build_bundle(self, ckpt: Path | str) -> JEPInferenceBundle:
+        gh = self.image_size // self.patch_size
+        gw = self.image_size // self.patch_size
+        past_grid = (self.past_frames, gh, gw)
+        future_grid = (self.future_frames, gh, gw)
+        self._past_grid = past_grid
+        self._future_grid = future_grid
+        return load_jepa_inference_model(
+            ckpt, self.model,
+            past_grid=past_grid, future_grid=future_grid,
+            map_location="cpu",
+        )
 
     @torch.no_grad()
     def encode(self, video_tensor: torch.Tensor) -> torch.Tensor:
@@ -54,6 +118,74 @@ class VJEPA2Worker:
         return out.last_hidden_state
 
     @torch.no_grad()
+    def predict_temporal(
+        self,
+        video_tensor: torch.Tensor,
+        past_frames: int,
+        future_frames: int,
+    ) -> tuple[torch.Tensor, float]:
+        """Predict the next ``future_frames`` frame latents from the first
+        ``past_frames`` frame latents (W24 temporal mode).
+
+        Args:
+            video_tensor: (B, T, C, H, W) float tensor; T must be >=
+                past_frames + future_frames. The first ``past_frames``
+                frames feed the online encoder; the next ``future_frames``
+                frames are encoded by the EMA target encoder to score the
+                prediction's confidence.
+            past_frames: K (must match this worker's configured
+                ``past_frames``).
+            future_frames: H (must match this worker's configured
+                ``future_frames``).
+
+        Returns:
+            (future_features, confidence): ``future_features`` is
+            ``(B, N_future, hidden_dim)``; ``confidence`` is the mean cosine
+            similarity between predicted and target-encoder features on
+            [-1, 1] (higher = more confident).
+
+        Raises:
+            RuntimeError: this worker was constructed without
+                ``predictor_ckpt`` (temporal mode not enabled), or
+                ``past_frames`` / ``future_frames`` don't match the
+                worker's configured grid, or the video is too short.
+        """
+        if self.bundle is None:
+            raise RuntimeError(
+                "predict_temporal() requires a worker constructed with "
+                "predictor_ckpt; current worker is masked-mode only"
+            )
+        if past_frames != self.past_frames or future_frames != self.future_frames:
+            raise RuntimeError(
+                f"worker is configured for past_frames={self.past_frames}, "
+                f"future_frames={self.future_frames}; request has "
+                f"past_frames={past_frames}, future_frames={future_frames}. "
+                f"Adjust the worker's predictor_ckpt past/future grid"
+            )
+        if video_tensor.shape[1] < past_frames + future_frames:
+            raise RuntimeError(
+                f"video has {video_tensor.shape[1]} frames; need at least "
+                f"past_frames+future_frames={past_frames + future_frames}"
+            )
+
+        past_video = video_tensor[:, :past_frames]
+        future_video = video_tensor[:, past_frames:past_frames + future_frames]
+
+        past_feats = self.bundle.online(
+            pixel_values_videos=past_video
+        ).last_hidden_state
+        predicted = self.bundle.temporal_predictor(
+            past_feats, future_grid=self._future_grid
+        )
+        target = self.bundle.target(
+            pixel_values_videos=future_video
+        ).last_hidden_state
+
+        sim = torch.nn.functional.cosine_similarity(predicted, target, dim=-1)
+        confidence = float(sim.mean())
+        return predicted, confidence
+
+    @torch.no_grad()
     def plan(self, video_tensor: torch.Tensor, actions: list[int]) -> tuple[torch.Tensor, list[int]]:
         """V-JEPA 2-AC: given (video, actions), return next-state features.
 
@@ -63,4 +195,3 @@ class VJEPA2Worker:
         """
         feats = self.encode(video_tensor)
         return feats, list(actions)
-

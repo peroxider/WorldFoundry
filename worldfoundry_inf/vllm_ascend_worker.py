@@ -97,12 +97,22 @@ class VJEPA2NPUWorker(_resolve_base_class()):
         model_path: Path,
         adapter_name: Optional[str] = None,
         dtype: torch.dtype = torch.bfloat16,
+        predictor_ckpt: Path | str | None = None,
+        past_frames: int = 1,
+        future_frames: int = 1,
         *args: Any,
         **kwargs: Any,
     ) -> None:
         self.model_path = Path(model_path)
         self.adapter_name = adapter_name
         self.dtype = dtype
+        # W24 parity with ``VJEPA2Worker``: the NPU path does NOT load the
+        # JEPA bundle in v1 (Atlas pilot is the trigger, per roadmap G11),
+        # but the attributes are stored so server-side construction has a
+        # single signature for both CPU and NPU workers.
+        self.predictor_ckpt = Path(predictor_ckpt) if predictor_ckpt is not None else None
+        self.past_frames = past_frames
+        self.future_frames = future_frames
         self.model: Optional[torch.nn.Module] = None
         # Skip NPU base-class init when running on the stub (CPU-only test
         # path). On Atlas, vllm_ascend's NPUWorker.__init__ sets the device
@@ -170,3 +180,22 @@ class VJEPA2NPUWorker(_resolve_base_class()):
         """
         feats = self.encode(video_tensor)
         return feats, list(actions)
+
+    @torch.no_grad()
+    def predict_temporal(
+        self,
+        video_tensor: torch.Tensor,
+        past_frames: int,
+        future_frames: int,
+    ) -> tuple[torch.Tensor, float]:
+        """NPU-accelerated W24 temporal-mode prediction.
+
+        The NPU path is not wired for W24 v1 (roadmap G11: NPU worker has
+        not been verified on Atlas yet). Raised explicitly so the API
+        endpoint can surface a 503 "temporal mode not available on this
+        worker" rather than silently returning masked-mode output.
+        """
+        raise NotImplementedError(
+            "W24 NPU temporal-mode path deferred to Atlas pilot "
+            "(roadmap G11); use the CPU VJEPA2Worker for temporal mode."
+        )
