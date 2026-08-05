@@ -220,3 +220,24 @@ class VJEPA2NPUWorker(_resolve_base_class()):
             "W24 NPU temporal-mode path deferred to Atlas pilot "
             "(roadmap G11); use the CPU VJEPA2Worker for temporal mode."
         )
+
+    @torch.no_grad()
+    def predict_action_conditioned(
+        self,
+        video_tensor: torch.Tensor,
+        actions: torch.Tensor,
+        past_frames: int,
+        future_frames: int,
+    ) -> tuple[torch.Tensor, float]:
+        """NPU-accelerated V-JEPA 2-AC action-conditioned prediction (W27).
+
+        Same deferral rationale as :meth:`predict_temporal` — the NPU
+        worker is not verified on Atlas (roadmap G11), and W27 v1 only
+        lands the predictor module in tree. The action_proj + cross-attn
+        wiring + an action-conditioned JEPA checkpoint come in W27+.
+        """
+        raise NotImplementedError(
+            "W27 NPU action-conditioned path deferred to Atlas pilot "
+            "(roadmap G11); use the CPU VJEPA2Worker for the predictor "
+            "module while the inference bundle is being built."
+        )

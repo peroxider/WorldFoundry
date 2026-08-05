@@ -301,3 +301,29 @@ class VJEPA2Worker:
         """
         feats = self.encode(video_tensor)
         return feats, list(actions)
+
+    @torch.no_grad()
+    def predict_action_conditioned(
+        self,
+        video_tensor: torch.Tensor,
+        actions: torch.Tensor,
+        past_frames: int,
+        future_frames: int,
+    ) -> tuple[torch.Tensor, float]:
+        """V-JEPA 2-AC: past K frames + K actions -> future H frame latents (W27).
+
+        Sister to :meth:`predict_temporal` but additionally conditioned on a
+        per-frame action sequence. The CPU worker's full W27 wiring is
+        deferred — the action-conditioned predictor module is in tree
+        (``worldfoundry_train.model.action_predictor``), but a real
+        action-conditioned JEPA checkpoint + the matching inference loader
+        are needed for end-to-end serving. For now we raise explicitly so
+        callers can surface a 503 rather than silently returning temporal
+        output.
+        """
+        raise NotImplementedError(
+            "W27 action-conditioned mode requires a V-JEPA 2-AC JEPA "
+            "checkpoint and an action-conditioned inference bundle; the "
+            "CPU worker ships only the predictor module at this point. "
+            "Use predict_temporal() until W27+ wires the inference bundle."
+        )

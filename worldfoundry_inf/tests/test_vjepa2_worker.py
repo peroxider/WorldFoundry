@@ -83,3 +83,22 @@ def test_worker_with_predictor_ckpt_loads_bundle(monkeypatch):
     )
     assert worker.bundle is fake_bundle
     assert worker.bundle._grids == ((2, 14, 14), (3, 14, 14))
+
+
+# ---------------------------------------------------------------------------
+# W27: predict_action_conditioned API stub
+# ---------------------------------------------------------------------------
+
+
+def test_worker_predict_action_conditioned_raises(monkeypatch):
+    """W27 v1 wires the method surface; the actual wiring lands in W27+."""
+    import torch
+    monkeypatch.setattr(
+        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        lambda path, dtype: _FakeHFModel(),
+    )
+    worker = VJEPA2Worker("/fake/model", adapter_name=None)
+    video = torch.zeros(1, 4, 3, 64, 64)
+    actions = torch.zeros(1, 2, 7)
+    with pytest.raises(NotImplementedError, match="action-conditioned"):
+        worker.predict_action_conditioned(video, actions, past_frames=2, future_frames=2)
