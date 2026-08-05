@@ -1,0 +1,73 @@
+# W22.7 A/B/C experiment — ARM C: zero-mask sanity check (review §2.1).
+#
+# Identical to w22_7_arm_b_jepa.yaml in every field EXCEPT data.mask_ratio.
+# The whole point of arm C is to PROVE the mask signal is being learned:
+# with mask_ratio=0 the predictor sees no masked tokens, so the regression
+# target collapses to a graph-attached zero (jepa_objective._loss_for_masks
+# graph-attached-zero branch) and the EMA target encoder gets no positional
+# pressure. The expected behavior:
+#
+#   recon_cosine(B) - recon_cosine(C)  >= 0.15      (mask signal strength)
+#   probing(B)    ~ probing(C)         within CI    (no spurious signal)
+#   probing(C)    ~ probing(A)         within CI    (encoder fits data only)
+#
+# If arm C and arm B end up with similar recon_cosine and similar probing,
+# the mask signal is weak and the problem is upstream (HF architecture
+# swallows bool_masked_pos — see addendum §1.1 偏差 #1). If C recovers A
+# on probing but B is well above both, the JEPA objective is doing real work
+# on a real signal — i.e. the experiment is valid.
+#
+# Data subset / pipeline: same fixed manifest + seeded masking as arms A,B
+# (w22_7_make_subset.py). mask_ratio is read by the data pipeline at sample
+# time (dataset.py:76 deterministic seed), so the same per-sample mask
+# generator now yields an all-False tensor.
+#
+# Atlas run parameters (hardware window): 8x NPU, FSDP FULL_SHARD, hccl,
+# bf16 — driven by scripts/w22_7_ab_experiment.sh via torchrun (NPU device
+# migration W20; until it lands the single-process atlas path runs the same
+# code through torchrun + setup_fsdp with tensors on NPU).
+
+model:
+  hf_repo: facebook/vjepa2-vitl-1.2b
+  bf16: true
+  gradient_checkpointing: true
+
+lora:
+  r: 16
+  alpha: 32
+  dropout: 0.05
+  bias: none
+
+training:
+  parallel: fsdp           # Atlas: FSDPStrategy FULL_SHARD over 8 hccl ranks
+  per_device_batch: 2
+  grad_accum: 8
+  epochs: 1
+  lr: 1.0e-4
+  warmup_steps: 100
+  log_every_n: 10
+  save_every_n: 250        # probing metrics are computed per checkpoint step
+
+data:
+  manifest: bench_results/w22_7/subset_manifest.csv   # GENERATED, fixed subset
+  mask_tubelet_size: [2, 14, 14]
+  mask_ratio: 0.0          # ARM C: sanity check — predictor receives NO masked positions
+
+jepa:
+  enabled: true            # ARM C: same JEPA objective as B (predictor + EMA target)
+  predictor:
+    embed_dim: 384
+    depth: 12
+    num_heads: 12
+    mlp_ratio: 4.0
+    lr_scale: 1.0
+  ema:
+    momentum_start: 0.996
+    momentum_end: 1.0
+    schedule: cosine
+    schedule_steps: null       # = total optimizer steps (identical across arms)
+    update_every: 1            # raise if §12-② gather cost demands it (W22.7 measurement)
+  loss:
+    type: smooth_l1
+    beta: 1.0
+    num_masks: 1

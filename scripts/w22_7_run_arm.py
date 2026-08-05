@@ -67,6 +67,20 @@ DRY_N, DRY_GRID, DRY_DIM = 196, (1, 14, 14), 64
 DEFAULT_PILOT_STEPS_ATLAS = 200
 DEFAULT_PILOT_STEPS_DRY = 40
 
+# Default YAML config suffix per arm (review §2.1, 2026-08-05): arm C is the
+# zero-mask sanity check, hence the `_mask0` suffix instead of `_jepa`.
+_ARM_CONFIG_SUFFIX = {"a": "proxy", "b": "jepa", "c": "mask0"}
+
+
+def default_arm_config(arm: str) -> Path:
+    """Resolve the default YAML for an arm (review §2.1, 3-arm design)."""
+    suffix = _ARM_CONFIG_SUFFIX.get(arm)
+    if suffix is None:  # pragma: no cover - argparse choices guard this
+        raise ValueError(
+            f"unknown arm {arm!r}; expected one of {list(_ARM_CONFIG_SUFFIX)}"
+        )
+    return Path(f"worldfoundry_train/configs/w22_7_arm_{arm}_{suffix}.yaml")
+
 
 # ---------------------------------------------------------------------------
 # dry-mode model + deterministic data
@@ -116,13 +130,13 @@ class _DryDataset:
 def _dry_cfg(arm: str) -> dict:
     cfg = {
         "data": {"manifest": "/dry", "mask_tubelet_size": [1, 14, 14],
-                 "mask_ratio": 0.5},
+                 "mask_ratio": 0.5 if arm != "c" else 0.0},
         "lora": {"r": 4, "alpha": 8, "dropout": 0.0, "bias": "none"},
         "training": {"per_device_batch": 1, "epochs": 1, "lr": 1e-3,
                      "log_every_n": 100},
-        "jepa": {"enabled": arm == "b"},
+        "jepa": {"enabled": arm in ("b", "c")},
     }
-    if arm == "b":
+    if arm in ("b", "c"):
         cfg["jepa"].update({
             "predictor": {"embed_dim": 32, "depth": 2, "num_heads": 2},
             "ema": {"momentum_start": 0.9, "momentum_end": 0.99,
@@ -308,10 +322,7 @@ def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str) -> dict:
         else:
             import yaml
 
-            default_cfg = Path(
-                f"worldfoundry_train/configs/w22_7_arm_{arm}_"
-                f"{'proxy' if arm == 'a' else 'jepa'}.yaml"
-            )
+            default_cfg = default_arm_config(arm)
             cfg = yaml.safe_load(default_cfg.read_text())
             manifest = Path(cfg["data"]["manifest"])
             if not manifest.is_file():
@@ -335,7 +346,7 @@ def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str) -> dict:
     # EMA movement (arm B): compare fp32 master before/after.
     ema_moved = None
     timing = None
-    if arm == "b" and captured:
+    if arm in ("b", "c") and captured:
         obj = captured[0]
         timing = dict(obj.timing or {})
         # A master that never updated equals the target's initial params;
@@ -362,7 +373,7 @@ def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str) -> dict:
     (pilot_dir / "throughput.json").write_text(json.dumps({
         "label": f"w22_7 arm {arm} pilot ({backend}; early-stop checks)",
         "arm": arm, "mode": "pilot", "backend": backend,
-        "jepa_enabled": arm == "b",
+        "jepa_enabled": arm in ("b", "c"),
         "optimizer_steps": len(losses),
         "wall_time_s": round(wall, 4),
         "avg_step_s": round(wall / max(len(losses), 1), 6),
@@ -402,7 +413,7 @@ def _restore_for_probing(arm: str, ckpt: Path, cfg: dict):
     )
     model = lora.peft_model
     objective = None
-    if arm == "b":
+    if arm in ("b", "c"):
         jepa = cfg["jepa"]
         pred_cfg = jepa["predictor"]
         predictor = JEPAPredictor(
@@ -484,7 +495,7 @@ def run_arm_dry(arm: str, out_dir: Path, steps: int, save_every_n: int) -> dict:
     throughput = {
         "label": f"w22_7 arm {arm} dry-run (CPU; not a hardware baseline)",
         "arm": arm, "mode": "dry",
-        "jepa_enabled": arm == "b",
+        "jepa_enabled": arm in ("b", "c"),
         "optimizer_steps": len(losses),
         "wall_time_s": round(wall, 4),
         "avg_step_s": round(wall / max(len(losses), 1), 6),
@@ -557,7 +568,7 @@ def run_arm_atlas(arm: str, config: Path, out_dir: Path, steps: int | None,
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--arm", required=True, choices=["a", "b"])
+    ap.add_argument("--arm", required=True, choices=["a", "b", "c"])
     ap.add_argument("--mode", default="dry", choices=["dry", "atlas", "pilot"])
     ap.add_argument("--backend", default=None, choices=["dry", "atlas"],
                     help="pilot only: execution backend (default: atlas — the "
@@ -584,10 +595,7 @@ def main() -> int:
                                 args.steps or default_steps, backend)
         return 0 if verdict["verdict"] == "GO" else 3
     else:
-        default_cfg = Path(
-            f"worldfoundry_train/configs/w22_7_arm_{args.arm}_"
-            f"{'proxy' if args.arm == 'a' else 'jepa'}.yaml"
-        )
+        default_cfg = default_arm_config(args.arm)
         run_arm_atlas(args.arm, args.config or default_cfg, args.out,
                       args.steps, args.save_every_n)
     return 0

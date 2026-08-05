@@ -39,7 +39,8 @@ from __future__ import annotations
 import copy
 import os
 import time
-from typing import Mapping
+from dataclasses import dataclass
+from typing import Callable, Mapping
 
 import torch
 import torch.nn.functional as F
@@ -52,6 +53,52 @@ from worldfoundry_train.parallel.strategy import DistributedStrategy
 __all__ = ["JEPAObjective", "PredictorGradSyncStrategy", "jepa_loss"]
 
 LOSS_TYPES = ("smooth_l1", "l1", "cosine")
+
+
+# ---------------------------------------------------------------------------
+# Peak-memory API detection (review §2.3, 2026-08-05)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class _PeakMemoryAPI:
+    """A device's reset+peak-memory pair, returned by ``_peak_memory_api``.
+
+    The W22.7 NPU profile rule (addendum §2.3) asks for a per-EMA-step peak
+    so we can decide whether to raise ``ema_update_every`` (>4GB => action).
+    Holding the reset/peak callables as data lets the EMA wrapper
+    (``JEPAObjective.after_step``) call them in pairs without re-importing
+    torch_npu on every step.
+
+    NPU is preferred because Atlas always has ``torch_npu`` available
+    (lazy bindings, even on CPU build); without an explicit
+    ``is_available()`` guard the helpers raise. CUDA is the standard
+    fallback for local dev/test rigs.
+    """
+    name: str
+    reset: Callable[[], None]
+    peak: Callable[[], int]
+
+
+def _peak_memory_api() -> _PeakMemoryAPI | None:
+    """Detect a peak-memory API, NPU first then CUDA; None on pure CPU."""
+    try:
+        import torch_npu  # noqa: F401
+
+        if torch.npu.is_available():
+            return _PeakMemoryAPI(
+                name="npu",
+                reset=torch.npu.reset_peak_memory_stats,
+                peak=torch.npu.max_memory_allocated,
+            )
+    except (ImportError, AttributeError):
+        pass
+    if torch.cuda.is_available():
+        return _PeakMemoryAPI(
+            name="cuda",
+            reset=torch.cuda.reset_peak_memory_stats,
+            peak=torch.cuda.max_memory_allocated,
+        )
+    return None
 
 
 def jepa_loss(
@@ -251,8 +298,24 @@ class JEPAObjective:
         return torch.stack(losses).mean()
 
     def after_step(self) -> None:
-        """EMA update + momentum advance. Call once per optimizer step."""
+        """EMA update + momentum advance. Call once per optimizer step.
+
+        When ``self.timing`` is enabled (``WORLDFORGE_JEPA_TIMING=1``), the
+        EMA gather/update window is wrapped in a device-side peak-memory
+        capture (review §2.3 NPU profile) so the experiment driver can
+        report ``timing.ema_gather_peak_mb`` and decide whether to raise
+        ``jepa.ema.update_every`` when the peak exceeds the 4 GB budget.
+        No-op cost when timing is None (default).
+        """
+        peak_api = _peak_memory_api() if self.timing is not None else None
+        if peak_api is not None:
+            peak_api.reset()
         self.ema.update()
+        if peak_api is not None:
+            mb = float(peak_api.peak()) / (1 << 20)
+            prev = self.timing.get("ema_gather_peak_mb", 0.0)  # type: ignore[union-attr]
+            if mb > prev:
+                self.timing["ema_gather_peak_mb"] = mb  # type: ignore[index]
 
     # -- checkpoint plumbing (consumed by W22.5) -----------------------------
 

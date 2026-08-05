@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
-# W22.7 A/B experiment driver (design §9.2): proxy-loss baseline (Arm A) vs
-# true JEPA objective (Arm B).
+# W22.7 A/B/C experiment driver (design §9.2 + review §2.1): proxy-loss
+# baseline (Arm A) vs true JEPA objective (Arm B) vs zero-mask sanity
+# check (Arm C).
 #
 # Usage:
 #     bash scripts/w22_7_ab_experiment.sh              # dry self-check only (CPU)
 #     W22_7_MODE=atlas bash scripts/w22_7_ab_experiment.sh   # full Atlas run
 #
-# Sequence: dry-run self-check -> [atlas] subset manifest -> arm A -> arm B
-# -> aggregate report (docs/superpowers/specs/2026-08-04-w22-7-ab-experiment-report.md).
+# Sequence: dry-run self-check -> [atlas] subset manifest -> pilot {A,B,C}
+# -> atlas {A,B,C} -> aggregate report (docs/superpowers/specs/
+# 2026-08-04-w22-7-ab-experiment-report.md).
 #
 # Env vars:
 #     W22_7_MODE          dry (default) | atlas
 #     W22_7_SKIP_PILOT=1  skip the pilot stage (formal run starts directly)
+#     W22_7_SKIP_ARM_C=1  skip arm C (zero-mask sanity check) entirely
 #     W22_7_PILOT_STEPS   pilot steps per arm (default 200 atlas / 40 dry)
 #     W22_7_SOURCE_MANIFEST   full manifest for subset sampling
 #                             (atlas; default /data/videomix22m/manifest.csv)
@@ -20,7 +23,7 @@
 #
 # TODO(W20): 8-card hccl launch. When NPU device migration lands, wrap each
 # atlas arm as:
-#     torchrun --nproc_per_node=8 scripts/w22_7_run_arm.py --arm {a,b} --mode atlas
+#     torchrun --nproc_per_node=8 scripts/w22_7_run_arm.py --arm {a,b,c} --mode atlas
 # with setup_fsdp() hccl init + tensors on NPU, FSDP FULL_SHARD, bf16.
 # The single-process atlas entry below already exercises the full
 # config -> training -> checkpoint -> artifact path.
@@ -56,8 +59,12 @@ run_step "DRY-RUN arm A (proxy baseline, CPU)" "dry-arm-a" \
     python scripts/w22_7_run_arm.py --arm a --mode dry || exit $?
 run_step "DRY-RUN arm B (true JEPA, CPU)" "dry-arm-b" \
     python scripts/w22_7_run_arm.py --arm b --mode dry || exit $?
+if [[ "${W22_7_SKIP_ARM_C:-0}" != "1" ]]; then
+    run_step "DRY-RUN arm C (zero-mask sanity check, CPU)" "dry-arm-c" \
+        python scripts/w22_7_run_arm.py --arm c --mode dry || exit $?
+fi
 
-# Step 0.4: fixed subset manifest (atlas only) — pilot and formal arms both
+# Step 0.4: fixed subset manifest (atlas only) — pilot and formal arms all
 # consume it, so it must exist before the pilot stage.
 if [[ "$MODE" == "atlas" ]]; then
     run_step "SUBSET: fixed manifest" "subset" \
@@ -79,9 +86,14 @@ if [[ "${W22_7_SKIP_PILOT:-0}" != "1" ]]; then
     run_step "PILOT arm B ($PILOT_BACKEND)" "pilot-arm-b" \
         python scripts/w22_7_run_arm.py --arm b --mode pilot \
             --backend "$PILOT_BACKEND" || pilot_failed=$?
+    if [[ "${W22_7_SKIP_ARM_C:-0}" != "1" ]]; then
+        run_step "PILOT arm C ($PILOT_BACKEND)" "pilot-arm-c" \
+            python scripts/w22_7_run_arm.py --arm c --mode pilot \
+                --backend "$PILOT_BACKEND" || pilot_failed=$?
+    fi
     if [[ "$pilot_failed" -ne 0 ]]; then
         echo "==== PILOT NO-GO (arm rc=$pilot_failed): 中止正式跑，请人工检查"
-        echo "     bench_results/w22_7/{a,b}/pilot/verdict.json ===="
+        echo "     bench_results/w22_7/{a,b,c}/pilot/verdict.json ===="
         # Still emit the report so the NO-GO verdict is archived.
         run_step "REPORT: aggregate (pilot NO-GO)" "report" \
             python scripts/w22_7_build_report.py --results "$RESULTS"
@@ -102,6 +114,11 @@ if [[ "$MODE" == "atlas" ]]; then
     run_step "ATLAS arm B: true JEPA" "atlas-arm-b" \
         python scripts/w22_7_run_arm.py --arm b --mode atlas \
             "${STEPS_ARGS[@]}" || true
+    if [[ "${W22_7_SKIP_ARM_C:-0}" != "1" ]]; then
+        run_step "ATLAS arm C: zero-mask sanity check" "atlas-arm-c" \
+            python scripts/w22_7_run_arm.py --arm c --mode atlas \
+                "${STEPS_ARGS[@]}" || true
+    fi
 fi
 
 # Final: aggregate report (always — TBD placeholders for missing numbers).
