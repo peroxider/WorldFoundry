@@ -60,6 +60,13 @@ SEED = 42
 # Dry-run geometry: tiny VJEPA2, grid (1, 14, 14) -> N=196, hidden 64.
 DRY_N, DRY_GRID, DRY_DIM = 196, (1, 14, 14), 64
 
+# Pilot step-count defaults (review M5, 2026-08-05): single source of truth at
+# module scope so the docstring "env W22_7_PILOT_STEPS, default 200 atlas /
+# 40 dry" cannot drift from main()'s inline fallback. Override at runtime
+# with the W22_7_PILOT_STEPS environment variable.
+DEFAULT_PILOT_STEPS_ATLAS = 200
+DEFAULT_PILOT_STEPS_DRY = 40
+
 
 # ---------------------------------------------------------------------------
 # dry-mode model + deterministic data
@@ -317,7 +324,7 @@ def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str) -> dict:
         probe.start()
         t0 = time.perf_counter()
         losses = run_training(
-            cfg, FSDPStrategy(), logger=lambda s, l: None,
+            cfg, FSDPStrategy(), logger=lambda s, _loss: None,
             step_callback=probe, **run_kwargs,
         )
         wall = time.perf_counter() - t0
@@ -450,7 +457,7 @@ def run_arm_dry(arm: str, out_dir: Path, steps: int, save_every_n: int) -> dict:
         losses = run_training(
             cfg, FSDPStrategy(), base_model=_tiny_vjepa2(),
             num_steps=steps, batch_fn=_dry_batch,
-            logger=lambda s, l: None,
+            logger=lambda s, _loss: None,
             checkpoint_dir=ckpt_dir, save_every_n=save_every_n,
         )
         wall = time.perf_counter() - t0
@@ -570,7 +577,9 @@ def main() -> int:
     elif args.mode == "pilot":
         backend = args.backend or "atlas"
         default_steps = int(os.environ.get(
-            "W22_7_PILOT_STEPS", "200" if backend == "atlas" else "40"))
+            "W22_7_PILOT_STEPS",
+            str(DEFAULT_PILOT_STEPS_ATLAS if backend == "atlas"
+                else DEFAULT_PILOT_STEPS_DRY)))
         verdict = run_arm_pilot(args.arm, args.out,
                                 args.steps or default_steps, backend)
         return 0 if verdict["verdict"] == "GO" else 3

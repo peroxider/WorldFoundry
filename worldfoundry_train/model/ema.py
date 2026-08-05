@@ -208,6 +208,21 @@ class EMAUpdater:
         t0 = time.perf_counter() if self.timing is not None else None
         with torch.no_grad():
             online_f32 = self._online_f32()
+            # Shape drift guard (review M3, 2026-08-05): if someone rebinds
+            # EMAUpdater to a different online param subset (e.g. LoRA rank
+            # changed at resume, or a different module was mistakenly attached),
+            # _master and online_f32 may silently have different shapes and
+            # _foreach_lerp_ will produce garbage on the target. Assert
+            # up-front so the misconfiguration surfaces immediately.
+            for i, (master, on) in enumerate(zip(self._master, online_f32)):
+                if master.shape != on.shape:
+                    name = self.names[i] if self.names else f"param[{i}]"
+                    raise RuntimeError(
+                        f"EMA shape mismatch on {name}: master {tuple(master.shape)} "
+                        f"vs online {tuple(on.shape)}; refusing to lerp. This "
+                        f"usually means the EMA was bound to a stale online "
+                        f"subset (e.g. LoRA config changed since construction)."
+                    )
             try:
                 torch._foreach_lerp_(self._master, online_f32, weight)
             except (RuntimeError, TypeError) as exc:  # NPU fallback, §8.3

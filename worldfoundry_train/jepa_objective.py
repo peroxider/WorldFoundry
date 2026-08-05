@@ -262,6 +262,7 @@ class JEPAObjective:
             "ema_state": self.ema.state_dict(),
             "ema_step": self.ema.step,
             "jepa_signature": self.signature(),
+            "jepa_hyperparams": self.hyperparams(),
         }
 
     def load_state_dict(self, state: dict) -> None:
@@ -277,6 +278,19 @@ class JEPAObjective:
             "encoder_dim": self.predictor.encoder_dim,
             "ema_schedule": self.ema.schedule,
             "loss_type": self.loss_type,
+        }
+
+    def hyperparams(self) -> dict:
+        """Numerically-stability-sensitive hyperparams (W22 addendum).
+
+        Fields: ``momentum_end`` (EMA cosine schedule endpoint) and
+        ``loss_beta`` (smooth-L1 Huber threshold). These are validated with
+        ERROR-level semantics across resume — see
+        :func:`worldfoundry_train.checkpoint.validate_jepa_hyperparams`.
+        """
+        return {
+            "momentum_end": float(self.ema.momentum_end),
+            "loss_beta": float(self.beta),
         }
 
 
@@ -296,6 +310,19 @@ class PredictorGradSyncStrategy(DistributedStrategy):
     grad_accum`` + tail rescale), so the reduced gradient is the window mean.
     On single-rank / uninitialized process groups the all_reduce is skipped
     and the decorator is a pure passthrough.
+
+    Why a decorator, not a new ``DistributedStrategy`` subclass?
+
+    Review M6 (2026-08-05): project convention places one concrete strategy
+    per file under ``worldfoundry_train/parallel/`` (DDP, FSDP). Adding a
+    third concrete class there for the predictor-only all_reduce would
+    duplicate the ``wrap / backward / no_sync`` forwarding logic and require
+    the trainer to pick between ``FSDP`` and ``FSDP+Predictor`` at every
+    call site — fragile if a third sync need lands later (e.g. EMA gather
+    timing). A decorator wraps any concrete strategy and is the minimal
+    surface that touches the training loop (``strategy = PredictorGradSyncStrategy(
+    strategy, predictor)`` in trainer.py:298). The cost is that ``inner`` is
+    public for tests; treat it as the seam, not the API.
     """
 
     def __init__(self, inner: DistributedStrategy, predictor: nn.Module) -> None:

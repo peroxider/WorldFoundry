@@ -150,10 +150,22 @@ class JEPAPredictor(nn.Module):
                 f"match (B, N)=({b}, {n})"
             )
         mask = bool_masked_pos.bool()
+        target_dtype = context_feats.dtype
+
+        # Cast mask_token / pos_embed to the input dtype once per forward
+        # (review M2, 2026-08-05): ``torch.where(mask[..., None], mask_token, x)``
+        # with mismatched dtypes silently upcasts to fp32, which doubles the
+        # predictor activation memory on bf16 encoders and runs O(N) extra
+        # dtype-promotion ops. Cache the cast in local variables so the where
+        # / add stay in the encoder's dtype.
+        mask_token = self.mask_token.to(dtype=target_dtype)
+        pos_embed = self._pos_embed_for(grid_size or self.grid_size).to(
+            dtype=target_dtype
+        )
 
         x = self.proj_in(context_feats)  # (B, N, predictor_dim)
-        x = torch.where(mask.unsqueeze(-1), self.mask_token.expand(b, n, -1), x)
-        x = x + self._pos_embed_for(grid_size or self.grid_size)
+        x = torch.where(mask.unsqueeze(-1), mask_token.expand(b, n, -1), x)
+        x = x + pos_embed
         x = self.blocks(x)
         x = self.proj_out(x)  # (B, N, encoder_dim)
         return x[mask]

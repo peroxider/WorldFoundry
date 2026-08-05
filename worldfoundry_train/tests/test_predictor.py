@@ -111,3 +111,86 @@ def test_zero_init_last_block_output_projection():
     last = pred.blocks.layers[-1]
     assert torch.equal(last.linear2.weight, torch.zeros_like(last.linear2.weight))
     assert torch.equal(last.linear2.bias, torch.zeros_like(last.linear2.bias))
+
+
+# ---------------------------------------------------------------------------
+# Review addendum 2026-08-05: M1 (trilinear axis coverage) + M2 (dtype stays
+# in the input dtype, no silent fp32 upcast from torch.where / add).
+# ---------------------------------------------------------------------------
+
+
+def test_bf16_input_keeps_predictor_output_in_bf16():
+    """Review M2: the predictor must not silently upcast to fp32 on bf16 input.
+
+    Without the dtype cache, ``torch.where(mask_token, x)`` with bf16 x and
+    fp32 mask_token promoted the result to fp32, doubling predictor activation
+    memory and adding O(N) extra dtype-promotion ops per forward.
+
+    Mirrors production: predictor weights are cast to the encoder's dtype
+    via ``.to(bfloat16)`` so that ``proj_in`` accepts bf16 inputs natively.
+    """
+    pred = _predictor().to(torch.bfloat16)
+    feats = torch.randn(2, N, ENC_DIM, dtype=torch.bfloat16)
+    mask = torch.rand(2, N) < 0.5
+    while int(mask.sum()) == 0:
+        mask = torch.rand(2, N) < 0.5
+    out = pred(feats, mask)
+    assert out.dtype == torch.bfloat16, (
+        f"predictor output dtype {out.dtype} drifted from input bf16; "
+        "the dtype cache in forward() is not working"
+    )
+
+
+def test_t_axis_trilinear_interpolation_finite():
+    """Review M1: T-axis variation (1 -> 3 frames) must produce finite outputs.
+
+    V-JEPA 2 typically uses T=8 or T=16, but trilinear on a small T axis can
+    degenerate; we at minimum require finite values and correct shape.
+    """
+    torch.manual_seed(0)
+    pred = _predictor()  # built for grid (1, 4, 4)
+    new_grid = (3, 4, 4)
+    new_n = new_grid[0] * new_grid[1] * new_grid[2]
+    feats = torch.randn(1, new_n, ENC_DIM)
+    mask = torch.rand(1, new_n) < 0.5
+    while int(mask.sum()) == 0:
+        mask = torch.rand(1, new_n) < 0.5
+    out = pred(feats, mask, grid_size=new_grid)
+    assert out.shape == (int(mask.sum()), ENC_DIM)
+    assert torch.isfinite(out).all(), "T-axis interpolation produced non-finite values"
+
+
+def test_h_w_axis_trilinear_interpolation_finite():
+    """Review M1: H/W-axis variation (4,4 -> 6,8) must produce finite outputs.
+
+    Spatial axes are typically larger than T, but the trilinear path is the
+    same code — verify no degenerate case in the common H/W-resize path.
+    """
+    torch.manual_seed(0)
+    pred = _predictor()  # built for grid (1, 4, 4)
+    new_grid = (1, 6, 8)
+    new_n = new_grid[0] * new_grid[1] * new_grid[2]
+    feats = torch.randn(1, new_n, ENC_DIM)
+    mask = torch.rand(1, new_n) < 0.5
+    while int(mask.sum()) == 0:
+        mask = torch.rand(1, new_n) < 0.5
+    out = pred(feats, mask, grid_size=new_grid)
+    assert out.shape == (int(mask.sum()), ENC_DIM)
+    assert torch.isfinite(out).all(), "H/W-axis interpolation produced non-finite values"
+
+
+def test_grid_size_unchanged_skips_interpolation():
+    """Construct grid == forward grid: pos_embed returned directly (no interp).
+
+    The fast-path branch in ``_pos_embed_for`` returns ``self.pos_embed``
+    unchanged when grid_size matches; verify it runs without error.
+    """
+    pred = _predictor()  # grid (1, 4, 4)
+    feats = torch.randn(1, N, ENC_DIM)
+    mask = torch.rand(1, N) < 0.5
+    while int(mask.sum()) == 0:
+        mask = torch.rand(1, N) < 0.5
+    # No explicit grid_size -> defaults to self.grid_size; must hit fast path.
+    out = pred(feats, mask)
+    assert out.shape == (int(mask.sum()), ENC_DIM)
+    assert torch.isfinite(out).all()

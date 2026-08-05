@@ -64,8 +64,10 @@ class JEPASignature:
     All fields are architecture-identifying: a mismatch means the checkpoint's
     predictor/EMA state cannot be loaded into the current objective, so
     validate_jepa_signature() raises ValueError (same semantics as
-    validate_lora_signature). Non-architectural hyperparams (EMA momentum
-    endpoints, loss beta) are deliberately NOT part of the signature.
+    validate_lora_signature). Hyperparameters that are numerically stability
+    sensitive — EMA momentum endpoint and loss beta — live in
+    :class:`JEPAHyperparams` and are validated separately with the same
+    ERROR-level semantics (per W22 design-review addendum, 2026-08-05).
     """
     pred_dim: int
     pred_depth: int
@@ -96,6 +98,37 @@ class JEPASignature:
         )
 
 
+@dataclass(frozen=True)
+class JEPAHyperparams:
+    """Numerically-stability-sensitive JEPA hyperparameters (W22 addendum).
+
+    These are NOT architecture fields (changing them does not invalidate
+    predictor weights), but silent drift across resume can corrupt long
+    training runs:
+
+    - ``momentum_end``: cosine schedule endpoint; a mid-run change shifts
+      every future EMA lerp weight (1 - m) without restart.
+    - ``loss_beta``: smooth-L1 Huber threshold; a change mid-run alters
+      gradient magnitudes discontinuously.
+
+    Validation is ERROR-level (matches signature semantics) — see
+    :func:`validate_jepa_hyperparams`.
+    """
+    momentum_end: float
+    loss_beta: float
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"momentum_end": float(self.momentum_end),
+                "loss_beta": float(self.loss_beta)}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "JEPAHyperparams":
+        return cls(
+            momentum_end=float(d["momentum_end"]),
+            loss_beta=float(d["loss_beta"]),
+        )
+
+
 def validate_jepa_signature(
     ckpt_signature: dict[str, Any] | None,
     current: JEPASignature,
@@ -110,6 +143,40 @@ def validate_jepa_signature(
                 f"checkpoint jepa_signature.{key}={ckpt_val!r} does not match "
                 f"current cfg={current_val!r}. Use the same JEPA architecture "
                 f"to resume."
+            )
+
+
+def validate_jepa_hyperparams(
+    ckpt_hyperparams: dict[str, Any] | None,
+    current: JEPAHyperparams,
+) -> None:
+    """Raise ValueError if momentum_end or loss_beta differ from ckpt.
+
+    Sourced from the W22 design-review addendum (2026-08-05): the original
+    design said these were "deliberately not part of the signature" and
+    would warn-only on mismatch. Review promoted them to ERROR-level because
+    silent drift across resume was judged more dangerous than the cost of
+    forcing users to align configs before resuming a long run.
+    """
+    if ckpt_hyperparams is None:
+        return
+    for key, current_val in current.to_dict().items():
+        ckpt_val = ckpt_hyperparams.get(key)
+        if ckpt_val is None:
+            # Older ckpt written before the addendum — allow but warn so a
+            # forced re-validation does not brick legacy checkpoints.
+            import warnings
+            warnings.warn(
+                f"checkpoint jepa_hyperparams.{key} missing (pre-addendum ckpt); "
+                f"current={current_val!r}; resuming without validation.",
+                UserWarning,
+            )
+            continue
+        if abs(float(ckpt_val) - float(current_val)) > 1e-9:
+            raise ValueError(
+                f"checkpoint jepa_hyperparams.{key}={ckpt_val!r} does not match "
+                f"current cfg={current_val!r}. Resume requires aligned "
+                f"momentum_end and loss_beta (W22 design-review addendum)."
             )
 
 
@@ -247,6 +314,7 @@ def save_checkpoint(
         payload["ema_state"] = _cpu_clone_tree(jepa_state["ema_state"])
         payload["ema_step"] = int(jepa_state["ema_step"])
         payload["jepa_signature"] = dict(jepa_state["jepa_signature"])
+        payload["jepa_hyperparams"] = dict(jepa_state["jepa_hyperparams"])
 
     if world_size > 1 and _is_fsdp_module(model) and rank != 0:
         return path
@@ -304,6 +372,15 @@ def load_checkpoint(
         validate_jepa_signature(
             payload["jepa_signature"],
             JEPASignature.from_dict(jepa_objective.signature()),
+        )
+        # Numerically-stability-sensitive hyperparams (W22 addendum, 2026-08-05):
+        # ERROR-level on mismatch — silent drift was judged more dangerous than
+        # forcing users to align momentum_end / loss_beta before resuming.
+        # payload may be missing the key if the ckpt predates the addendum;
+        # validate_jepa_hyperparams warns in that case and proceeds.
+        validate_jepa_hyperparams(
+            payload.get("jepa_hyperparams"),
+            JEPAHyperparams.from_dict(jepa_objective.hyperparams()),
         )
 
     model_state: dict[str, torch.Tensor] = payload["model_state"]

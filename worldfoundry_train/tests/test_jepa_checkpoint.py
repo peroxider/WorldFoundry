@@ -132,6 +132,117 @@ def test_validate_jepa_signature_unit():
         validate_jepa_signature(bad, sig)
 
 
+# ---------------------------------------------------------------------------
+# Review addendum 2026-08-05 (偏差 #4): ERROR-level validation of the
+# numerically-stability-sensitive hyperparams (momentum_end, loss_beta).
+# ---------------------------------------------------------------------------
+
+
+def test_jepa_hyperparam_mismatch_raises_value_error(tmp_path):
+    """momentum_end or loss_beta differ from ckpt -> ValueError on load.
+
+    The original design treated these as "warn only" hyperparams; the review
+    promoted them to ERROR-level because silent drift across resume corrupts
+    long runs (cosine schedule endpoint changes every future lerp weight).
+    """
+    from worldfoundry_train.checkpoint import (
+        JEPAHyperparams, validate_jepa_hyperparams,
+    )
+
+    cur = JEPAHyperparams(momentum_end=1.0, loss_beta=1.0)
+
+    # matching -> ok
+    validate_jepa_hyperparams(cur.to_dict(), cur)
+
+    # momentum_end drift -> raise
+    bad_m = cur.to_dict()
+    bad_m["momentum_end"] = 0.999
+    with pytest.raises(ValueError, match="momentum_end"):
+        validate_jepa_hyperparams(bad_m, cur)
+
+    # loss_beta drift -> raise
+    bad_b = cur.to_dict()
+    bad_b["loss_beta"] = 2.0
+    with pytest.raises(ValueError, match="loss_beta"):
+        validate_jepa_hyperparams(bad_b, cur)
+
+    # within 1e-9 tolerance -> ok (numerical noise from serialization)
+    near = cur.to_dict()
+    near["loss_beta"] = 1.0 + 1e-12
+    validate_jepa_hyperparams(near, cur)
+
+    # missing ckpt hyperparams entirely -> no-op (pre-addendum ckpt)
+    validate_jepa_hyperparams(None, cur)
+
+
+def test_jepa_hyperparam_missing_key_warns_only(recwarn):
+    """Pre-addendum ckpt missing a hyperparam key -> UserWarning, not raise.
+
+    Validation must not brick legacy checkpoints when they predate the
+    addendum. Missing keys warn and proceed; a populated key that mismatches
+    still raises.
+    """
+    from worldfoundry_train.checkpoint import (
+        JEPAHyperparams, validate_jepa_hyperparams,
+    )
+
+    cur = JEPAHyperparams(momentum_end=1.0, loss_beta=1.0)
+    partial = {"momentum_end": 1.0}  # loss_beta missing
+    validate_jepa_hyperparams(partial, cur)
+    assert any("jepa_hyperparams.loss_beta" in str(w.message) for w in recwarn)
+
+
+def test_load_checkpoint_with_mismatched_momentum_end_raises(tmp_path):
+    """End-to-end: save with momentum_end=0.99, load with momentum_end=0.999.
+
+    Goes through ``save_checkpoint`` / ``load_checkpoint`` to confirm the
+    validate_jepa_hyperparams wiring fires at the actual entry point.
+    """
+    obj, online = _objective()
+    _save(obj, online, tmp_path / "ckpt.pt")
+
+    # Build a second objective with a different momentum_end and patch the
+    # in-memory EMA so hyperparams() reports the new value.
+    obj2, online2 = _objective(seed=99)
+    obj2.ema.momentum_end = 0.999  # ckpt objective above was built with 0.99
+    optimizer2 = torch.optim.AdamW(
+        [p for p in online2.parameters() if p.requires_grad], lr=1e-3
+    )
+    with pytest.raises(ValueError, match="momentum_end"):
+        load_checkpoint(tmp_path / "ckpt.pt", online2, optimizer2,
+                        jepa_objective=obj2)
+
+
+def test_load_checkpoint_legacy_partial_hyperparams_warns(tmp_path, recwarn):
+    """Pre-addendum ckpts (partial jepa_hyperparams dict) load with a warning.
+
+    A legacy ckpt whose ``jepa_hyperparams`` dict is present but missing a
+    newer key (e.g. ``loss_beta`` was added after the ckpt was written)
+    emits a UserWarning and proceeds — exercises the per-key warn-and-proceed
+    branch in ``validate_jepa_hyperparams``.
+    """
+    obj, online = _objective()
+    _save(obj, online, tmp_path / "ckpt.pt")
+
+    # Strip one of the two hyperparam keys to simulate an intermediate-version
+    # ckpt that has the dict but is missing a field.
+    payload = torch.load(tmp_path / "ckpt.pt", map_location="cpu",
+                         weights_only=False)
+    payload["jepa_hyperparams"] = {"momentum_end": 0.99}  # loss_beta missing
+    torch.save(payload, tmp_path / "partial.pt")
+
+    obj2, online2 = _objective(seed=99)
+    optimizer2 = torch.optim.AdamW(
+        [p for p in online2.parameters() if p.requires_grad], lr=1e-3
+    )
+    result = load_checkpoint(tmp_path / "partial.pt", online2, optimizer2,
+                             jepa_objective=obj2)
+    assert result["step"] == 5
+    assert any(
+        "jepa_hyperparams.loss_beta" in str(w.message) for w in recwarn
+    ), f"expected a missing-key warning, got: {[str(w.message) for w in recwarn]}"
+
+
 def test_old_checkpoint_with_jepa_objective_raises_key_error(tmp_path):
     # Save WITHOUT jepa payload (pre-W22 format).
     obj, online = _objective()
@@ -239,7 +350,7 @@ def test_trainer_jepa_checkpoint_resume_round_trip(tmp_path, monkeypatch):
     torch.manual_seed(7)
     trainer_mod.run_training(
         cfg, _Noop(), base_model=_model(), num_steps=2, batch_fn=_batch,
-        logger=lambda s, l: None, checkpoint_dir=tmp_path,
+        logger=lambda s, _loss: None, checkpoint_dir=tmp_path,
     )
     ckpt = tmp_path / "step_2.pt"
     assert ckpt.is_file()
@@ -249,7 +360,7 @@ def test_trainer_jepa_checkpoint_resume_round_trip(tmp_path, monkeypatch):
     torch.manual_seed(7)
     losses = trainer_mod.run_training(
         cfg, _Noop(), base_model=_model(), num_steps=4, batch_fn=_batch,
-        logger=lambda s, l: None, checkpoint_dir=tmp_path, resume_from=ckpt,
+        logger=lambda s, _loss: None, checkpoint_dir=tmp_path, resume_from=ckpt,
     )
     assert len(losses) == 2  # steps 3..4
     obj_resumed = captured[1]
