@@ -39,6 +39,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Save checkpoint every N steps. 0=disable. "
              "Default: use cfg[training][save_every_n].",
     )
+    parser.add_argument(
+        "--mode", choices=["lora", "full"], default=None,
+        help="Training mode. 'lora' wraps the encoder with PEFT/LoRA; "
+             "'full' fine-tunes every encoder parameter. "
+             "Default: cfg[training][mode] or 'lora'.",
+    )
     return parser.parse_args(argv)
 
 
@@ -66,6 +72,15 @@ def _resolve_save_every_n(args: argparse.Namespace, cfg: dict) -> int:
     return int(cfg.get("training", {}).get("save_every_n", 0))
 
 
+def _resolve_mode(args: argparse.Namespace, cfg: dict) -> str:
+    profile = args.mode or str(cfg.get("training", {}).get("mode", "lora"))
+    if profile not in ("lora", "full"):
+        raise ValueError(
+            f"unknown training mode: {profile!r}; expected 'lora' or 'full'"
+        )
+    return profile
+
+
 def main() -> int:
     args = parse_args()
     check_versions(strict=args.strict_versions)
@@ -89,6 +104,7 @@ def main() -> int:
 
     num_steps = _resolve_num_steps(args)
     save_every_n = _resolve_save_every_n(args, cfg)
+    mode = _resolve_mode(args, cfg)
     try:
         if profile == "ddp":
             run_ddp_training(cfg, local_rank, global_rank, world_size,
@@ -96,14 +112,14 @@ def main() -> int:
                              checkpoint_dir=args.checkpoint_dir,
                              resume_from=args.resume_from,
                              save_every_n=save_every_n,
-                             profile=profile)
+                             profile=profile, mode=mode)
         else:
             run_fsdp_training(cfg, local_rank, global_rank, world_size,
                               num_steps=num_steps,
                               checkpoint_dir=args.checkpoint_dir,
                               resume_from=args.resume_from,
                               save_every_n=save_every_n,
-                              profile=profile)
+                              profile=profile, mode=mode)
     finally:
         if profile == "ddp":
             cleanup_ddp()
@@ -117,7 +133,8 @@ def run_ddp_training(cfg: dict, local_rank: int, global_rank: int,
                      checkpoint_dir: Path | None = None,
                      resume_from: Path | None = None,
                      save_every_n: int = 0,
-                     profile: str | None = None) -> list[float]:
+                     profile: str | None = None,
+                     mode: str = "lora") -> list[float]:
     """Delegates to trainer.run_training. Returns per-optimizer-step losses.
 
     Strategy selection consumes ``cfg["training"]["parallel"]`` unless an
@@ -125,7 +142,8 @@ def run_ddp_training(cfg: dict, local_rank: int, global_rank: int,
     """
     from worldfoundry_train.trainer import make_strategy, run_training
     profile = profile or str(cfg.get("training", {}).get("parallel", "ddp"))
-    return run_training(cfg, make_strategy(profile), num_steps=num_steps,
+    return run_training(cfg, make_strategy(profile), mode=mode,
+                        num_steps=num_steps,
                         checkpoint_dir=checkpoint_dir, resume_from=resume_from,
                         save_every_n=save_every_n)
 
@@ -135,7 +153,8 @@ def run_fsdp_training(cfg: dict, local_rank: int, global_rank: int,
                       checkpoint_dir: Path | None = None,
                       resume_from: Path | None = None,
                       save_every_n: int = 0,
-                      profile: str | None = None) -> list[float]:
+                      profile: str | None = None,
+                      mode: str = "lora") -> list[float]:
     """Delegates to trainer.run_training. Returns per-optimizer-step losses.
 
     Strategy selection consumes ``cfg["training"]["parallel"]`` unless an
@@ -148,7 +167,8 @@ def run_fsdp_training(cfg: dict, local_rank: int, global_rank: int,
     """
     from worldfoundry_train.trainer import make_strategy, run_training
     profile = profile or str(cfg.get("training", {}).get("parallel", "fsdp"))
-    return run_training(cfg, make_strategy(profile), num_steps=num_steps,
+    return run_training(cfg, make_strategy(profile), mode=mode,
+                        num_steps=num_steps,
                         checkpoint_dir=checkpoint_dir, resume_from=resume_from,
                         save_every_n=save_every_n)
 

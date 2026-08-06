@@ -532,3 +532,107 @@ def test_run_training_resume_missing_file_raises(_patch_checkpoint_safe_dist):
             )
     finally:
         trainer_mod._build_dataset = original_ds
+
+
+# --- W25-roadmap: full-parameter fine-tuning mode ---
+
+
+def test_run_training_unknown_mode_raises():
+    cfg = _cfg()
+    model = _TinyLinearModel()
+    strategy = _PassthroughStrategy()
+    import worldfoundry_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
+    try:
+        with pytest.raises(ValueError, match="unknown training mode"):
+            run_training(
+                cfg, strategy, base_model=model, num_steps=1, mode="bogus",
+                batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+                logger=lambda s, loss: None,
+            )
+    finally:
+        trainer_mod._build_dataset = original_ds
+
+
+def test_run_training_full_mode_skips_lora_wrapper():
+    """W25-roadmap: in 'full' mode the strategy receives the bare base model
+    (not a peft.PeftModel) and every parameter has requires_grad=True."""
+    cfg = _cfg()
+    model = _TinyLinearModel()
+    strategy = _PassthroughStrategy()
+    import worldfoundry_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
+    try:
+        run_training(
+            cfg, strategy, base_model=model, num_steps=1, mode="full",
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, loss: None,
+        )
+        assert len(strategy.wrapped_models) == 1
+        wrapped = strategy.wrapped_models[0]
+        # Full mode bypasses build_lora_model: the model handed to strategy.wrap
+        # is still the original _TinyLinearModel (not a peft.PeftModel).
+        assert isinstance(wrapped, _TinyLinearModel)
+        for parameter in wrapped.parameters():
+            assert parameter.requires_grad
+    finally:
+        trainer_mod._build_dataset = original_ds
+
+
+def test_run_training_full_mode_does_not_call_build_lora():
+    """W25-roadmap: build_lora_model is never invoked in 'full' mode."""
+    cfg = _cfg()
+    model = _TinyLinearModel()
+    strategy = _PassthroughStrategy()
+    import worldfoundry_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    original_lora = trainer_mod.build_lora_model
+    lora_calls = {"n": 0}
+
+    def tracking(*args, **kwargs):
+        lora_calls["n"] += 1
+        return original_lora(*args, **kwargs)
+
+    trainer_mod.build_lora_model = tracking
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
+    try:
+        run_training(
+            cfg, strategy, base_model=model, num_steps=1, mode="full",
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, loss: None,
+        )
+        assert lora_calls["n"] == 0
+    finally:
+        trainer_mod._build_dataset = original_ds
+        trainer_mod.build_lora_model = original_lora
+
+
+def test_run_training_full_mode_checkpoint_round_trip(tmp_path, _patch_checkpoint_safe_dist):
+    """W25-roadmap: a 3-step full-FT run writes a final checkpoint whose
+    lora_signature is None and whose state_dict restores without error."""
+    cfg = _cfg()
+    import worldfoundry_train.trainer as trainer_mod
+    original_ds = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeDataset(n=4)
+    try:
+        run_training(
+            cfg, _PassthroughStrategy(), base_model=_TinyLinearModel(), num_steps=3,
+            mode="full",
+            batch_fn=lambda i: _fake_batch(), loss_fn=_loss_fn,
+            logger=lambda s, loss: None,
+            checkpoint_dir=tmp_path,
+        )
+        saved = tmp_path / "step_3.pt"
+        assert saved.is_file()
+
+        # The full-mode payload has lora_signature=None (already tolerated
+        # by load_checkpoint), and the model_state still contains the base
+        # model parameters so the inference loader can rehydrate it.
+        import torch
+        payload = torch.load(saved, map_location="cpu", weights_only=False)
+        assert payload["lora_signature"] is None
+        assert any("q_proj" in k or "linear" in k for k in payload["model_state"])
+    finally:
+        trainer_mod._build_dataset = original_ds

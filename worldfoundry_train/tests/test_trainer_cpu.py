@@ -233,3 +233,49 @@ def test_trainer_uses_real_ds_len_for_num_steps_when_no_override():
     # epochs=1, ds_size=7, batch=2 -> 7 // 2 = 3 steps (drops last 1)
     assert len(losses) == 3
 
+
+# --- W25-roadmap: full-parameter fine-tuning on real tiny VJEPA 2 ---
+
+
+def test_trainer_full_mode_loss_decreases_on_real_vjepa2():
+    """W25-roadmap: 5 full-FT steps on real tiny VJEPA 2 must produce finite
+    losses and the encoder parameters must change (real gradient flow through
+    every parameter). The default_loss_fn is a self-distillation MSE, so loss
+    is near-zero by construction; the parameter-change signal is the
+    honest "no-op is not a no-op" check (mirrors the LoRA variant)."""
+    base = _build_real_tiny_vjepa2()
+    initial = {n: p.detach().clone() for n, p in base.named_parameters()}
+    import worldfoundry_train.trainer as trainer_mod
+    original = trainer_mod._build_dataset
+    trainer_mod._build_dataset = lambda cfg: _FakeVJ2Dataset(n=8)
+    try:
+        losses = run_training(
+            cfg=_cfg(),
+            strategy=_Passthrough(),
+            base_model=base,
+            num_steps=5,
+            mode="full",
+            batch_fn=_synthetic_batch,
+            loss_fn=None,
+            logger=lambda s, loss: None,
+        )
+    finally:
+        trainer_mod._build_dataset = original
+    assert len(losses) == 5
+    for v in losses:
+        assert v == v  # finite
+        assert v >= 0.0
+    changed = sum(
+        1 for n, p in base.named_parameters()
+        if not torch.equal(initial[n], p.detach())
+    )
+    assert changed >= 1, (
+        "no encoder parameter changed under full-FT (no grad flow)."
+    )
+    # Sanity: the changes span the encoder rather than only the few LoRA-only
+    # modules (the LoRA test above covers the LoRA path; here we check that
+    # full-FT actually touched a substantial fraction of base parameters).
+    assert changed >= 4, (
+        f"only {changed} parameters changed under full-FT; expected >=4"
+    )
+

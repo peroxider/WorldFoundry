@@ -183,10 +183,18 @@ def _make_signature_from_cfg(cfg: dict, lora_result) -> LoraSignature:
     )
 
 
+def _enable_full_finetune(model: nn.Module) -> nn.Module:
+    """Enable gradients for every parameter in full fine-tuning mode."""
+    for parameter in model.parameters():
+        parameter.requires_grad_(True)
+    return model
+
+
 def run_training(
     cfg: dict,
     strategy: "DistributedStrategy",
     *,
+    mode: str = "lora",
     base_model: nn.Module | None = None,
     num_steps: int | None = None,
     loss_fn: "LossFn | None" = None,
@@ -253,17 +261,26 @@ def run_training(
         )
     print(f"[TRAIN] ds_size={len(ds)} batch={B} num_steps={num_steps}")
 
+    if mode not in ("lora", "full"):
+        raise ValueError(f"unknown training mode: {mode!r}; expected 'lora' or 'full'")
+
     if base_model is None:
         from transformers import AutoModel
         base_model = AutoModel.from_pretrained(cfg["model"]["hf_repo"])
-    lora_result = build_lora_model(
-        base_model,
-        r=int(cfg["lora"]["r"]),
-        alpha=int(cfg["lora"]["alpha"]),
-        dropout=float(cfg["lora"]["dropout"]),
-        bias=cfg["lora"]["bias"],
-    )
-    peft_model = lora_result.peft_model
+    if mode == "lora":
+        lora_result = build_lora_model(
+            base_model,
+            r=int(cfg["lora"]["r"]),
+            alpha=int(cfg["lora"]["alpha"]),
+            dropout=float(cfg["lora"]["dropout"]),
+            bias=cfg["lora"]["bias"],
+        )
+        peft_model = lora_result.peft_model
+        ckpt_sig = _make_signature_from_cfg(cfg, lora_result)
+    else:
+        peft_model = _enable_full_finetune(base_model)
+        lora_result = None
+        ckpt_sig = None
 
     # --- W22 JEPA objective (feature-flagged, design §7.2) ---
     # Built BEFORE strategy.wrap so the EMA target encoder is deepcopied
@@ -302,8 +319,13 @@ def run_training(
         # need an explicit all_reduce before optimizer.step (design §8.1).
         jepa_objective.bind_distributed(model)
         strategy = PredictorGradSyncStrategy(strategy, jepa_objective.predictor)
-    print(f"[TRAIN] LoRA trainable={lora_result.trainable_params} "
-          f"total={lora_result.total_params} targets={lora_result.target_modules}")
+    if mode == "lora":
+        print(f"[TRAIN] LoRA trainable={lora_result.trainable_params} "
+              f"total={lora_result.total_params} targets={lora_result.target_modules}")
+    else:
+        trainable_params = sum(p.numel() for p in peft_model.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in peft_model.parameters())
+        print(f"[TRAIN] full trainable={trainable_params} total={total_params}")
 
     if jepa_objective is not None:
         optimizer = _build_optimizer(
@@ -332,14 +354,14 @@ def run_training(
             resume_from, model, optimizer, jepa_objective=jepa_objective
         )
         start_step = int(ckpt_result["step"])
-        sig = _make_signature_from_cfg(cfg, lora_result)
-        validate_lora_signature(ckpt_result["lora_signature"], sig)
+        validate_lora_signature(ckpt_result["lora_signature"], ckpt_sig)
         print(f"[TRAIN] resumed from {resume_from} at step={start_step}")
 
     if checkpoint_dir is not None:
         checkpoint_dir = Path(checkpoint_dir)
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        ckpt_sig = _make_signature_from_cfg(cfg, lora_result)
+        if mode == "lora":
+            ckpt_sig = _make_signature_from_cfg(cfg, lora_result)
     else:
         ckpt_sig = None
 
