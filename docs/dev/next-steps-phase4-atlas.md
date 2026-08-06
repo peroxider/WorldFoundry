@@ -52,7 +52,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | 8 | **W31 — EnvPool 抽象 + 首选环境向量化封装** | G6 | first-env-side | ~1 session (after #6) | medium |
 | 9 | **W34 — PPO 训练器自研最小实现** | G7 | CPU smoke | ~1 session | medium |
 | 10 | **W37 — RL 训练与主训练栈集成 (W28 编排落地)** | G7, G14 | Atlas cluster | ~2 sessions (after #7, #8) | high |
-| 11 | **W36 — Reward model / 任务奖励接口** | G9 | none | ~½ session | low |
+| 11 | **W36 — Reward model / 任务奖励接口** | G9 | none | ~½ session | low | ✅ done this session |
 | 12 | **W38 — Model-based RL (predictor imagination rollout)** | G8, G7 | Atlas cluster | ~1–2 sessions (after #10) | medium |
 | 13 | **W39 — Phase-4 集成回归** | G6–G10 regression | Atlas cluster | ~1 session (after #10) | high |
 | 14 | **W40 — 帧生成路线 ADR 选型** | G13 前置 | none (design) | ~½ session | low | ✅ done this session |
@@ -477,19 +477,21 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 8 | W31 EnvPool 抽象 | not yet | **proposed** | W30 |
 | 9 | W34 PPO 训练器 | not yet | **proposed** | W31 |
 | 10 | W37 RL 训练与主训练栈集成 | not yet | **proposed** | W35 + W31 + W34 + cluster |
-| 11 | W36 Reward 接口 | not yet | **proposed** | W30 |
+| 11 | W36 Reward 接口 | `<hash this session>` | **done** | W30 (unblocked; env = MuJoCo) |
 | 12 | W38 Model-based RL | not yet | **proposed** | W37 |
 | 13 | W39 Phase-4 集成回归 | not yet | **proposed** | W37 + W38 |
 | 14 | W40 帧生成路线 ADR | `759dd28` | **done** | none |
-| 15 | W36 NPU worker 同构契约 | `?` (this session) | **proposed** | none (CPU-only doc) |
+| 15 | W36 NPU worker 同构契约 | `f923170` | **done** | none (CPU-only doc) |
 
 **调度建议**：
 - ~~立刻可做（无 hardware 依赖）：#6, #14, #15（三个 design tasks）。~~ — 2026-08-06 三件 ADR 全 ship，phase-4 立刻可做桶 closed。
 - 预约硬件：#1 → #2 / #3 并行 → #4 → #5。
 - 硬件到位 + ADR 完成后：#7 → #8 → #9 / #11 → #10 → #12 → #13。
 - W36 #15 必须是 W20/W21/W26/W27 任一实施前的先决条件（契约 + 收口门）。
-- #11 W36 canonical (Reward 接口) 已 unblocked（#6 W30 选完 MuJoCo），
-  可作为 phase-4 立即可做的下一条 design + 1 implementation（~ ½ session）。
+- #11 W36 canonical (Reward 接口) 已 ship（2026-08-06）：`worldfoundry_rl/reward.py`
+  （RewardFn Protocol + ensure_reward_fn + compose）+ `reward_impl.py`
+  （FrankaKitchenReward + LatentDistanceReward）+ 25 个单元测试。下一条
+  unblocked implementation = W34 (PPO)，待 W31 (EnvPool) 落地后接。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
@@ -509,4 +511,8 @@ move to the bottom of the queue.
 - **W36 NPU parity contract (G11 契约层)**: `docs/superpowers/specs/2026-08-06-w36-npu-worker-parity-contract.md`
 - **W30 env-selection ADR (G6 前置)**: `docs/superpowers/specs/2026-08-06-w30-env-selection-adr.md`
 - **W40 frame-gen route ADR (G13 前置)**: `docs/superpowers/specs/2026-08-06-w40-frame-gen-adr.md`
+- **W36 canonical (Reward 接口 / G9)**: `worldfoundry_rl/reward.py`（RewardFn Protocol
+  + ensure_reward_fn + compose）+ `worldfoundry_rl/reward_impl.py`（FrankaKitchen
+  manipulation reward + LatentDistanceReward intrinsic）+ `worldfoundry_rl/tests/test_reward.py`
+  （25 个单元测试全绿；`pytest worldfoundry_rl/tests/` 32/32）。
 - Phase-3 final HEAD: `c9e7197` (W32)
