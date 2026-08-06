@@ -42,8 +42,8 @@
 | `rlinf` | `0.3.0` | pip 公开 wheel，与 GitHub `v0.3` tag `0505431` 一致 |
 | `torch` | `2.10.0+cpu` | **PyTorch 主线**；NPU 侧需替换为 `torch_npu` 同主版本 |
 | `ray` | `2.56.1` | 调度底座 |
-| `transformers` | `4.57.6` | HF 系列；与 V-JEPA 2 encoder 复用 |
-| `accelerate` | `1.14.0` | 与 transformers 配合 |
+| `huggingface_hub` | `1.26.0` | HF 模型中心客户端（pip-freeze 中**未含** `transformers` 自身——spike 使用 HF 模型通过 `huggingface_hub` + HF transformers 间接装载，spike 文档中提及的 transformers 4.57.6 未在 pip-freeze 中可见，需 W35.1 实测时复核） |
+| `accelerate` | `1.14.0` | 与 transformers 配合（间接依赖，pip-freeze 可见） |
 | `hydra-core` | `1.3.4` | RLinf 配置系统（取代 OmegaConf 直接依赖） |
 | `omegaconf` | `2.3.1` | Hydra 间接依赖 |
 | `torchdata` | `0.11.0` | 数据加载 |
@@ -72,7 +72,7 @@
 
 | 项 | 风险 | 备注 |
 |---|---|---|
-| `transformers` 4.57.6 vs V-JEPA 2 引入者 | 低 | 项目侧 W22 已用 `transformers.VJEPA2Model`；`pip_freeze` 显示 4.57.6 与项目侧 `transformers>=4.45` 兼容 |
+| `huggingface_hub` 1.26.0 vs V-JEPA 2 引入者 | 低 | 项目侧 W22 已用 `transformers.VJEPA2Model`（`huggingface_hub` ≥ 1.0 即可装载）；spike pip-freeze 仅有 `huggingface_hub`，未直接列出 `transformers` 自身，但 spike 文档（`spikes/w35-3-rlinf/PROGRESS.md` 环境事实行）声明 transformers 4.57.6，需 W35.1 实测时核对实际安装版本与 `transformers>=4.45` 兼容 |
 | `accelerate` 1.14.0 vs 项目侧 | 低 | 项目未显式 pin accelerate；RLinf 自带版本一般可共存 |
 | `hydra-core` 1.3.4 vs 项目侧 | 低 | 项目使用 dataclass 风格 YAML，未引入 hydra；可作为独立依赖共存 |
 | `ray` 2.56.1 vs vLLM-Ascend | **中** | vLLM-Ascend 0.18.0 内部用 Ray 做 worker 协调；RLinf 也用 Ray。两套 Ray 进程不冲突，但端口需规划（已在 W28 §4.4 B 方案"调度器"实现形态提及） |
