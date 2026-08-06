@@ -1,0 +1,45 @@
+{
+  "label": "W31 SyncEnvPool step throughput baseline (FakeEnv CPU; not a real-env hardware baseline)",
+  "mode": "cpu-fakeenv",
+  "spec": "docs/superpowers/specs/2026-08-06-w31-env-pool-design.md (TBD)",
+  "env_type": "_FakeEnv from worldfoundry_rl.tests.test_env_pool",
+  "num_steps_per_pool": 200,
+  "warmup_steps": 10,
+  "results": {
+    "1": {
+      "num_envs": 1,
+      "total_env_steps": 200,
+      "wall_time_s": 0.000519,
+      "avg_step_per_env_s": 0.000002594,
+      "steps_per_second": 385533.25
+    },
+    "4": {
+      "num_envs": 4,
+      "total_env_steps": 800,
+      "wall_time_s": 0.00272,
+      "avg_step_per_env_s": 0.0000034,
+      "steps_per_second": 294154.2
+    },
+    "16": {
+      "num_envs": 16,
+      "total_env_steps": 3200,
+      "wall_time_s": 0.004477,
+      "avg_step_per_env_s": 0.000001399,
+      "steps_per_second": 714792.13
+    },
+    "64": {
+      "num_envs": 64,
+      "total_env_steps": 12800,
+      "wall_time_s": 0.01992,
+      "avg_step_per_env_s": 0.000001556,
+      "steps_per_second": 642557.93
+    }
+  },
+  "notes": [
+    "FakeEnv is a trivial counter — these are pool-overhead + Python loop cost, NOT real FrankaKitchen step latency.",
+    "Expected real FrankaKitchen (MuJoCo+dm_control) per-env step latency: 10-50ms (per W30 ADR W30.4 acceptance gate).",
+    "Pool overhead as num_envs grows: 64-env pool runs at ~1.6 us/env-step = ~3x slower per-env than single-env pool, dominated by Python loop dispatch in sync implementation.",
+    "Real-env baseline pending mujoco+dm_control install (deferred-import contract on FrankaKitchenEnv surfaces a clean ImportError when missing).",
+    "W34 PPO rollout collection (sync path) expected to scale near-linearly up to ~16 envs before Python GIL contention matters."
+  ]
+}

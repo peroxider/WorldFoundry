@@ -49,7 +49,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | 5 | **W29 — Phase-3 集成回归** | G1–G10 regression | Atlas 8×NPU | ~1 session (after #1, #3) | medium |
 | 6 | **W30 — 仿真环境选型 ADR (MuJoCo / SAPIEN / CARLA)** | G6 前置 | none (design) | ~1 session | low | ✅ done this session |
 | 7 | **W35 — RL 框架 ADR 验证门 (verl / RLinf / 自研)** | G6, G7, G14 | partial (verl on NPU) | ~1–2 sessions | medium | W35.2 CPU ✅ / W35.1 待 Atlas |
-| 8 | **W31 — EnvPool 抽象 + 首选环境向量化封装** | G6 | first-env-side | ~1 session (after #6) | medium |
+| 8 | **W31 — EnvPool 抽象 + 首选环境向量化封装** | G6 | first-env-side | ~1 session (after #6) | medium | ✅ done this session |
 | 9 | **W34 — PPO 训练器自研最小实现** | G7 | CPU smoke | ~1 session | medium |
 | 10 | **W37 — RL 训练与主训练栈集成 (W28 编排落地)** | G7, G14 | Atlas cluster | ~2 sessions (after #7, #8) | high |
 | 11 | **W36 — Reward model / 任务奖励接口** | G9 | none | ~½ session | low | ✅ done this session |
@@ -474,7 +474,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 5 | W29 Phase-3 集成回归 | not yet | **proposed** | W20 + W21 + W26 + W27 |
 | 6 | W30 仿真环境选型 ADR | `1e3db44` | **done** | none |
 | 7 | W35 RL 框架 ADR 验证门 | `024be09` | **W35.2 CPU ✅ / W35.1 待 Atlas** | W30 + Atlas (W35.1) |
-| 8 | W31 EnvPool 抽象 | not yet | **proposed** | W30 |
+| 8 | W31 EnvPool 抽象 | `<hash this session>` | **done** | W30 (unblocked) |
 | 9 | W34 PPO 训练器 | not yet | **proposed** | W31 |
 | 10 | W37 RL 训练与主训练栈集成 | not yet | **proposed** | W35 + W31 + W34 + cluster |
 | 11 | W36 Reward 接口 | `0264a61` | **done** | W30 (unblocked; env = MuJoCo) |
@@ -486,7 +486,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 **调度建议**：
 - ~~立刻可做（无 hardware 依赖）：#6, #14, #15（三个 design tasks）。~~ — 2026-08-06 三件 ADR 全 ship，phase-4 立刻可做桶 closed。
 - 预约硬件：#1 → #2 / #3 并行 → #4 → #5。
-- 硬件到位 + ADR 完成后：#7 → #8 → #9 / #11 → #10 → #12 → #13。
+- 硬件到位 + ADR 完成后：#7 → #8 ✅ / #9 / #11 ✅ → #10 → #12 → #13。
 - W36 #15 必须是 W20/W21/W26/W27 任一实施前的先决条件（契约 + 收口门）。
 - #11 W36 canonical (Reward 接口) 已 ship（2026-08-06）：`worldfoundry_rl/reward.py`
   （RewardFn Protocol + ensure_reward_fn + compose）+ `reward_impl.py`
@@ -510,6 +510,7 @@ move to the bottom of the queue.
 - W25 full-FT + SFT schema: `docs/superpowers/specs/2026-08-06-w25-full-finetune-sft-schema.md`
 - **W36 NPU parity contract (G11 契约层)**: `docs/superpowers/specs/2026-08-06-w36-npu-worker-parity-contract.md`
 - **W30 env-selection ADR (G6 前置)**: `docs/superpowers/specs/2026-08-06-w30-env-selection-adr.md`
+- **W31 EnvPool + FrankaKitchen 向量化封装 (G6)**: `worldfoundry_rl/env_pool.py`（Env/EnvPool Protocol + SyncEnvPool 同步 vec-env，Gymnasium autoreset_mode="on" 语义） + `worldfoundry_rl/env_franka_kitchen.py`（FrankaKitchenEnv 单 env 封装，dm_control+mujoco 延迟导入） + `worldfoundry_rl/tests/test_env_pool.py`（16 个单元测试全绿） + `bench_results/w31/vec_env_throughput.json`（FakeEnv CPU 基线；48/48 rl 套件全绿）
 - **W35.2 版本矩阵核对 (CPU-side, G6/G7/G14 触发切 verl)**: `docs/superpowers/specs/2026-08-06-w35-2-version-matrix-check.md`
 - **W40 frame-gen route ADR (G13 前置)**: `docs/superpowers/specs/2026-08-06-w40-frame-gen-adr.md`
 - **W36 canonical (Reward 接口 / G9)**: `worldfoundry_rl/reward.py`（RewardFn Protocol
