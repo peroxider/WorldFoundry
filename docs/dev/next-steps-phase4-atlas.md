@@ -243,7 +243,7 @@ roadmap Phase-4 入口决策。MuJoCo 物理 + 简单几何 vs SAPIEN 复杂场�
 - G6 前置.
 
 ### Deliverables
-1. `docs/superpowers/specs/2026-08-XX-w30-env-selection-adr.md` —
+1. `docs/superpowers/specs/2026-08-06-w30-env-selection-adr.md` —
    决策文档：选型、对比、与 NPU learner 的分体架构、env CPU 节点 +
    learner NPU 节点的拓扑。
 
