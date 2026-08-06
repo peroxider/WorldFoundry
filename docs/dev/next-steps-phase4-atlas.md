@@ -56,11 +56,13 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | 12 | **W38 — Model-based RL (predictor imagination rollout)** | G8, G7 | Atlas cluster | ~1–2 sessions (after #10) | medium |
 | 13 | **W39 — Phase-4 集成回归** | G6–G10 regression | Atlas cluster | ~1 session (after #10) | high |
 | 14 | **W40 — 帧生成路线 ADR 选型** | G13 前置 | none (design) | ~½ session | low |
+| 15 | **W36 — NPU worker 同构契约 + NotImplementedError 收口门** | G11 (契约层) | none (design) | ~1 session | low |
 
 **Recommendation**: start with **#1 (W20)** — it's the physical prerequisite
 for every other Atlas-gated item. While the hardware window is being
-scheduled, **#6 (W30 env ADR)** and **#14 (W40 frame-gen ADR)** can
-proceed on CPU and unblock Phase-4 / Phase-5 work.
+scheduled, **#6 (W30 env ADR)**, **#14 (W40 frame-gen ADR)**, and
+**#15 (W36 NPU parity contract — pre-Atlas gate for W20/W21/W26/W27)**
+can proceed on CPU and unblock Phase-4 / Phase-5 work.
 
 ---
 
@@ -479,11 +481,18 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 12 | W38 Model-based RL | not yet | **proposed** | W37 |
 | 13 | W39 Phase-4 集成回归 | not yet | **proposed** | W37 + W38 |
 | 14 | W40 帧生成路线 ADR | not yet | **proposed** | none |
+| 15 | W36 NPU worker 同构契约 | `?` (this session) | **proposed** | none (CPU-only doc) |
 
 **调度建议**：
-- 立刻可做（无 hardware 依赖）：#6, #14（两个 ADR）。
+- 立刻可做（无 hardware 依赖）：#6, #14, #15（三个 design tasks）。
 - 预约硬件：#1 → #2 / #3 并行 → #4 → #5。
 - 硬件到位 + ADR 完成后：#7 → #8 → #9 / #11 → #10 → #12 → #13。
+- W36 #15 必须是 W20/W21/W26/W27 任一实施前的先决条件（契约 + 收口门）。
+
+> 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
+> Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
+> 实施时按 spec 文件名 `2026-08-06-w36-npu-worker-parity-contract.md`
+> 区分，不要把两件事混在一起做。
 
 When the user picks one, this plan becomes the working plan; the others
 move to the bottom of the queue.
@@ -495,4 +504,5 @@ move to the bottom of the queue.
 - W28 编排设计: `docs/superpowers/specs/2026-08-06-w28-train-inference-orchestration-design.md`
 - W35 RL 框架 ADR: `docs/superpowers/specs/2026-08-04-w35-rl-framework-adr.md`
 - W25 full-FT + SFT schema: `docs/superpowers/specs/2026-08-06-w25-full-finetune-sft-schema.md`
+- **W36 NPU parity contract (G11 契约层)**: `docs/superpowers/specs/2026-08-06-w36-npu-worker-parity-contract.md`
 - Phase-3 final HEAD: `c9e7197` (W32)
