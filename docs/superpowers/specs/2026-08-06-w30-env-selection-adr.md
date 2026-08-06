@@ -33,7 +33,7 @@ simulator；MuJoCo/SAPIEN lands in Phase-2 W14"）；Phase-2 W14 在 Phase-3
 |---|---|---|
 | C1 | 训练在昇腾 NPU（Atlas 800 A2 / 910B×8；CANN 8.5.1 + torch_npu 2.9.0） | `worldfoundry_common/npu_env.py:15-21` |
 | C2 | Policy 输入是 RGB 帧序列（V-JEPA 2 encoder，W22） | `worldfoundry_train/model/predictor.py`、W22 设计文档 |
-| C3 | 仿真节点与 learner 节点分体（CPU sim + NPU learner） | W28 §RL 架构图；W35 ADR §6 W35.4 |
+| C3 | 仿真节点与 learner 节点分体（CPU sim + NPU learner） | W28 §3 总体架构；W35 ADR §6 W35.4 |
 | C4 | 必须支持 headless 运行（集群节点无显示） | 部署形态 |
 | C5 | 必须有可向量化接口（一个 CPU 节点并行 ≥ 4 env / process） | W31 EnvPool 抽象 |
 | C6 | License 必须与项目分发兼容（Apache-2.0 / MIT / BSD-3 优先） | `pyproject.toml` 现有声明 |
@@ -129,7 +129,7 @@ baseline。
 1. **D1 焦点决定** — MuJoCo 任务谱（Adroit / FrankaKitchen / dm_control
    manipulation）完全匹配 WorldFoundry 的 first-person 操作型 policy；
    CARLA 与 WorldFoundry 的 first-person-单相机焦点形态错位。
-2. **D2/D3 拓扑决定** — W28 §RL 架构图定义 "CPU sim + NPU learner" 分体
+2. **D2/D3 拓扑决定** — W28 §3 总体架构定义 "CPU sim + NPU learner" 分体
    形态；MuJoCo (CPU) 在该拓扑里天然适配；CARLA (UE4 GPU-heavy) 必
    须引入第二类 sim 节点 (GPU sim)，超出 W28 设计基线（**不强制否
    决，但 Phase-4 v1 不必承担集群形态扩张成本**）。
