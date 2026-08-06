@@ -34,19 +34,24 @@ from torch import nn
 from worldfoundry_train.model.ema import EMAUpdater
 from worldfoundry_train.model.predictor import JEPAPredictor
 from worldfoundry_train.model.temporal_predictor import TemporalPredictor
+from worldfoundry_train.model.action_predictor import ActionConditionedPredictor
 
 __all__ = ["JEPInferenceBundle", "load_jepa_inference_model"]
 
 
 @dataclass(frozen=True)
 class JEPInferenceBundle:
-    """Inference-ready four-tuple loaded from a W22 JEPA ckpt.
+    """Inference-ready bundle loaded from a W22 (or W27) JEPA ckpt.
 
-    All four ``nn.Module`` fields are ``eval()`` mode with
+    All ``nn.Module`` fields are ``eval()`` mode with
     ``requires_grad=False`` on every parameter and buffer. ``target``
     weights reflect the EMA snapshot at ``ema_step`` (not the latest
-    online params), so ``predict_temporal`` confidence comparisons
-    against ``target`` carry the JEPA semantics.
+    online params), so ``predict_temporal`` / ``predict_action_conditioned``
+    confidence comparisons against ``target`` carry the JEPA semantics.
+
+    The ``action_predictor`` / ``action_signature`` fields are populated
+    only by the W27 v2 loader (``load_action_conditioned_inference_model``);
+    W22-only ckpts leave them as ``None`` so the W24 surface is byte-compatible.
     """
 
     online: nn.Module
@@ -56,6 +61,8 @@ class JEPInferenceBundle:
     ema_step: int
     jepa_signature: dict
     jepa_hyperparams: dict
+    action_predictor: ActionConditionedPredictor | None = None
+    action_signature: dict | None = None
 
 
 # W22 fingerprints: a ckpt is a W22 JEPA ckpt iff all four keys are present.

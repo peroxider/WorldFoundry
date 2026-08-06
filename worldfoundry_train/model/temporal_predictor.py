@@ -168,6 +168,44 @@ class TemporalPredictor(nn.Module):
         temporal.proj_out.load_state_dict(w22.proj_out.state_dict())
         return temporal
 
+    @classmethod
+    def from_action_conditioned_predictor(
+        cls,
+        ac,
+        num_past_positions: int,
+        num_future_positions: int,
+        past_grid: tuple[int, int, int],
+        future_grid: tuple[int, int, int],
+    ) -> "TemporalPredictor":
+        """Construct a TemporalPredictor warm-started from an ActionConditionedPredictor (W27 v2).
+
+        Sister to :meth:`from_w22_jepa_predictor` — copies the shared trunk
+        (``proj_in / blocks / proj_out``) from the action predictor. The
+        action-predictor's ``action_proj`` is dropped (temporal mode has no
+        action); ``past_pos_embed / future_pos_embed / future_query`` stay
+        at their fresh trunc_normal init (same rationale as W22 warm-start).
+
+        Used by the W27 v2 inference loader so the ``temporal_predictor``
+        path keeps working after the trunk is replaced by an action-trained
+        checkpoint (the action signal is a per-frame residual that the
+        no-action baseline can still serve).
+        """
+        temporal = cls(
+            num_past_positions=num_past_positions,
+            num_future_positions=num_future_positions,
+            past_grid=past_grid,
+            future_grid=future_grid,
+            encoder_dim=ac.encoder_dim,
+            predictor_dim=ac.predictor_dim,
+            depth=len(ac.blocks.layers),
+            num_heads=ac.num_heads,
+            mlp_ratio=4.0,
+        )
+        temporal.proj_in.load_state_dict(ac.proj_in.state_dict())
+        temporal.blocks.load_state_dict(ac.blocks.state_dict())
+        temporal.proj_out.load_state_dict(ac.proj_out.state_dict())
+        return temporal
+
     def forward(
         self,
         past_feats: torch.Tensor,

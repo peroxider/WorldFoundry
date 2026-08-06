@@ -13,6 +13,13 @@ future H frame latents. When ``predictor_ckpt`` is None, the worker is
 byte-compatible with the W22 surface (``encode`` / ``predict`` / ``plan``
 only); when set, ``predict_temporal`` is enabled and the bundle's
 online/target encoders + temporal predictor are used for the temporal path.
+
+W27 v2 (Phase-3): the worker optionally loads a W27 V-JEPA 2-AC action-conditioned
+checkpoint (``action_predictor_ckpt``) to expose :meth:`predict_action_conditioned`
+— past K frames + K actions -> future H frame latents. When set, the action
+bundle's online/target encoders + ActionConditionedPredictor are used for the
+action path. The two ckpts are independent: a worker can run W22-only,
+W27-only, or both.
 """
 from __future__ import annotations
 
@@ -21,6 +28,9 @@ from typing import Optional
 
 import torch
 
+from worldfoundry_train.model.action_jepa_inference import (
+    load_action_conditioned_inference_model,
+)
 from worldfoundry_train.model.jepa_inference import (
     JEPInferenceBundle,
     load_jepa_inference_model,
@@ -48,10 +58,20 @@ class VJEPA2Worker:
             (``load_jepa_inference_model``). When set, :meth:`predict_temporal`
             is enabled and ``past_frames`` / ``future_frames`` configure the
             :class:`TemporalPredictor` grid.
-        past_frames: K (past-frame count) for the temporal predictor's input
-            grid; defaults to 1.
-        future_frames: H (future-frame count) for the temporal predictor's
-            output grid; defaults to 1.
+        action_predictor_ckpt: optional path to a W27 V-JEPA 2-AC action-
+            conditioned checkpoint (``load_action_conditioned_inference_model``).
+            When set, :meth:`predict_action_conditioned` is enabled and the
+            action bundle's :class:`ActionConditionedPredictor` is used for the
+            past-K + K-actions -> future-H path. The ``action_dim`` must match
+            the training-time action projection dimensionality.
+        action_dim: per-frame action vector width (e.g. 7 for joint positions
+            + gripper; 8 for joint + gripper_state). Recorded on the worker
+            for the contract that the action tensor sent to
+            :meth:`predict_action_conditioned` must have ``last_dim=action_dim``.
+        past_frames: K (past-frame count) for the temporal/action predictor's
+            input grid; defaults to 1.
+        future_frames: H (future-frame count) for the temporal/action
+            predictor's output grid; defaults to 1.
         patch_size: ViT patch size (16 for ViT-L).
         image_size: encoder input spatial size (224 for ViT-L).
     """
@@ -62,6 +82,8 @@ class VJEPA2Worker:
         adapter_name: Optional[str] = None,
         dtype: torch.dtype = torch.bfloat16,
         predictor_ckpt: Path | str | None = None,
+        action_predictor_ckpt: Path | str | None = None,
+        action_dim: int = 7,
         past_frames: int = 1,
         future_frames: int = 1,
         patch_size: int = DEFAULT_PATCH_SIZE,
@@ -77,6 +99,10 @@ class VJEPA2Worker:
         # ``predict_temporal`` raises RuntimeError (the API endpoint maps
         # that to 503 "temporal mode not enabled for this worker").
         self.bundle: Optional[JEPInferenceBundle] = None
+        # W27 v2: separate action-conditioned bundle. Independent of
+        # ``self.bundle`` so W22-only and W27-only configs both work.
+        self.action_bundle: Optional[JEPInferenceBundle] = None
+        self.action_dim = int(action_dim)
         self.past_frames = past_frames
         self.future_frames = future_frames
         self.patch_size = patch_size
@@ -85,6 +111,8 @@ class VJEPA2Worker:
         self._future_grid: tuple[int, int, int] | None = None
         if predictor_ckpt is not None:
             self.bundle = self._build_bundle(predictor_ckpt)
+        if action_predictor_ckpt is not None:
+            self.action_bundle = self._build_action_bundle(action_predictor_ckpt)
 
     def _build_bundle(self, ckpt: Path | str) -> JEPInferenceBundle:
         gh = self.image_size // self.patch_size
@@ -98,6 +126,41 @@ class VJEPA2Worker:
             past_grid=past_grid, future_grid=future_grid,
             map_location="cpu",
         )
+
+    def _build_action_bundle(self, ckpt: Path | str) -> JEPInferenceBundle:
+        """Build the W27 v2 action-conditioned bundle (sister to _build_bundle).
+
+        Reuses the same ``_past_grid`` / ``_future_grid`` so the API stays
+        consistent with the temporal path. The action predictor's
+        ``action_dim`` is recorded on the bundle's ``action_signature`` for
+        downstream introspection.
+        """
+        if self._past_grid is None or self._future_grid is None:
+            # If only action_predictor_ckpt was set (no W22), build the
+            # grid here so the action bundle has consistent shape.
+            gh = self.image_size // self.patch_size
+            gw = self.image_size // self.patch_size
+            self._past_grid = (self.past_frames, gh, gw)
+            self._future_grid = (self.future_frames, gh, gw)
+        # The W27 v2 loader overwrites self.model in-place with the ckpt's
+        # online encoder weights (same as W24). When both predictor_ckpt and
+        # action_predictor_ckpt are set, the latter wins because it is
+        # loaded last — the encoder is JEPA-trained on the same video
+        # stream so the two ckpts' encoder weights are functionally the same.
+        bundle = load_action_conditioned_inference_model(
+            ckpt, self.model,
+            past_grid=self._past_grid, future_grid=self._future_grid,
+            map_location="cpu",
+        )
+        # Sanity: the ckpt's action_dim must match the worker's contract.
+        ck_action_dim = int(bundle.action_signature.get("action_dim", self.action_dim))
+        if ck_action_dim != self.action_dim:
+            raise ValueError(
+                f"action_predictor_ckpt trained with action_dim={ck_action_dim} "
+                f"but worker was constructed with action_dim={self.action_dim}. "
+                f"Pass --action-dim={ck_action_dim} to the server."
+            )
+        return bundle
 
     @torch.no_grad()
     def encode(self, video_tensor: torch.Tensor) -> torch.Tensor:
@@ -310,20 +373,81 @@ class VJEPA2Worker:
         past_frames: int,
         future_frames: int,
     ) -> tuple[torch.Tensor, float]:
-        """V-JEPA 2-AC: past K frames + K actions -> future H frame latents (W27).
+        """V-JEPA 2-AC: past K frames + K actions -> future H frame latents (W27 v2).
 
         Sister to :meth:`predict_temporal` but additionally conditioned on a
-        per-frame action sequence. The CPU worker's full W27 wiring is
-        deferred — the action-conditioned predictor module is in tree
-        (``worldfoundry_train.model.action_predictor``), but a real
-        action-conditioned JEPA checkpoint + the matching inference loader
-        are needed for end-to-end serving. For now we raise explicitly so
-        callers can surface a 503 rather than silently returning temporal
-        output.
+        per-frame action sequence. The action bundle's online encoder
+        encodes the past K frames; the ActionConditionedPredictor maps
+        (past_feats + action broadcast) to future H frame latents; the EMA
+        target encoder scores the prediction's confidence by cosine
+        similarity against target-encoded future frames.
+
+        Args:
+            video_tensor: ``(B, T, C, H, W)`` float tensor; ``T`` must be
+                >= ``past_frames + future_frames``.
+            actions: ``(B, past_frames, action_dim)`` per-frame action
+                sequence. ``action_dim`` must match the worker / ckpt
+                contract.
+            past_frames: K (must match this worker's configured
+                ``past_frames``).
+            future_frames: H (must match this worker's configured
+                ``future_frames``).
+
+        Returns:
+            (future_features, confidence): ``future_features`` is
+            ``(B, N_future, encoder_dim)``; ``confidence`` is the mean
+            cosine similarity between predicted and target-encoder
+            features on [-1, 1].
+
+        Raises:
+            RuntimeError: this worker was constructed without
+                ``action_predictor_ckpt`` (action mode not enabled), or
+                ``past_frames`` / ``future_frames`` don't match the
+                worker's configured grid, or the video is too short, or
+                ``actions`` has the wrong shape.
         """
-        raise NotImplementedError(
-            "W27 action-conditioned mode requires a V-JEPA 2-AC JEPA "
-            "checkpoint and an action-conditioned inference bundle; the "
-            "CPU worker ships only the predictor module at this point. "
-            "Use predict_temporal() until W27+ wires the inference bundle."
+        if self.action_bundle is None:
+            raise RuntimeError(
+                "predict_action_conditioned() requires a worker constructed "
+                "with action_predictor_ckpt; current worker is "
+                "temporal-mode only (or no predictor at all)"
+            )
+        if past_frames != self.past_frames or future_frames != self.future_frames:
+            raise RuntimeError(
+                f"worker is configured for past_frames={self.past_frames}, "
+                f"future_frames={self.future_frames}; request has "
+                f"past_frames={past_frames}, future_frames={future_frames}. "
+                f"Adjust the worker's action_predictor_ckpt past/future grid"
+            )
+        if video_tensor.shape[1] < past_frames + future_frames:
+            raise RuntimeError(
+                f"video has {video_tensor.shape[1]} frames; need at least "
+                f"past_frames+future_frames={past_frames + future_frames}"
+            )
+        if actions.ndim != 3 or actions.shape[1] != past_frames:
+            raise RuntimeError(
+                f"actions must be (B, {past_frames}, action_dim), got "
+                f"{tuple(actions.shape)}"
+            )
+        if actions.shape[2] != self.action_dim:
+            raise RuntimeError(
+                f"actions last dim {actions.shape[2]} != worker action_dim "
+                f"{self.action_dim}"
+            )
+
+        past_video = video_tensor[:, :past_frames]
+        future_video = video_tensor[:, past_frames:past_frames + future_frames]
+
+        past_feats = self.action_bundle.online(
+            pixel_values_videos=past_video
+        ).last_hidden_state
+        predicted = self.action_bundle.action_predictor(
+            past_feats, actions, future_grid=self._future_grid
         )
+        target = self.action_bundle.target(
+            pixel_values_videos=future_video
+        ).last_hidden_state
+
+        sim = torch.nn.functional.cosine_similarity(predicted, target, dim=-1)
+        confidence = float(sim.mean())
+        return predicted, confidence
