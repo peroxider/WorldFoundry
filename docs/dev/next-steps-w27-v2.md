@@ -231,17 +231,32 @@ prediction. Sister to the W27 v2 inference wiring but on the RL training side.
 
 | # | Task | Committed on master? | Owner | Status |
 |---|---|---|---|---|
-| 1 | W33 plan endpoint | not yet | — | **proposed** |
-| 2 | W28 orchestration design | not yet | — | **proposed** |
-| 3 | W25-roadmap full-FT + SFT | not yet | — | **proposed** |
-| 4 | W32 latent-action head | not yet | — | **proposed** |
+| 1 | W33 plan endpoint | `28e8a6b` (2026-08-06) | — | **done** |
+| 2 | W28 orchestration design | `d284809` (2026-08-06) | — | **done** |
+| 3 | W25-roadmap full-FT + SFT | `1e5882d` (2026-08-06) | — | **done** |
+| 4 | W32 latent-action head | `c9e7197` (2026-08-06) | — | **done** |
 
-When the user picks one, the plan above becomes the working plan; the others
-move to the bottom of the queue.
+All four candidates shipped on 2026-08-06 in this order: W33 → W28 → W25-roadmap → W32.
+The CPU-only Phase-3 path described by this document is **closed**. Atlas-gated
+work (Phase-4) is tracked separately in `docs/dev/next-steps-phase4-atlas.md`
+(see the "What's next" section below).
+
+## What's next
+
+The next planning document is `docs/dev/next-steps-phase4-atlas.md`. It
+catalogs the remaining items that **require an Atlas hardware window** to
+land (FSDP+full-FT integration, NPU worker parity, PPO/GRPO losses, real
+env wiring, scheduler-pool W37), so the next dev session can pick up
+without re-discovering which work is blocked on hardware vs. blocked on
+spec.
 
 ## Cross-reference
 
-- W27 v2 commit: `0d8910f` (HEAD)
+- W27 v2 commit: `0d8910f`
+- Phase-3 final HEAD: `c9e7197` (W32)
 - Roadmap: `docs/roadmap/2026-08-03-jepa2-ascend-gap-analysis-roadmap.md`
 - W22 design review addendum: `docs/superpowers/specs/2026-08-05-w22-design-review-addendum.md`
 - W35 RL framework ADR: `docs/superpowers/specs/2026-08-04-w35-rl-framework-adr.md`
+- W25 full-FT + SFT schema: `docs/superpowers/specs/2026-08-06-w25-full-finetune-sft-schema.md`
+- W28 训推一体编排设计: `docs/superpowers/specs/2026-08-06-w28-train-inference-orchestration-design.md`
+- **Next plan (Atlas-gated):** `docs/dev/next-steps-phase4-atlas.md`
