@@ -480,7 +480,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 11 | W36 Reward 接口 | not yet | **proposed** | W30 |
 | 12 | W38 Model-based RL | not yet | **proposed** | W37 |
 | 13 | W39 Phase-4 集成回归 | not yet | **proposed** | W37 + W38 |
-| 14 | W40 帧生成路线 ADR | `<hash this session>` | **done** | none |
+| 14 | W40 帧生成路线 ADR | `759dd28` | **done** | none |
 | 15 | W36 NPU worker 同构契约 | `?` (this session) | **proposed** | none (CPU-only doc) |
 
 **调度建议**：
