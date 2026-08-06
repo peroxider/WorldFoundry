@@ -472,7 +472,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 3 | W21 8 卡 FSDP 上机 | not yet | **proposed** | W20 |
 | 4 | W27 vLLM-Ascend worker e2e | not yet | **proposed** | W20 + W26 |
 | 5 | W29 Phase-3 集成回归 | not yet | **proposed** | W20 + W21 + W26 + W27 |
-| 6 | W30 仿真环境选型 ADR | `<hash this session>` | **done** | none |
+| 6 | W30 仿真环境选型 ADR | `1e3db44` | **done** | none |
 | 7 | W35 RL 框架 ADR 验证门 | not yet | **proposed** | W30 |
 | 8 | W31 EnvPool 抽象 | not yet | **proposed** | W30 |
 | 9 | W34 PPO 训练器 | not yet | **proposed** | W31 |
