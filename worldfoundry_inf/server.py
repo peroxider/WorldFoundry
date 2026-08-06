@@ -24,9 +24,11 @@ def create_app(
     image_size: int = 224,
     batch_max_size: int | None = None,
     batch_max_latency_ms: float | None = None,
+    action_predictor_ckpt: Path | str | None = None,
+    action_dim: int = 7,
 ) -> FastAPI:
     secret = secret or os.environ.get("WORLDFORGE_HMAC_SECRET", "change-me")
-    app = FastAPI(title="WorldFoundry Inference", version="0.3.0-w25")
+    app = FastAPI(title="WorldFoundry Inference", version="0.3.1-w33")
 
     app.state.auth = HmacTokenAuth(secret=secret)
     app.state.router = AdapterRouter()
@@ -43,6 +45,8 @@ def create_app(
     worker = vjepa2_worker.VJEPA2Worker(
         model_path,
         predictor_ckpt=predictor_ckpt,
+        action_predictor_ckpt=action_predictor_ckpt,
+        action_dim=action_dim,
         past_frames=past_frames,
         future_frames=future_frames,
         patch_size=patch_size,
@@ -71,6 +75,8 @@ def create_app(
             "npu_available": is_npu_available(),
             "adapters": app.state.router.available_adapters(),
             "temporal_mode_enabled": predictor_ckpt is not None,
+            "action_mode_enabled": action_predictor_ckpt is not None,
+            "action_dim": action_dim,
             "batcher": {
                 "max_batch": max_batch,
                 "max_latency_ms": max_latency,
@@ -94,6 +100,21 @@ def main() -> int:
         default=None,
         help="W22 JEPA training checkpoint (.pt) — enables temporal mode "
         "on /v1/world/predict. When omitted, the worker is masked-mode only.",
+    )
+    parser.add_argument(
+        "--action-predictor-ckpt",
+        type=Path,
+        default=None,
+        help="W27 v2 action-conditioned training checkpoint (.pt) — enables "
+        "mode='action' on /v1/world/predict and the /v1/world/plan W33 "
+        "endpoint. When omitted, action mode is not available.",
+    )
+    parser.add_argument(
+        "--action-dim",
+        type=int,
+        default=7,
+        help="Per-frame action vector dimension (must match the "
+        "action_predictor_ckpt signature). Default: 7.",
     )
     parser.add_argument(
         "--past-frames", type=int, default=1,
@@ -124,6 +145,8 @@ def main() -> int:
         image_size=args.image_size,
         batch_max_size=args.batch_max_size,
         batch_max_latency_ms=args.batch_max_latency_ms,
+        action_predictor_ckpt=args.action_predictor_ckpt,
+        action_dim=args.action_dim,
     )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0

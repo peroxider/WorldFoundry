@@ -355,6 +355,96 @@ class VJEPA2Worker:
         return predicted, confidence
 
     @torch.no_grad()
+    def predict_action_conditioned_batch(
+        self,
+        videos: list[torch.Tensor],
+        actions_per_sample: list[torch.Tensor],
+        past_frames_list: list[int],
+        future_frames_list: list[int],
+    ) -> list[tuple[torch.Tensor, float]]:
+        """Batched action-conditioned prediction (W33 + W25 dynamic batcher).
+
+        Sister to :meth:`predict_temporal_batch`. Each request must share
+        uniform ``past_frames`` / ``future_frames`` (matching this worker's
+        configured grid); ``actions_per_sample[i]`` must be shape
+        ``(past_frames, action_dim)``. Returns ``(predicted_features,
+        confidence)`` per request in input order.
+        """
+        if not (
+            len(videos)
+            == len(actions_per_sample)
+            == len(past_frames_list)
+            == len(future_frames_list)
+        ):
+            raise ValueError(
+                "videos, actions_per_sample, past_frames_list, "
+                "future_frames_list must all be the same length"
+            )
+        if not videos:
+            return []
+        if self.action_bundle is None:
+            raise RuntimeError(
+                "predict_action_conditioned_batch() requires a worker "
+                "constructed with action_predictor_ckpt; current worker is "
+                "temporal-mode only (or no predictor at all)"
+            )
+        k = past_frames_list[0]
+        h = future_frames_list[0]
+        if any(pk != k for pk in past_frames_list) or any(
+            fh != h for fh in future_frames_list
+        ):
+            raise ValueError(
+                "action-mode batch requires uniform past_frames and "
+                "future_frames across the batch; got "
+                f"past_frames={set(past_frames_list)}, "
+                f"future_frames={set(future_frames_list)}"
+            )
+        if k != self.past_frames or h != self.future_frames:
+            raise RuntimeError(
+                f"batch past/future frames ({k}/{h}) don't match worker "
+                f"grid ({self.past_frames}/{self.future_frames})"
+            )
+
+        ref = videos[0].shape
+        for i, v in enumerate(videos):
+            if tuple(v.shape) != tuple(ref):
+                raise ValueError(
+                    f"video[{i}] has shape {tuple(v.shape)} != reference "
+                    f"{tuple(ref)}; batched action predict requires uniform "
+                    f"video shape"
+                )
+        ref_action = actions_per_sample[0].shape
+        for i, a in enumerate(actions_per_sample):
+            if tuple(a.shape) != tuple(ref_action):
+                raise ValueError(
+                    f"actions[{i}] has shape {tuple(a.shape)} != reference "
+                    f"{tuple(ref_action)}; batched action predict requires "
+                    f"uniform action shape"
+                )
+
+        batched = torch.stack(videos, dim=0)  # (B, T, C, H, W)
+        batched_actions = torch.stack(actions_per_sample, dim=0)  # (B, K, D)
+        past_video = batched[:, :k]
+        future_video = batched[:, k:k + h]
+
+        past_feats = self.action_bundle.online(
+            pixel_values_videos=past_video
+        ).last_hidden_state
+        predicted = self.action_bundle.action_predictor(
+            past_feats, batched_actions, future_grid=self._future_grid,
+        )
+        target = self.action_bundle.target(
+            pixel_values_videos=future_video
+        ).last_hidden_state
+
+        sim = torch.nn.functional.cosine_similarity(predicted, target, dim=-1)
+        confidence_per_sample = sim.mean(dim=-1)  # (B,)
+        return [
+            (predicted[i], float(confidence_per_sample[i]))
+            for i in range(batched.shape[0])
+        ]
+
+    @torch.no_grad()
     def plan(self, video_tensor: torch.Tensor, actions: list[int]) -> tuple[torch.Tensor, list[int]]:
         """V-JEPA 2-AC: given (video, actions), return next-state features.
 

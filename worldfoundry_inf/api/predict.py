@@ -9,8 +9,12 @@ Per spec §4.3 + W24 (Phase-3):
   the past with its online encoder and runs the temporal predictor to
   produce features for the next H frames; the EMA target encoder scores
   confidence. Returns ``{future_features, confidence, mode}``.
+- ``mode="action"`` (W33): action-conditioned roll-out; same shape as
+  ``mode="temporal"`` but additionally takes a 2-D ``actions`` field of
+  shape ``(past_frames, action_dim)`` (one action vector per past frame).
+  Returns ``{future_features, confidence, mode}``.
 
-Both modes share the same HMAC contract (``_check_auth`` is unchanged).
+All modes share the same HMAC contract (``_check_auth`` is unchanged).
 
 W25: each request is routed through the per-adapter ``PredictBatcher``
 which aggregates up to ``max_batch`` requests or ``max_latency_ms``
@@ -42,10 +46,10 @@ async def predict(request: Request, auth: HmacTokenAuth = Depends(lambda: None))
         raise HTTPException(status_code=400, detail="missing 'video' field")
 
     mode = str(payload.get("mode", "masked"))
-    if mode not in ("masked", "temporal"):
+    if mode not in ("masked", "temporal", "action"):
         raise HTTPException(
             status_code=400,
-            detail=f"mode must be 'masked' or 'temporal', got {mode!r}",
+            detail=f"mode must be 'masked', 'temporal', or 'action', got {mode!r}",
         )
 
     try:
@@ -68,7 +72,9 @@ async def predict(request: Request, auth: HmacTokenAuth = Depends(lambda: None))
 
     if mode == "masked":
         return _handle_masked(payload, tensor, worker, batcher)
-    return _handle_temporal(payload, tensor, worker, batcher)
+    if mode == "temporal":
+        return _handle_temporal(payload, tensor, worker, batcher)
+    return _handle_action(payload, tensor, worker, batcher)
 
 
 def _handle_masked(payload: dict, tensor: torch.Tensor, worker: object, batcher: PredictBatcher | None) -> dict:
@@ -148,6 +154,111 @@ def _handle_temporal(payload: dict, tensor: torch.Tensor, worker: object, batche
         "future_features": future_features.tolist(),
         "confidence": float(confidence),
         "mode": "temporal",
+    }
+
+
+def _handle_action(payload: dict, tensor: torch.Tensor, worker: object, batcher: PredictBatcher | None) -> dict:
+    """W33: action-conditioned roll-out via the W27 v2 bundle.
+
+    Validates ``actions`` (2-D list shape ``(past_frames, action_dim)``),
+    then routes through the per-adapter ``PredictBatcher`` (when the worker
+    exposes ``predict_action_conditioned_batch``) or calls the worker
+    directly. Returns ``{future_features, confidence, mode: "action"}``.
+    """
+    if "past_frames" not in payload or "future_frames" not in payload:
+        raise HTTPException(
+            status_code=400,
+            detail="mode='action' requires both 'past_frames' and 'future_frames'",
+        )
+    past_frames = int(payload["past_frames"])
+    future_frames = int(payload["future_frames"])
+    if past_frames < 1 or future_frames < 1:
+        raise HTTPException(
+            status_code=400,
+            detail=f"past_frames and future_frames must be >= 1, got "
+            f"past_frames={past_frames}, future_frames={future_frames}",
+        )
+    if past_frames + future_frames > tensor.shape[1]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"past_frames + future_frames ({past_frames + future_frames}) "
+            f"exceeds video length ({tensor.shape[1]} frames)",
+        )
+
+    if "actions" not in payload:
+        raise HTTPException(
+            status_code=400,
+            detail="mode='action' requires 'actions' (a list of past_frames "
+            "action vectors)",
+        )
+    actions_raw = payload["actions"]
+    if not isinstance(actions_raw, list):
+        raise HTTPException(
+            status_code=400,
+            detail="'actions' must be a list of action vectors (one per past "
+            "frame)",
+        )
+    if len(actions_raw) != past_frames:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'actions' length {len(actions_raw)} != past_frames "
+            f"{past_frames}",
+        )
+    worker_action_dim = int(getattr(worker, "action_dim", 0))
+    for i, vec in enumerate(actions_raw):
+        if not isinstance(vec, list):
+            raise HTTPException(
+                status_code=400,
+                detail=f"actions[{i}] must be a list of floats, got {type(vec).__name__}",
+            )
+        if len(vec) != worker_action_dim:
+            raise HTTPException(
+                status_code=400,
+                detail=f"actions[{i}] length {len(vec)} != worker's "
+                f"action_dim {worker_action_dim}",
+            )
+        for j, a in enumerate(vec):
+            if isinstance(a, bool) or not isinstance(a, (int, float)):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"actions[{i}][{j}] must be a number, got {type(a).__name__}",
+                )
+
+    if not hasattr(worker, "predict_action_conditioned"):
+        raise HTTPException(
+            status_code=503,
+            detail="action mode is not enabled for this worker "
+            "(construct the worker with action_predictor_ckpt)",
+        )
+
+    actions_tensor = torch.tensor(actions_raw, dtype=torch.float32).unsqueeze(0)
+
+    if batcher is not None and hasattr(worker, "predict_action_conditioned_batch"):
+        req = PredictRequest(
+            video=tensor[0],
+            mode="action",
+            past_frames=past_frames,
+            future_frames=future_frames,
+            actions=actions_tensor,
+        )
+        try:
+            future_features, confidence = batcher.submit(req).result(timeout=2.0)
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"predict batcher failed: {exc}") from exc
+    else:
+        try:
+            future_features, confidence = worker.predict_action_conditioned(
+                tensor, actions_tensor, past_frames, future_frames,
+            )
+        except NotImplementedError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return {
+        "future_features": future_features.tolist(),
+        "confidence": float(confidence),
+        "mode": "action",
     }
 
 

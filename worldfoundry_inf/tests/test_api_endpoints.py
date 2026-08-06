@@ -260,6 +260,12 @@ def test_plan_rejects_malformed_video(plan_client):
 def temporal_client(monkeypatch):
     """Test client whose stub worker exposes ``predict_temporal``."""
     class _TemporalStubWorker:
+        def __init__(self) -> None:
+            # W33: surface action_dim so /predict?mode=action validation
+            # reaches the 503 path instead of failing earlier on the
+            # action_dim check.
+            self.action_dim = 7
+
         def encode(self, x):
             import torch
             return torch.zeros(1, 196, 1024)
@@ -398,3 +404,176 @@ def test_predict_unknown_mode_returns_400(temporal_client, fake_video_bytes):
     )
     assert resp.status_code == 400
     assert "mode must be" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# W33: action-mode (mode="action") and W33 plan endpoint
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def action_client(monkeypatch):
+    """Test client whose stub worker exposes ``predict_action_conditioned``
+    and an ``action_dim`` of 7."""
+    class _ActionStubWorker:
+        def __init__(self) -> None:
+            self.action_dim = 7
+            self.past_frames = 2
+            self.future_frames = 2
+
+        def encode(self, x):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+        def predict(self, x, mask):
+            import torch
+            return torch.zeros(1, 196, 1024)
+
+        def predict_action_conditioned(
+            self, x, actions, past_frames, future_frames,
+        ):
+            import torch
+            return torch.zeros(1, future_frames * 196, 1024), 0.6
+
+    monkeypatch.setattr(
+        "worldfoundry_inf.vjepa2_worker.VJEPA2Worker",
+        lambda *a, **kw: _ActionStubWorker(),
+    )
+    return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
+
+
+def test_predict_mode_action_returns_200(action_client, fake_video_bytes):
+    method = "POST"
+    path = "/v1/world/predict"
+    actions_json = "[[0.1,0.2,0.3,0.4,0.5,0.6,0.7],[0.0,0.1,0.2,0.3,0.4,0.5,0.6]]"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"action",'
+        f'"past_frames":2,"future_frames":2,"actions":{actions_json}}}'
+    ).encode()
+    resp = action_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["mode"] == "action"
+    assert "future_features" in payload
+    assert isinstance(payload["confidence"], float)
+    assert -1.0 <= payload["confidence"] <= 1.0
+
+
+def test_predict_mode_action_rejects_missing_actions(action_client, fake_video_bytes):
+    method = "POST"
+    path = "/v1/world/predict"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"action",'
+        f'"past_frames":2,"future_frames":2}}'
+    ).encode()
+    resp = action_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 400
+    assert "actions" in resp.json()["detail"]
+
+
+def test_predict_mode_action_rejects_action_dim_mismatch(action_client, fake_video_bytes):
+    """Worker action_dim=7; client sends 5-vector past_frames=2 actions -> 400."""
+    method = "POST"
+    path = "/v1/world/predict"
+    # Each action vector has 5 floats, but worker.action_dim=7.
+    actions_json = "[[0.1,0.2,0.3,0.4,0.5],[0.0,0.1,0.2,0.3,0.4]]"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"action",'
+        f'"past_frames":2,"future_frames":2,"actions":{actions_json}}}'
+    ).encode()
+    resp = action_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 400
+    assert "action_dim" in resp.json()["detail"]
+
+
+def test_predict_mode_action_rejects_wrong_actions_count(action_client, fake_video_bytes):
+    """past_frames=2 but only 1 action vector -> 400."""
+    method = "POST"
+    path = "/v1/world/predict"
+    actions_json = "[[0.1,0.2,0.3,0.4,0.5,0.6,0.7]]"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"action",'
+        f'"past_frames":2,"future_frames":2,"actions":{actions_json}}}'
+    ).encode()
+    resp = action_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 400
+    assert "past_frames" in resp.json()["detail"]
+
+
+def test_predict_mode_action_returns_503_when_worker_lacks_method(
+    temporal_client, fake_video_bytes,
+):
+    """temporal_client's stub has predict_temporal but not predict_action_conditioned."""
+    method = "POST"
+    path = "/v1/world/predict"
+    actions_json = "[[0.1,0.2,0.3,0.4,0.5,0.6,0.7],[0.0,0.1,0.2,0.3,0.4,0.5,0.6]]"
+    body = (
+        f'{{"video":"{fake_video_bytes}","mode":"action",'
+        f'"past_frames":2,"future_frames":2,"actions":{actions_json}}}'
+    ).encode()
+    resp = temporal_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 503
+    assert "action mode" in resp.json()["detail"]
+
+
+def test_plan_action_mode_with_valid_auth_returns_200(action_client, fake_video_bytes):
+    """W33: /v1/world/plan with 2-D action list -> 200 action-conditioned."""
+    method = "POST"
+    path = "/v1/world/plan"
+    actions_json = "[[0.1,0.2,0.3,0.4,0.5,0.6,0.7],[0.0,0.1,0.2,0.3,0.4,0.5,0.6]]"
+    body = (
+        f'{{"video":"{fake_video_bytes}","actions":{actions_json},'
+        f'"past_frames":2,"future_frames":2}}'
+    ).encode()
+    resp = action_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 200, resp.text
+    payload = resp.json()
+    assert payload["mode"] == "action"
+    assert "next_features" in payload
+    assert "planned_actions" in payload
+    assert payload["planned_actions"] == [
+        [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7],
+        [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6],
+    ]
+    assert isinstance(payload["confidence"], float)
+
+
+def test_plan_action_mode_rejects_wrong_action_dim(action_client, fake_video_bytes):
+    method = "POST"
+    path = "/v1/world/plan"
+    actions_json = "[[0.1,0.2,0.3,0.4,0.5],[0.0,0.1,0.2,0.3,0.4]]"  # 5-vector vs worker 7
+    body = (
+        f'{{"video":"{fake_video_bytes}","actions":{actions_json},'
+        f'"past_frames":2,"future_frames":2}}'
+    ).encode()
+    resp = action_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 400
+    assert "action_dim" in resp.json()["detail"]
+
+
+def test_plan_legacy_passthrough_returns_200(plan_client, fake_video_bytes):
+    """Pre-W33 worker without predict_action_conditioned: flat integer list
+    still hits the legacy plan() passthrough (backward compat)."""
+    method = "POST"
+    path = "/v1/world/plan"
+    body = f'{{"video":"{fake_video_bytes}","actions":[1,2,3]}}'.encode()
+    resp = plan_client.post(
+        path, content=body, headers=_sign_request("test-secret", method, path, body),
+    )
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["planned_actions"] == [1, 2, 3]

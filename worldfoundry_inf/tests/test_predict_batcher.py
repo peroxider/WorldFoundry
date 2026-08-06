@@ -23,6 +23,12 @@ class _StubWorker:
         self.masked_calls: list[tuple[list[torch.Tensor], list[float]]] = []
         self.temporal_calls: list[tuple[list[torch.Tensor], list[int], list[int]]] = []
         self.temporal_singleton_calls: list[tuple[torch.Tensor, int, int]] = []
+        self.action_calls: list[tuple[
+            list[torch.Tensor], list[torch.Tensor], list[int], list[int],
+        ]] = []
+        self.action_singleton_calls: list[
+            tuple[torch.Tensor, torch.Tensor, int, int]
+        ] = []
         self.raise_on_call = raise_on_call
 
     def predict_masked_batch(
@@ -49,6 +55,32 @@ class _StubWorker:
     ) -> tuple[torch.Tensor, float]:
         self.temporal_singleton_calls.append((video, past_frames, future_frames))
         return torch.zeros(1, 196, 1024), 0.9
+
+    def predict_action_conditioned_batch(
+        self,
+        videos: list[torch.Tensor],
+        actions_per_sample: list[torch.Tensor],
+        past_frames_list: list[int],
+        future_frames_list: list[int],
+    ) -> list[tuple[torch.Tensor, float]]:
+        self.action_calls.append(
+            (videos, actions_per_sample, past_frames_list, future_frames_list),
+        )
+        n = len(videos)
+        return [
+            (torch.zeros(1, 196, 1024), 0.7 + 0.1 * i)
+            for i in range(n)
+        ]
+
+    def predict_action_conditioned(
+        self,
+        video: torch.Tensor,
+        actions: torch.Tensor,
+        past_frames: int,
+        future_frames: int,
+    ) -> tuple[torch.Tensor, float]:
+        self.action_singleton_calls.append((video, actions, past_frames, future_frames))
+        return torch.zeros(1, 196, 1024), 0.95
 
 
 def _video(t: int = 4) -> torch.Tensor:
@@ -219,3 +251,119 @@ def test_concurrent_submits_all_get_responses():
         out = fut.result(timeout=5.0)
         assert out.shape == (1, 196, 1024)
     assert len(worker.masked_calls) >= 1
+
+
+# ---------------------------------------------------------------------------
+# W33: action-mode (predict_action_conditioned_batch / predict_action_conditioned)
+# ---------------------------------------------------------------------------
+
+
+def _actions(past_frames: int = 2, action_dim: int = 7) -> torch.Tensor:
+    return torch.zeros(past_frames, action_dim)
+
+
+def test_uniform_action_mode_groups_into_single_batched_call():
+    """W33: 3 action requests with identical K/H/action shape -> 1 batched call."""
+    worker = _StubWorker()
+    batcher = PredictBatcher(worker, max_batch=100, max_latency_ms=20.0)
+
+    f0 = batcher.submit(
+        PredictRequest(
+            video=_video(), mode="action",
+            past_frames=2, future_frames=2, actions=_actions(2, 7),
+        ),
+    )
+    f1 = batcher.submit(
+        PredictRequest(
+            video=_video(), mode="action",
+            past_frames=2, future_frames=2, actions=_actions(2, 7),
+        ),
+    )
+    f2 = batcher.submit(
+        PredictRequest(
+            video=_video(), mode="action",
+            past_frames=2, future_frames=2, actions=_actions(2, 7),
+        ),
+    )
+
+    f0.result(timeout=2.0)
+    f1.result(timeout=2.0)
+    f2.result(timeout=2.0)
+
+    assert len(worker.action_calls) == 1
+    assert len(worker.action_calls[0][0]) == 3  # 3 videos batched
+    assert len(worker.action_calls[0][1]) == 3  # 3 action tensors batched
+    assert worker.action_calls[0][2] == [2, 2, 2]  # past_frames
+    assert worker.action_calls[0][3] == [2, 2, 2]  # future_frames
+    assert len(worker.action_singleton_calls) == 0
+
+
+def test_action_mode_shape_mismatch_falls_back_to_singleton():
+    """W33: second request has a different action shape -> singleton fallback."""
+    worker = _StubWorker()
+    batcher = PredictBatcher(worker, max_batch=100, max_latency_ms=20.0)
+
+    f_uni = batcher.submit(
+        PredictRequest(
+            video=_video(), mode="action",
+            past_frames=2, future_frames=2, actions=_actions(2, 7),
+        ),
+    )
+    f_diff = batcher.submit(
+        PredictRequest(
+            video=_video(), mode="action",
+            past_frames=2, future_frames=2, actions=_actions(2, 9),  # different action_dim
+        ),
+    )
+
+    f_uni.result(timeout=2.0)
+    f_diff.result(timeout=2.0)
+
+    # First request batched alone; second singleton.
+    assert len(worker.action_calls) == 1
+    assert len(worker.action_calls[0][0]) == 1
+    assert len(worker.action_singleton_calls) == 1
+    assert worker.action_singleton_calls[0][3] == 2  # future_frames preserved
+
+
+def test_action_mode_past_frames_mismatch_falls_back_to_singleton():
+    """W33: second request has different past_frames -> singleton fallback."""
+    worker = _StubWorker()
+    batcher = PredictBatcher(worker, max_batch=100, max_latency_ms=20.0)
+
+    f_uni = batcher.submit(
+        PredictRequest(
+            video=_video(), mode="action",
+            past_frames=2, future_frames=2, actions=_actions(2, 7),
+        ),
+    )
+    f_diff = batcher.submit(
+        PredictRequest(
+            video=_video(), mode="action",
+            past_frames=3, future_frames=2, actions=_actions(3, 7),
+        ),
+    )
+
+    f_uni.result(timeout=2.0)
+    f_diff.result(timeout=2.0)
+
+    assert len(worker.action_calls) == 1
+    assert len(worker.action_calls[0][0]) == 1
+    assert len(worker.action_singleton_calls) == 1
+
+
+def test_action_mode_returns_action_bundle_results():
+    """W33: per-sample (features, confidence) from the action batcher."""
+    worker = _StubWorker()
+    batcher = PredictBatcher(worker, max_batch=10, max_latency_ms=15.0)
+
+    fut = batcher.submit(
+        PredictRequest(
+            video=_video(), mode="action",
+            past_frames=2, future_frames=2, actions=_actions(2, 7),
+        ),
+    )
+    features, confidence = fut.result(timeout=2.0)
+    assert features.shape == (1, 196, 1024)
+    assert isinstance(confidence, float)
+    assert 0.0 <= confidence <= 1.0
