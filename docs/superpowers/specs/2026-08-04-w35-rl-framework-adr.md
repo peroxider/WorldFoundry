@@ -98,7 +98,9 @@ WorldFoundry Phase-4 需要在昇腾 NPU 上建立"以 V-JEPA 2 encoder + AC pre
 | W35.2 | 版本矩阵核对：RLinf v0.3 依赖的 torch_npu/CANN/vllm-ascend 与项目锁定（torch_npu 2.9.0 / CANN 8.5.1 / vllm-ascend 0.18.0）兼容 | 依赖冲突可解（含降级方案评估） | 需要 torch_npu 主版本变更 |
 | W35.3 | 自定义模型 spike：将 V-JEPA 2 encoder + 线性 action head 封装为 RLinf custom policy，CPU 跑通 CartPole 级任务 | 接入路径打通，接口成本 ≤ 预估 | 自定义模型通道无法承载 ViT 级模型 |
 
-> ✅ **W35.3 已完成（2026-08-04），判定通过**：官方 `RLINF_EXT_MODULE` 注册通道承载 ViT 级自定义模型无缺口；状态投影与渲染帧双模式均实证打通 rollout→actor 数据通路（模式 A reward 17.7→274.2）；actor→rollout 权重同步对自定义模型自动生效；实际工时 ~1 天，JEPA policy 正式接入修正估算 **3–5 人日**（远低于 2–3 周预估）。证据与 14 项接入缺口分类：`spikes/w35-3-rlinf/integration-cost-assessment.md`、`spikes/w35-3-rlinf/integration-points-memo.md`。 |
+> ✅ **W35.3 已完成（2026-08-04），判定通过**：官方 `RLINF_EXT_MODULE` 注册通道承载 ViT 级自定义模型无缺口；状态投影与渲染帧双模式均实证打通 rollout→actor 数据通路（模式 A reward 17.7→274.2）；actor→rollout 权重同步对自定义模型自动生效；实际工时 ~1 天，JEPA policy 正式接入修正估算 **3–5 人日**（远低于 2–3 周预估）。证据与 14 项接入缺口分类：`spikes/w35-3-rlinf/integration-cost-assessment.md`、`spikes/w35-3-rlinf/integration-points-memo.md`。
+
+> ⚠️ **W35.2 CPU 侧已完成（2026-08-06），判定建议触发否决项 → 切 verl**：RLinf v0.3.0 拉入 `torch 2.10.0+cpu`（spike pip-freeze 实测），与项目锁 `torch_npu 2.9.0` 构成 minor version 不匹配。按严解（minor 变更即触发否决项），方案 A（升级 torch_npu 到 2.10.0）工期与回归成本不可接受；方案 B（降级 RLinf 到 v0.2.x）不确定且会丢失 v0.3 关键特性（`RLINF_EXT_MODULE` 通道）；方案 C（patch RLinf）工作量大、不确定；方案 D（切 verl）零额外工期，verl 已在 pyproject 与项目 torch_npu 2.9.0 / vllm-ascend 0.18.0 同矩阵。W35.3 spike 资产可作为 verl 自定义 worker 设计参考，W37 范围由 "RLinf 集成"调整为 "verl 集成"，接口契约基本不变。NPU 侧最终确认（W35.1）保留作为 RLinf 路径封口验证。完整论证与降级方案对比：`docs/superpowers/specs/2026-08-06-w35-2-version-matrix-check.md`。 |
 | W35.4 | 异构混部验证：GPU/CPU 仿真节点 + NPU 训练节点的 rollout-learner 通信 | 吞吐不低于同框架纯 GPU 基线的 60% | 通信架构不支持跨硬件混部 |
 
 验证门预计 2–3 周（可压缩在 Atlas 硬件窗口内与 W20/W21 并行）。

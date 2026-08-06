@@ -48,7 +48,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | 4 | **W27 — vLLM-Ascend worker Atlas e2e 验证** | G11 | Atlas single-card | ~½ session (after #2) | low |
 | 5 | **W29 — Phase-3 集成回归** | G1–G10 regression | Atlas 8×NPU | ~1 session (after #1, #3) | medium |
 | 6 | **W30 — 仿真环境选型 ADR (MuJoCo / SAPIEN / CARLA)** | G6 前置 | none (design) | ~1 session | low | ✅ done this session |
-| 7 | **W35 — RL 框架 ADR 验证门 (verl / RLinf / 自研)** | G6, G7, G14 | partial (verl on NPU) | ~1–2 sessions | medium |
+| 7 | **W35 — RL 框架 ADR 验证门 (verl / RLinf / 自研)** | G6, G7, G14 | partial (verl on NPU) | ~1–2 sessions | medium | W35.2 CPU ✅ / W35.1 待 Atlas |
 | 8 | **W31 — EnvPool 抽象 + 首选环境向量化封装** | G6 | first-env-side | ~1 session (after #6) | medium |
 | 9 | **W34 — PPO 训练器自研最小实现** | G7 | CPU smoke | ~1 session | medium |
 | 10 | **W37 — RL 训练与主训练栈集成 (W28 编排落地)** | G7, G14 | Atlas cluster | ~2 sessions (after #7, #8) | high |
@@ -473,7 +473,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 4 | W27 vLLM-Ascend worker e2e | not yet | **proposed** | W20 + W26 |
 | 5 | W29 Phase-3 集成回归 | not yet | **proposed** | W20 + W21 + W26 + W27 |
 | 6 | W30 仿真环境选型 ADR | `1e3db44` | **done** | none |
-| 7 | W35 RL 框架 ADR 验证门 | not yet | **proposed** | W30 |
+| 7 | W35 RL 框架 ADR 验证门 | `<hash this session>` | **W35.2 CPU ✅ / W35.1 待 Atlas** | W30 + Atlas (W35.1) |
 | 8 | W31 EnvPool 抽象 | not yet | **proposed** | W30 |
 | 9 | W34 PPO 训练器 | not yet | **proposed** | W31 |
 | 10 | W37 RL 训练与主训练栈集成 | not yet | **proposed** | W35 + W31 + W34 + cluster |
@@ -510,6 +510,7 @@ move to the bottom of the queue.
 - W25 full-FT + SFT schema: `docs/superpowers/specs/2026-08-06-w25-full-finetune-sft-schema.md`
 - **W36 NPU parity contract (G11 契约层)**: `docs/superpowers/specs/2026-08-06-w36-npu-worker-parity-contract.md`
 - **W30 env-selection ADR (G6 前置)**: `docs/superpowers/specs/2026-08-06-w30-env-selection-adr.md`
+- **W35.2 版本矩阵核对 (CPU-side, G6/G7/G14 触发切 verl)**: `docs/superpowers/specs/2026-08-06-w35-2-version-matrix-check.md`
 - **W40 frame-gen route ADR (G13 前置)**: `docs/superpowers/specs/2026-08-06-w40-frame-gen-adr.md`
 - **W36 canonical (Reward 接口 / G9)**: `worldfoundry_rl/reward.py`（RewardFn Protocol
   + ensure_reward_fn + compose）+ `worldfoundry_rl/reward_impl.py`（FrankaKitchen
