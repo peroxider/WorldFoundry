@@ -477,7 +477,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 8 | W31 EnvPool 抽象 | not yet | **proposed** | W30 |
 | 9 | W34 PPO 训练器 | not yet | **proposed** | W31 |
 | 10 | W37 RL 训练与主训练栈集成 | not yet | **proposed** | W35 + W31 + W34 + cluster |
-| 11 | W36 Reward 接口 | `<hash this session>` | **done** | W30 (unblocked; env = MuJoCo) |
+| 11 | W36 Reward 接口 | `0264a61` | **done** | W30 (unblocked; env = MuJoCo) |
 | 12 | W38 Model-based RL | not yet | **proposed** | W37 |
 | 13 | W39 Phase-4 集成回归 | not yet | **proposed** | W37 + W38 |
 | 14 | W40 帧生成路线 ADR | `759dd28` | **done** | none |
