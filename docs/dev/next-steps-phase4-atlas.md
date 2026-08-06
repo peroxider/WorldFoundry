@@ -47,7 +47,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | 3 | **W21 — 8 卡 FSDP 上机 + 多卡 checkpoint save** | G1, G4 | Atlas 8×NPU | ~1 session (after #1) | medium |
 | 4 | **W27 — vLLM-Ascend worker Atlas e2e 验证** | G11 | Atlas single-card | ~½ session (after #2) | low |
 | 5 | **W29 — Phase-3 集成回归** | G1–G10 regression | Atlas 8×NPU | ~1 session (after #1, #3) | medium |
-| 6 | **W30 — 仿真环境选型 ADR (MuJoCo / SAPIEN / CARLA)** | G6 前置 | none (design) | ~1 session | low |
+| 6 | **W30 — 仿真环境选型 ADR (MuJoCo / SAPIEN / CARLA)** | G6 前置 | none (design) | ~1 session | low | ✅ done this session |
 | 7 | **W35 — RL 框架 ADR 验证门 (verl / RLinf / 自研)** | G6, G7, G14 | partial (verl on NPU) | ~1–2 sessions | medium |
 | 8 | **W31 — EnvPool 抽象 + 首选环境向量化封装** | G6 | first-env-side | ~1 session (after #6) | medium |
 | 9 | **W34 — PPO 训练器自研最小实现** | G7 | CPU smoke | ~1 session | medium |
@@ -472,7 +472,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 3 | W21 8 卡 FSDP 上机 | not yet | **proposed** | W20 |
 | 4 | W27 vLLM-Ascend worker e2e | not yet | **proposed** | W20 + W26 |
 | 5 | W29 Phase-3 集成回归 | not yet | **proposed** | W20 + W21 + W26 + W27 |
-| 6 | W30 仿真环境选型 ADR | not yet | **proposed** | none |
+| 6 | W30 仿真环境选型 ADR | `<hash this session>` | **done** | none |
 | 7 | W35 RL 框架 ADR 验证门 | not yet | **proposed** | W30 |
 | 8 | W31 EnvPool 抽象 | not yet | **proposed** | W30 |
 | 9 | W34 PPO 训练器 | not yet | **proposed** | W31 |
@@ -505,4 +505,5 @@ move to the bottom of the queue.
 - W35 RL 框架 ADR: `docs/superpowers/specs/2026-08-04-w35-rl-framework-adr.md`
 - W25 full-FT + SFT schema: `docs/superpowers/specs/2026-08-06-w25-full-finetune-sft-schema.md`
 - **W36 NPU parity contract (G11 契约层)**: `docs/superpowers/specs/2026-08-06-w36-npu-worker-parity-contract.md`
+- **W30 env-selection ADR (G6 前置)**: `docs/superpowers/specs/2026-08-06-w30-env-selection-adr.md`
 - Phase-3 final HEAD: `c9e7197` (W32)
