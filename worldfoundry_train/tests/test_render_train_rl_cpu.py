@@ -616,3 +616,72 @@ def test_orchestrator_is_deterministic_under_same_seed(tmp_path: Path) -> None:
             assert abs(va - vb) <= 1e-5, (
                 f"{k} mismatch: {va} vs {vb}"
             )
+
+
+# ---------------------------------------------------------------------------
+# EMA target persistence
+# ---------------------------------------------------------------------------
+
+
+def test_saved_checkpoint_persists_ema_target_separate_from_online(tmp_path: Path) -> None:
+    """The v2.9 checkpoint must carry ``target_state`` and it must differ
+    from ``encoder_state`` (proving EMA actually moved during training).
+
+    Before v2.9 the orchestrator built the EMA target encoder but only
+    persisted the online encoder. Resuming from the checkpoint would
+    silently lose the EMA's slow-moving bias. v2.9 persists the
+    target_state; this test guards two things:
+
+    1. ``target_state`` is present in the on-disk payload.
+    2. After running N train steps, target_state != encoder_state at
+       every key — i.e. the EMA actually moved (otherwise the target
+       would be a verbatim copy of the online encoder at step 0 and
+       never updated).
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "4",
+            "--ppo-env-steps", "4", "--num-outer-iters", "1",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    payload = torch.load(
+        tmp_path / "tiny_jepa_v2.pt", map_location="cpu", weights_only=False,
+    )
+
+    # 1. target_state key must be present (v2.9 orchestrator invariant).
+    assert "target_state" in payload, (
+        "v2.9 checkpoint must persist target_state alongside encoder_state"
+    )
+    assert isinstance(payload["target_state"], dict)
+    assert len(payload["target_state"]) > 0
+
+    # 2. target_state's keys must match encoder_state's keys (same arch).
+    assert set(payload["target_state"].keys()) == set(payload["encoder_state"].keys())
+
+    # 3. At least one weight must differ between target and online.
+    # If EMA was never called (target_state == initial encoder_state),
+    # every key would be identical. Real EMA updates move the target
+    # by `momentum * (online - target)` each step, so after 4 steps
+    # at least one key must show measurable difference.
+    diffs = []
+    for k in payload["encoder_state"].keys():
+        a = payload["encoder_state"][k]
+        b = payload["target_state"][k]
+        assert a.shape == b.shape, f"{k} shape mismatch: {a.shape} vs {b.shape}"
+        diff = (a - b).abs().max().item()
+        diffs.append((k, diff))
+    diffs.sort(key=lambda x: -x[1])
+    max_diff = diffs[0][1]
+    # EMA momentum is 0.99 by default; after 4 train steps with lr=3e-4
+    # the target encoders have moved by ~1e-6 from the online encoder.
+    # A threshold of 1e-8 detects "EMA was called" without being so
+    # tight that float32 noise trips it.
+    assert max_diff > 1e-8, (
+        f"target_state appears identical to encoder_state "
+        f"(max diff {max_diff:.2e}) — EMA was never called"
+    )

@@ -67,6 +67,7 @@ def save_tiny_checkpoint(
     decoder: nn.Module,
     optimizer: Optimizer,
     step: int,
+    target: nn.Module | None = None,
 ) -> Path:
     """Save encoder + predictor + decoder + optimizer + step + config signature.
 
@@ -74,6 +75,13 @@ def save_tiny_checkpoint(
     atomic write path but with a tiny-specific payload (no JEPA bundle
     since the tiny stack does not need the W22 signature/hyperparams
     validation).
+
+    If ``target`` is provided, its state is also persisted under the
+    ``target_state`` key. This is the EMA target encoder used by the
+    JEPA loss; without it, callers that resume training would have to
+    rebuild the target from scratch (losing the EMA's slow-moving
+    bias). The orchestrator passes ``target`` so the on-disk
+    checkpoint is a complete (encoder, target) state dictionary.
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -86,6 +94,10 @@ def save_tiny_checkpoint(
         "rng_state_torch": torch.get_rng_state(),
         "rng_state_numpy": np.random.get_state(),
     }
+    if target is not None:
+        payload["target_state"] = {
+            k: v.detach().cpu().clone() for k, v in target.state_dict().items()
+        }
     # Encoder config signature is the architectural fingerprint used to
     # rebuild the module at load time. The orchestrator consumes this via
     # `bundle["encoder_config"]` to instantiate TinyVJEPA2Encoder with

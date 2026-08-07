@@ -203,7 +203,7 @@ def train_phase(cfg: V2Config, manifest: Path, device: str) -> tuple[Path, list[
     ckpt = cfg.out_dir / "tiny_jepa_v2.pt"
     save_tiny_checkpoint(
         ckpt, encoder=online, predictor=pred, decoder=dec, optimizer=opt,
-        step=len(history),
+        step=len(history), target=target,
     )
     elapsed = time.perf_counter() - t0
     n_params = sum(p.numel() for p in online.parameters())
@@ -600,7 +600,7 @@ def iterative_loop_phase(
         save_tiny_checkpoint(
             cfg.out_dir / "tiny_jepa_v2.pt",
             encoder=encoder, predictor=pred, decoder=dec,
-            optimizer=_opt, step=it + 1,
+            optimizer=_opt, step=it + 1, target=target,
         )
         # Stash a per-iter seed so the bootstrap phase picks fresh env
         # noise — keeps the loop "real" rather than replaying the same

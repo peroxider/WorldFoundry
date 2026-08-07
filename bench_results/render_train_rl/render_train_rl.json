@@ -19,10 +19,10 @@
     "num_train_per_iter": 10
   },
   "render": {
-    "elapsed_seconds": 0.047
+    "elapsed_seconds": 0.046
   },
   "train": {
-    "elapsed_seconds": 2.033,
+    "elapsed_seconds": 2.009,
     "final_total_loss": 13.5935,
     "final_jepa_loss": 13.1845,
     "final_recon_loss": 0.3867,
@@ -31,13 +31,13 @@
     "n_train_steps": 30
   },
   "inference": {
-    "elapsed_seconds": 0.116,
+    "elapsed_seconds": 0.12,
     "recon_cosine": 0.6269,
     "latent_cosine": 0.1361,
     "n_predicted_tokens": 32
   },
   "policy_bootstrap": {
-    "elapsed_seconds": 0.24198871201951988,
+    "elapsed_seconds": 0.22612388400011696,
     "n_env_steps": 16,
     "mean_reward_pre_update": -0.7570594474673271,
     "mean_reward_post_update": -0.16592875821515918,
@@ -52,7 +52,7 @@
     "n_ppo_epochs": 4
   },
   "outer_loop": {
-    "elapsed_seconds": 1.1331157910171896,
+    "elapsed_seconds": 1.1201076729921624,
     "n_iters": 2,
     "n_train_per_iter": 10,
     "per_iter": [
