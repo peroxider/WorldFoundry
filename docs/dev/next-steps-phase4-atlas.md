@@ -532,7 +532,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 14 | W40 帧生成路线 ADR | `759dd28` | **done** | none |
 | 15 | W36 NPU worker 同构契约 | `f923170` | **done** | none (CPU-only doc) |
 | 16 | RTI v1 CPU 渲训推闭环 | `aede80b` | **done** | none (CPU-only, 无 HF 1.2B 下载) |
-| 17 | RTI v2 CPU 渲训推 + RLinf-shape imagination | `254aecf` | **done** | none (CPU-only; bootstrap proof, 非 end-to-end PPO 训练) |
+| 17 | RTI v2 CPU 渲训推 + RLinf-shape imagination | `254aecf`, `62121e3` (PPO 学习) | **done** | none (CPU-only; 单 PPO epoch 真训练) |
 
 **调度建议**：
 - ~~立刻可做（无 hardware 依赖）：#6, #14, #15（三个 design tasks）。~~ — 2026-08-06 三件 ADR 全 ship，phase-4 立刻可做桶 closed。
@@ -588,6 +588,11 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
   - 是 #12 W38（imagination rollout PPO 训练）的最小可复用件——W38
     可直接消费 `TinyActionConditionedPredictor` + bootstrap 阶段的
     想象-回填 obs 模式，无需新写耦合代码。
+  - **v2.1 (`62121e3`)**: PPO 真训练——`policy_bootstrap_phase` 用
+    `worldfoundry_rl.ppo.compute_gae` + clipped-surrogate + value loss +
+    entropy，单 epoch 反向传播。obs_t 来自想象 latents，所以梯度
+    经由 predictor 的 `_action_proj` 流回世界模型——闭环 RLinf。
+    实测 reward_pre -1.55 → reward_post -0.17（单 epoch +1.38）。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
