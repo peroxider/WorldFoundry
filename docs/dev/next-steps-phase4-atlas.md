@@ -688,6 +688,29 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     target_state 1e-7 tolerance 一致，(3) target 是 eval mode 且
     requires_grad=False。19 tests 兜底 loader contract
     （v2.10 18 → v2.11 19）。
+  - **v2.12 (`ba6a48e`)**: smoke gate 漏跑 + 文档声明未经核实。
+    Gate 1 只跑 `test_render_train_inference_cpu.py`，覆盖
+    action-conditioned predictor / PPO update / outer RLinf loop 的
+    22 个测试**从未被 smoke 执行过**；Gate 1 现跑两个文件（42 tests）。
+    对照真实运行审计 `cpu-rti-quickstart.md`，修正若干失实之处：
+    (1) 文档承诺的 `render.n_clips` / `n_frames` 从未 emit——现补上，
+    且从 `manifest.csv` 计数而非由 `num_clips * frames_per_clip` 推导，
+    使写坏/写短的视频暴露而非被掩盖（schema 纯增量）；
+    (2) "Expected output" JSON 是示意而非真实运行（param count
+    24576 vs 实际 24416、key 名 `iter_index` vs 实际 `iter`、
+    ppo-env-steps 默认值错）——换成 seed=42 的逐字输出；
+    (3) `TinyEMAUpdater` 被标注在 `model/tiny_jepa.py`，实际在
+    `ema_compat.py`；(4) `--ppo-env-steps` 文档 64 实际 16、
+    `--num-train-per-iter` 文档 4 实际 10；(5) 测试数 32/12 已过期。
+    **最关键的修正**：文档称 `reward_trend_delta` 为正 = "loop 在学习"，
+    但在 seeds 42/7/99/123/2024 上 5 次仅 2 次为正——`--ppo-env-steps 16`
+    下该量被 rollout 方差主导。现改为 observability 诊断量（附 seed 表），
+    并把读者引向两个真正成立、且已由测试 pin 住的信号：
+    iter 内 `reward_post > reward_pre`（6 seeds 18/18）、
+    `mean_wm_total_loss` 末 iter < 首 iter（6/6 seeds）。
+    刻意**不**断言 `reward_trend_delta` 的符号——那会是一个断言
+    "loop 在此规模下并不具备的性质" 的 flaky test。
+    42 tests（v2.11 19 → v2.12 22，含 v1 文件 20）；ruff clean。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
