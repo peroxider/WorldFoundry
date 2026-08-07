@@ -493,11 +493,15 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
   （RewardFn Protocol + ensure_reward_fn + compose）+ `reward_impl.py`
   （FrankaKitchenReward + LatentDistanceReward）+ 25 个单元测试。
 - #9 W34 (PPO) 已 ship（2026-08-06）：`worldfoundry_rl/ppo.py` + 34 个单元测试
-  + 6-seed learning-curve baseline。**Phase-4 CPU-only 桶到此清空**——剩余
-  未完成项（#1/#2/#3/#4/#5 全部 Atlas，#10/#12/#13 依赖 #10 的 Atlas cluster，
-  #7 的 W35.1/W35.4 验证门待 Atlas）无一可在 CPU 上推进。下一步需要
-  **预约 Atlas 硬件窗口**，入口是 #1 (W20 `.to("npu")` 迁移)。
-  唯一的 CPU-side 例外是可选的 `mujoco` + `dm_control` 安装，装上后可把
+  + 6-seed learning-curve baseline。**Phase-4 CPU-only 实现桶清空**——`#6/#14/#15/#7/#8/#9/#11`
+  七件不需 Atlas 的实现 / ADR / 设计项全部 ship。CPU 上仍可做的不是 "实现"
+  而是**两项预备**：(a) `#1 W20` 的 `.to("npu")` PR + `tests/test_npu_trainer.py`
+  mock 版（`is_npu_available()` 永远 False 的路径上 PR 本身 CI 跑通，见第 100-104 行）；
+  (b) `#2 W26` 的 `_patch_quantized_loader` 实现 + CPU 单元测试（精度回归对比，
+  见第 145-147 行）。两项均在等 Atlas 硬件窗口做最终上机。其余未完成项（#1/#2 上机、
+  #3/#4/#5、#10/#12/#13、#7 的 W35.1/W35.4）无一可在 CPU 上推进——下一步是
+  **预约 Atlas 硬件窗口**，入口仍是 #1 (W20 `.to("npu")` 迁移)。
+  唯一的额外 CPU-side 动作是可选的 `mujoco` + `dm_control` 安装，装上后可把
   W31 的 FakeEnv 基线和 W34 的合成任务基线换成真实 FrankaKitchen 数字。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
