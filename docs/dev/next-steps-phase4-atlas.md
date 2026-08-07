@@ -540,23 +540,14 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
   （RewardFn Protocol + ensure_reward_fn + compose）+ `reward_impl.py`
   （FrankaKitchenReward + LatentDistanceReward）+ 25 个单元测试。
 - #9 W34 (PPO) 已 ship（2026-08-06）：`worldfoundry_rl/ppo.py` + 34 个单元测试
-  + 6-seed learning-curve baseline。**Phase-4 CPU-only 实现桶清空**——`#6/#14/#15/#7/#8/#9/#11`
-  七件不需 Atlas 的实现 / ADR / 设计项全部 ship。
-  2026-08-07 更新：CPU 上仅剩**一项预备**：(a) `#1 W20` 的 `.to("npu")`
-  PR + `tests/test_npu_trainer.py` mock 版（`is_npu_available()` 永远 False
-  的路径上 PR 本身 CI 跑通，见第 100-104 行）——**今日 ship**。
-  剩下的：(b) `#2 W26` 的 `_patch_quantized_loader` 实现 + CPU 单元测试
-  （精度回归对比，见第 145-147 行）。**2026-08-07 更新**：`(b)` 已 ship
-  （`0f6c305`）——`worldfoundry_inf/quantize.py` (28 个新 unpack 工具) +
-  替换 `_vllm_ascend_plugin._patch_quantized_loader` stub 为 W8A8 loader
-  hook + `tests/test_quantize_loader.py` (28 个单元测试, MSE < 1e-3
-  验收门全绿)。
-  2026-08-07 更新：(c) `#4 W27` 的 NPU worker stub parity — **今日 ship**
-  （`0b7f82a`）——`vllm_ascend_worker.py` 新增 `predict_action_conditioned_batch`
-  stub（W33 batcher surface 闭合）+ `tests/test_vllm_ascend_worker_parity.py`
-  （19 个 CPU 单元测试：inspect.signature 跨类对比 + stub "Atlas pilot"
-  message + load_model 后的 regression guard）。两项均在等 Atlas 硬件窗口做最终上机。
-  其余未完成项（#1/#2 上机、#3/#4/#5、#10/#12/#13、#7 的 W35.1/W35.4）
+  + 6-seed learning-curve baseline。**Phase-4 CPU-only 桶清空**——
+  `#6/#14/#15/#7/#8/#9/#11` 七件不需 Atlas 的实现 / ADR / 设计项已 ship，
+  `#1/#2/#4` 三件 CPU-only 预备亦于 2026-08-07 ship（`6f34894` W20
+  `.to("npu")` 迁移点 + `tests/test_npu_trainer.py` 12 个 mock 测试 /
+  `0f6c305` W26 W8A8 unpack 工具 + W8A8 loader hook + `tests/test_quantize_loader.py`
+  28 个 MSE < 1e-3 验收门测试 / `0b7f82a` W27 NPU worker stub parity +
+  `tests/test_vllm_ascend_worker_parity.py` 19 个 `inspect.signature` 跨类守护）。
+  其余未完成项（#1/#2 上机、#3/#4 e2e/#5、#10/#12/#13、#7 的 W35.1/W35.4）
   无一可在 CPU 上推进——下一步是
   **预约 Atlas 硬件窗口**，入口仍是 #1 (W20 `.to("npu")` 迁移)。
   唯一的额外 CPU-side 动作是可选的 `mujoco` + `dm_control` 安装，装上后可把
