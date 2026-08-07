@@ -668,6 +668,17 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     校验 (1) target_state 存在，(2) keys 与 encoder_state 一致，
     (3) max_diff > 1e-8（证明 EMA 真的调用过，没有 target ==
     encoder 的退化路径）。17 tests 兜底 loop（v2.8 16 → v2.9 17）。
+  - **v2.10 (`81ddcf2`)**: EMA target 跨 train → outer loop 边界
+    保留——v2.9 让 orchestrator 把 target_state 写盘，但
+    `iterative_loop_phase` 仍 `target = online`（从 online 重建），
+    丢掉初始 30 train steps 累积的 EMA momentum。修复：扩展
+    `load_tiny_checkpoint` 暴露 `bundle["target"]`（v2.9+ ckpt 携带
+    target_state 时），outer loop 优先用之；旧 ckpt（v2.8 及更早）
+    fallback 到 v2.8 行为。新增
+    `test_ema_target_preserved_across_outer_loop_boundary`：跑 2
+    outer iters，验证 post-loop checkpoint 的 target_state 仍
+    ≠ encoder_state（max diff > 1e-8）。18 tests 兜底 loop
+    （v2.9 17 → v2.10 18）。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
