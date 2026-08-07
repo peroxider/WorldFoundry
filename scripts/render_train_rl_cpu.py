@@ -74,6 +74,7 @@ class V2Config:
     action_dim: int = 4
     obs_dim: int = 8
     ppo_env_steps: int = 16
+    num_ppo_epochs: int = 4
     log_every_n: int = 10
 
 
@@ -408,13 +409,24 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
         total = policy_loss + ppo_v_coef * value_loss - ppo_ent_coef * entropy
         return total, policy_loss.detach(), value_loss.detach()
 
-    opt.zero_grad()
-    total_loss, policy_loss_initial, value_loss_initial = _ppo_loss()
-    policy_loss_initial = float(policy_loss_initial)
-    value_loss_initial = float(value_loss_initial)
-    total_loss.backward()
-    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
-    opt.step()
+    # Multi-epoch PPO update — RLinf runs K=4-8 epochs per outer iter
+    # over the same rollout, each pass through the clipped objective
+    # further tightening the policy. ``policy_loss_initial`` is the
+    # value at the start; ``policy_loss_final`` is after K epochs.
+    n_ppo_epochs = getattr(cfg, "num_ppo_epochs", 4)
+    policy_loss_initial, value_loss_initial = float("nan"), float("nan")
+    policy_loss_final, value_loss_final = float("nan"), float("nan")
+    for epoch in range(n_ppo_epochs):
+        opt.zero_grad()
+        total_loss, p_loss, v_loss = _ppo_loss()
+        if epoch == 0:
+            policy_loss_initial = float(p_loss)
+            value_loss_initial = float(v_loss)
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
+        opt.step()
+        policy_loss_final = float(p_loss)
+        value_loss_final = float(v_loss)
 
     # ---- Phase P.3: post-update reward probe (re-roll a short episode) ----
     eval_rewards: list[float] = []
@@ -449,10 +461,12 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
         "reward_stdev_pre_update": float(np.std(rollout_rewards)),
         "policy_loss_initial": policy_loss_initial,
         "value_loss_initial": value_loss_initial,
+        "policy_loss_final": policy_loss_final,
+        "value_loss_final": value_loss_final,
         "min_reward": float(np.min(rollout_rewards)),
         "max_reward": float(np.max(rollout_rewards)),
         "n_policy_params": sum(p.numel() for p in policy.parameters()),
-        "n_ppo_epochs": 1,
+        "n_ppo_epochs": n_ppo_epochs,
     }
 
 
@@ -591,13 +605,17 @@ def iterative_loop_phase(
             "reward_pre_update": round(pol_out["mean_reward_pre_update"], 4),
             "reward_post_update": round(pol_out["mean_reward_post_update"], 4),
             "policy_loss_initial": round(pol_out["policy_loss_initial"], 4),
+            "policy_loss_final": round(pol_out["policy_loss_final"], 4),
             "value_loss_initial": round(pol_out["value_loss_initial"], 4),
+            "value_loss_final": round(pol_out["value_loss_final"], 4),
+            "n_ppo_epochs": int(pol_out["n_ppo_epochs"]),
         })
         print(
             f"[RTI2][O] iter={it + 1}/{n_iters} "
             f"wm_loss={per_iter[-1]['mean_wm_total_loss']:+.4f} "
             f"reward_pre={per_iter[-1]['reward_pre_update']:+.4f} "
-            f"reward_post={per_iter[-1]['reward_post_update']:+.4f}"
+            f"reward_post={per_iter[-1]['reward_post_update']:+.4f} "
+            f"pol_loss {per_iter[-1]['policy_loss_initial']:+.4f}->{per_iter[-1]['policy_loss_final']:+.4f}"
         )
 
     elapsed = time.perf_counter() - t0
@@ -636,6 +654,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="RLinf iterative pattern: train world-model + PPO update, N times.")
     p.add_argument("--num-train-per-iter", type=int, default=10,
                    help="World-model train steps per outer iteration.")
+    p.add_argument("--num-ppo-epochs", type=int, default=4,
+                   help="PPO epochs per (rollout, update) cycle. RLinf default is 4-8.")
     return p.parse_args(argv)
 
 
@@ -646,7 +666,7 @@ def main(argv=None) -> int:
         frames_per_clip=args.frames_per_clip, height=args.height, width=args.width,
         seed=args.seed, num_steps=args.num_steps, learning_rate=args.learning_rate,
         mask_ratio=args.mask_ratio, action_dim=args.action_dim, obs_dim=args.obs_dim,
-        ppo_env_steps=args.ppo_env_steps,
+        ppo_env_steps=args.ppo_env_steps, num_ppo_epochs=args.num_ppo_epochs,
     )
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     device = resolve_device()
@@ -688,6 +708,7 @@ def main(argv=None) -> int:
             "learning_rate": cfg.learning_rate, "mask_ratio": cfg.mask_ratio,
             "action_dim": cfg.action_dim, "obs_dim": cfg.obs_dim,
             "ppo_env_steps": cfg.ppo_env_steps,
+            "num_ppo_epochs": cfg.num_ppo_epochs,
             "num_outer_iters": args.num_outer_iters,
             "num_train_per_iter": args.num_train_per_iter,
         },
@@ -712,7 +733,7 @@ def main(argv=None) -> int:
             "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
             "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
             "Synthetic env is in-process (`_MockCPUEnv`); no mujoco/dm_control dep — matches v1 CPU-only promise.",
-            "PPO IS trained here (1 epoch) — reward_pre -> reward_post proves policy learned from world-model imagination.",
+            "PPO IS trained here (default 4 epochs per outer iter) — reward_pre -> reward_post proves policy learned from world-model imagination.",
             "v2.2 outer iterative loop: world-model train <-> PPO update repeated N times (RLinf's defining pattern). reward_trend_delta quantifies whether reward is trending up across iters.",
         ],
     }
