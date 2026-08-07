@@ -532,7 +532,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 14 | W40 帧生成路线 ADR | `759dd28` | **done** | none |
 | 15 | W36 NPU worker 同构契约 | `f923170` | **done** | none (CPU-only doc) |
 | 16 | RTI v1 CPU 渲训推闭环 | `aede80b` | **done** | none (CPU-only, 无 HF 1.2B 下载) |
-| 17 | RTI v2 CPU 渲训推 + RLinf-shape imagination | `254aecf`, `62121e3` (PPO 学习), `7160f1c` (外层迭代), `3110dd3` (多 epoch PPO) | **done** | none (CPU-only; 多 epoch + 迭代) |
+| 17 | RTI v2 CPU 渲训推 + RLinf-shape imagination | `254aecf`, `62121e3` (PPO 学习), `7160f1c` (外层迭代), `3110dd3` (多 epoch PPO), `5c9541d` (iter 种子修复) | **done** | none (CPU-only; 多 epoch + 迭代 + 真随机) |
 
 **调度建议**：
 - ~~立刻可做（无 hardware 依赖）：#6, #14, #15（三个 design tasks）。~~ — 2026-08-06 三件 ADR 全 ship，phase-4 立刻可做桶 closed。
@@ -608,6 +608,15 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     实测 2 iters / 10 train / 4 epochs each / 1.08s：每 iter 内
     `pol_loss initial → final` 都下降（iter1 2.95→2.92；iter2 7.87→7.79），
     跨 iter wm_loss -4.21, reward_pre +0.557。
+  - **v2.4 (`5c9541d`)**: 审计发现 `_continue_train_world_model`
+    RNG 种子 bug——`cfg.seed + 1000 + n_extra_steps` 中 `n_extra_steps`
+    是常量，导致每外层 iter 都抽相同的 action 分布，所谓"iterative"
+    实为同一噪声 K 次重放。修复：种子改为
+    `cfg.seed + 1000 * (iter_index + 1) + iter_index`，env 种子也
+    per-iter 偏移。回归测试 `test_outer_loop_uses_iter_dependent_seeds`
+    验证两 iter 的 wm_loss 差值 > 1e-3。
+    修复后实测 iter1 wm_loss=13.19 vs iter2 wm_loss=7.78——真方差，
+    非重放。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
