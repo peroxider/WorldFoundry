@@ -57,6 +57,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | 13 | **W39 — Phase-4 集成回归** | G6–G10 regression | Atlas cluster | ~1 session (after #10) | high |
 | 14 | **W40 — 帧生成路线 ADR 选型** | G13 前置 | none (design) | ~½ session | low | ✅ done this session |
 | 15 | **W36 — NPU worker 同构契约 + NotImplementedError 收口门** | G11 (契约层) | none (design) | ~1 session | low |
+| 16 | **W41 — Phase-5 v1: 具身智能虚拟场景三件套** (env_manipulator + vision_policy + cpu_loop_smoke) | G7 extension (NPU + 具身适配) | none (CPU) | ~1 session | low | ✅ done this session |
 
 **Recommendation**: start with **#1 (W20)** — it's the physical prerequisite
 for every other Atlas-gated item. While the hardware window is being

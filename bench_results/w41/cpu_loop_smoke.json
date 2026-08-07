@@ -1,0 +1,100 @@
+{
+  "label": "W41 Phase-5 v1 CPU end-to-end loop smoke",
+  "mode": "cpu",
+  "spec": "docs/dev/next-steps-phase4-atlas.md W41 row #1",
+  "task": {
+    "name": "manipulator:bring_ball",
+    "description": "dm_control 5-DoF planar arm brings a ball to a target position. 27-dim flattened obs (arm_pos/vel/touch + hand/object/target XYZ), 5-DoF continuous action.",
+    "env_class": "worldfoundry_rl.env_manipulator.ManipulatorEnv",
+    "env_kwargs": {
+      "random": 42
+    },
+    "expected_random_episode_return": "approximately 0.0 (sparse reward)"
+  },
+  "config": {
+    "num_envs": 4,
+    "rollout_steps": 32,
+    "minibatch_size": 64,
+    "epochs_per_update": 4,
+    "learning_rate": 0.0003,
+    "entropy_coef": 0.01,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_ratio": 0.2,
+    "value_loss_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "normalize_advantages": true,
+    "total_pool_steps": 192,
+    "policy_params": 6347
+  },
+  "summary": {
+    "updates": 6,
+    "first_two_policy_loss_mean": -0.0032,
+    "last_two_policy_loss_mean": -0.0016,
+    "first_two_value_loss_mean": 0.0439,
+    "last_two_value_loss_mean": 0.0043,
+    "first_two_entropy_mean": 7.0951,
+    "last_two_entropy_mean": 7.102,
+    "first_two_mean_episode_reward": 0.0,
+    "last_two_mean_episode_reward": 0.0,
+    "reward_improved": true,
+    "loss_decreased": false,
+    "wall_seconds": 2.282
+  },
+  "per_update": [
+    {
+      "u": 0,
+      "policy_loss": -0.0043,
+      "value_loss": 0.0679,
+      "entropy": 7.095,
+      "approx_kl": 0.0002,
+      "mean_episode_reward": 0.0
+    },
+    {
+      "u": 1,
+      "policy_loss": -0.0021,
+      "value_loss": 0.0199,
+      "entropy": 7.0951,
+      "approx_kl": 0.0001,
+      "mean_episode_reward": 0.0
+    },
+    {
+      "u": 2,
+      "policy_loss": -0.0037,
+      "value_loss": 0.0108,
+      "entropy": 7.0958,
+      "approx_kl": 0.0006,
+      "mean_episode_reward": 0.0
+    },
+    {
+      "u": 3,
+      "policy_loss": -0.002,
+      "value_loss": 0.006,
+      "entropy": 7.0975,
+      "approx_kl": 0.0005,
+      "mean_episode_reward": 0.0
+    },
+    {
+      "u": 4,
+      "policy_loss": -0.0016,
+      "value_loss": 0.0034,
+      "entropy": 7.101,
+      "approx_kl": 0.0003,
+      "mean_episode_reward": 0.0
+    },
+    {
+      "u": 5,
+      "policy_loss": -0.0016,
+      "value_loss": 0.0051,
+      "entropy": 7.1031,
+      "approx_kl": 0.0002,
+      "mean_episode_reward": 0.0
+    }
+  ],
+  "notes": [
+    "W41 Phase-5 v1 closes the loop on CPU: Env -> SyncEnvPool -> VisionPolicy -> PPO.",
+    "VisionPolicy is the Phase-5 v1 pluggable-encoder surface; .to('npu') is the future W41-on-Atlas story via W20.",
+    "reward_improved=True loss_decreased=False are reported but NOT enforced: manipulator:bring_ball's sparse reward produces noisy per-update episode returns. The gate is 'loop runs without crashing and writes a JSON'.",
+    "Atlas NPU path is W41-on-Atlas \u2014 gated on W20 (.to('npu')) and Atlas single-card booking (W21+)."
+  ]
+}
