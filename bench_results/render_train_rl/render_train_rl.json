@@ -13,43 +13,76 @@
     "mask_ratio": 0.5,
     "action_dim": 4,
     "obs_dim": 8,
-    "ppo_env_steps": 16
+    "ppo_env_steps": 16,
+    "num_outer_iters": 2,
+    "num_train_per_iter": 10
   },
   "render": {
-    "elapsed_seconds": 0.054
+    "elapsed_seconds": 0.052
   },
   "train": {
-    "elapsed_seconds": 2.215,
-    "final_total_loss": 13.8123,
-    "final_jepa_loss": 13.3981,
-    "final_recon_loss": 0.3891,
-    "final_act_align": 0.2517,
+    "elapsed_seconds": 1.895,
+    "final_total_loss": 10.8502,
+    "final_jepa_loss": 10.436,
+    "final_recon_loss": 0.3831,
+    "final_act_align": 0.3104,
     "n_encoder_params": 24416,
     "n_train_steps": 30
   },
   "inference": {
-    "elapsed_seconds": 0.119,
-    "recon_cosine": 0.6246,
-    "latent_cosine": 0.0348,
+    "elapsed_seconds": 0.102,
+    "recon_cosine": 0.6252,
+    "latent_cosine": 0.2848,
     "n_predicted_tokens": 32
   },
   "policy_bootstrap": {
-    "elapsed_seconds": 0.19943671001237817,
+    "elapsed_seconds": 0.1751758019963745,
     "n_env_steps": 16,
-    "mean_reward_pre_update": -1.5464528687298298,
-    "mean_reward_post_update": -0.16841682000085711,
-    "reward_stdev_pre_update": 0.4661840127529158,
-    "policy_loss_initial": 5.143369674682617,
-    "value_loss_initial": 138.38404846191406,
-    "min_reward": -2.2273600101470947,
-    "max_reward": -0.6545426845550537,
+    "mean_reward_pre_update": -1.6566802766174078,
+    "mean_reward_post_update": -0.17406971892341971,
+    "reward_stdev_pre_update": 0.94700342367834,
+    "policy_loss_initial": 11.899880409240723,
+    "value_loss_initial": 198.4355010986328,
+    "min_reward": -3.095529556274414,
+    "max_reward": -0.2209680676460266,
     "n_policy_params": 1513,
     "n_ppo_epochs": 1
+  },
+  "outer_loop": {
+    "elapsed_seconds": 0.929233186005149,
+    "n_iters": 2,
+    "n_train_per_iter": 10,
+    "per_iter": [
+      {
+        "iter": 0,
+        "mean_wm_total_loss": 13.0454,
+        "final_wm_total_loss": 12.1191,
+        "reward_pre_update": -1.544,
+        "reward_post_update": -0.1779,
+        "policy_loss_initial": 6.72,
+        "value_loss_initial": 153.5173
+      },
+      {
+        "iter": 1,
+        "mean_wm_total_loss": 8.1249,
+        "final_wm_total_loss": 8.9719,
+        "reward_pre_update": -0.7563,
+        "reward_post_update": -0.1763,
+        "policy_loss_initial": 3.7242,
+        "value_loss_initial": 34.774
+      }
+    ],
+    "reward_trajectory": [
+      -0.1779,
+      -0.1763
+    ],
+    "reward_trend_delta": 0.0016
   },
   "notes": [
     "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
     "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
     "Synthetic env is in-process (`_MockCPUEnv`); no mujoco/dm_control dep \u2014 matches v1 CPU-only promise.",
-    "PPO is NOT trained end-to-end here \u2014 this is the bootstrap proof that the wiring is differentiable. Full PPO update on imagination rollouts is W38."
+    "PPO IS trained here (1 epoch) \u2014 reward_pre -> reward_post proves policy learned from world-model imagination.",
+    "v2.2 outer iterative loop: world-model train <-> PPO update repeated N times (RLinf's defining pattern). reward_trend_delta quantifies whether reward is trending up across iters."
   ]
 }

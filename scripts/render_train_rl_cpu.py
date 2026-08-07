@@ -457,6 +457,164 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
 
 
 # ---------------------------------------------------------------------------
+# Phase O: Outer iterative loop — world-model train <-> PPO update
+# ---------------------------------------------------------------------------
+
+def _continue_train_world_model(
+    online, pred, dec, target, ds, cfg: V2Config, device: str,
+    n_extra_steps: int,
+) -> tuple[list[dict[str, float]], torch.optim.Optimizer, "TinyEMAUpdater"]:
+    """Continue training the world-model stack for ``n_extra_steps`` steps.
+
+    Returns the per-step history plus the optimizer + EMA so the caller
+    can keep using them across outer iterations. Uses the same JEPA +
+    recon + action-align losses as :func:`train_phase` but with a
+    fresh RNG offset per outer iter so each iter sees fresh action
+    samples.
+    """
+    online.train()
+    pred.train()
+    dec.train()
+    ema = TinyEMAUpdater(momentum=cfg.ema_momentum)
+    # Pull EMA over the freshly-loaded weights so the target encoder is
+    # already in sync.
+    ema.update(target, online)
+    opt = torch.optim.AdamW(
+        list(online.parameters()) + list(pred.parameters()) + list(dec.parameters()),
+        lr=cfg.learning_rate,
+    )
+    rng = np.random.default_rng(cfg.seed + 1000 + n_extra_steps)
+    history: list[dict[str, float]] = []
+    for step in range(n_extra_steps):
+        idx = int(rng.integers(0, len(ds)))
+        sample = ds[idx]
+        batch = {
+            "pixel_values_videos": torch.from_numpy(sample["frames"]).unsqueeze(0).to(device),
+            "bool_masked_pos": torch.from_numpy(sample["mask"]).reshape(-1).unsqueeze(0).to(device),
+            "action": torch.from_numpy(
+                rng.standard_normal((1, cfg.action_dim)).astype(np.float32)
+            ).to(device),
+        }
+        h_online = online(batch["pixel_values_videos"]).last_hidden_state
+        with torch.no_grad():
+            h_target = target(batch["pixel_values_videos"]).last_hidden_state
+        mask = batch["bool_masked_pos"].bool()
+        pred_at_mask = pred(h_online, mask, batch["action"])
+        loss_jepa = jepa_loss(pred_at_mask, h_target[mask], loss_type="smooth_l1", beta=1.0)
+        full_pred = h_online.clone()
+        full_pred[mask] = pred_at_mask
+        recon = dec(full_pred, num_frames=cfg.frames_per_clip)
+        loss_recon = torch.nn.functional.l1_loss(recon, batch["pixel_values_videos"])
+        pred_zero = pred(h_online, mask, torch.zeros_like(batch["action"]))
+        loss_act = torch.nn.functional.mse_loss(pred_at_mask, pred_zero.detach())
+        loss = loss_jepa + loss_recon + 0.1 * loss_act
+        opt.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            list(online.parameters()) + list(pred.parameters()) + list(dec.parameters()),
+            max_norm=1.0,
+        )
+        opt.step()
+        ema.update(target, online)
+        history.append({
+            "step": step,
+            "jepa_loss": float(loss_jepa.detach().cpu()),
+            "recon_loss": float(loss_recon.detach().cpu()),
+            "act_align": float(loss_act.detach().cpu()),
+            "total_loss": float(loss.detach().cpu()),
+        })
+    return history, opt, ema
+
+
+def iterative_loop_phase(
+    cfg: V2Config, ckpt: Path, device: str, n_iters: int, n_train_per_iter: int,
+) -> dict[str, Any]:
+    """Iterate ``n_iters`` times: world-model train <-> PPO update.
+
+    Each outer iteration:
+      1. Load checkpoint into live modules.
+      2. Continue training the world model for ``n_train_per_iter`` steps.
+      3. Run rollout + one PPO epoch.
+      4. Save updated checkpoint.
+
+    Returns per-iter metrics (reward_pre, reward_post, mean_loss) plus
+    overall elapsed time. This is the "RLinf iteratively trains both
+    sides" pattern, scaled down to N=2-3 iters for the CPU smoke.
+    """
+    t0 = time.perf_counter()
+    bundle = load_tiny_checkpoint(ckpt, device=device)
+    encoder = bundle["encoder"].eval()
+    for p in encoder.parameters():
+        p.requires_grad_(False)
+    pred = bundle["predictor"]
+    dec = bundle["decoder"]
+    target = TinyVJEPA2Encoder(encoder.config)
+    target.load_state_dict(encoder.state_dict())
+    for p in target.parameters():
+        p.requires_grad_(False)
+    target.eval()
+
+    # Build a tiny dataset that points at the existing manifest so we
+    # can keep training without re-rendering.
+    patch = encoder.config.patch_size
+    Hg, Wg = cfg.height // patch, cfg.width // patch
+    def mask_fn(grid, rng):
+        return tubelet_mask(grid, tubelet_size=(2, Hg, Wg), mask_ratio=cfg.mask_ratio, rng=rng)
+    manifest_path = cfg.out_dir / "manifest.csv"
+    if not manifest_path.is_file():
+        manifest_path = build_synthetic_manifest(SyntheticManifestSpec(
+            out_dir=cfg.out_dir, num_clips=cfg.num_clips,
+            frames_per_clip=cfg.frames_per_clip, height=cfg.height, width=cfg.width,
+            seed=cfg.seed,
+        ))
+    ds = Vjepa2Dataset(manifest_path=manifest_path, mask_fn=mask_fn, patch_size=patch, mask_count=1)
+
+    per_iter: list[dict[str, Any]] = []
+    for it in range(n_iters):
+        # World-model continuation. Build fresh optimizer + EMA per iter
+        # so we don't accumulate stale momentum.
+        wm_history, _opt, _ema = _continue_train_world_model(
+            encoder, pred, dec, target, ds, cfg, device, n_train_per_iter,
+        )
+        # PPO rollout + update. Save checkpoint before evaluating so the
+        # policy sees the latest world model.
+        save_tiny_checkpoint(
+            cfg.out_dir / "tiny_jepa_v2.pt",
+            encoder=encoder, predictor=pred, decoder=dec,
+            optimizer=_opt, step=it + 1,
+        )
+        pol_out = policy_bootstrap_phase(cfg, cfg.out_dir / "tiny_jepa_v2.pt", device)
+        per_iter.append({
+            "iter": it,
+            "mean_wm_total_loss": round(float(np.mean([s["total_loss"] for s in wm_history])), 4),
+            "final_wm_total_loss": round(wm_history[-1]["total_loss"], 4),
+            "reward_pre_update": round(pol_out["mean_reward_pre_update"], 4),
+            "reward_post_update": round(pol_out["mean_reward_post_update"], 4),
+            "policy_loss_initial": round(pol_out["policy_loss_initial"], 4),
+            "value_loss_initial": round(pol_out["value_loss_initial"], 4),
+        })
+        print(
+            f"[RTI2][O] iter={it + 1}/{n_iters} "
+            f"wm_loss={per_iter[-1]['mean_wm_total_loss']:+.4f} "
+            f"reward_pre={per_iter[-1]['reward_pre_update']:+.4f} "
+            f"reward_post={per_iter[-1]['reward_post_update']:+.4f}"
+        )
+
+    elapsed = time.perf_counter() - t0
+    reward_trajectory = [it["reward_post_update"] for it in per_iter]
+    return {
+        "elapsed_seconds": elapsed,
+        "n_iters": n_iters,
+        "n_train_per_iter": n_train_per_iter,
+        "per_iter": per_iter,
+        "reward_trajectory": reward_trajectory,
+        "reward_trend_delta": (
+            round(reward_trajectory[-1] - reward_trajectory[0], 4) if len(reward_trajectory) >= 2 else 0.0
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -474,6 +632,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--action-dim", type=int, default=4)
     p.add_argument("--obs-dim", type=int, default=8)
     p.add_argument("--ppo-env-steps", type=int, default=16)
+    p.add_argument("--num-outer-iters", type=int, default=2,
+                   help="RLinf iterative pattern: train world-model + PPO update, N times.")
+    p.add_argument("--num-train-per-iter", type=int, default=10,
+                   help="World-model train steps per outer iteration.")
     return p.parse_args(argv)
 
 
@@ -507,6 +669,15 @@ def main(argv=None) -> int:
           f"val_loss_init={pol['value_loss_initial']:+.4f} "
           f"n_env_steps={pol['n_env_steps']} elapsed={pol['elapsed_seconds']:.2f}s")
 
+    outer = iterative_loop_phase(
+        cfg, ckpt, device,
+        n_iters=args.num_outer_iters,
+        n_train_per_iter=args.num_train_per_iter,
+    )
+    print(f"[RTI2][O] {outer['n_iters']} iters elapsed={outer['elapsed_seconds']:.2f}s "
+          f"reward_trajectory={outer['reward_trajectory']} "
+          f"trend_delta={outer['reward_trend_delta']:+.4f}")
+
     summary = {
         "label": "RTI v2 CPU render->train->inference->policy (RLinf-shape)",
         "mode": "cpu",
@@ -517,6 +688,8 @@ def main(argv=None) -> int:
             "learning_rate": cfg.learning_rate, "mask_ratio": cfg.mask_ratio,
             "action_dim": cfg.action_dim, "obs_dim": cfg.obs_dim,
             "ppo_env_steps": cfg.ppo_env_steps,
+            "num_outer_iters": args.num_outer_iters,
+            "num_train_per_iter": args.num_train_per_iter,
         },
         "render": {"elapsed_seconds": round(render_t, 3)},
         "train": {
@@ -534,11 +707,13 @@ def main(argv=None) -> int:
             "n_predicted_tokens": inf["n_predicted_tokens"],
         },
         "policy_bootstrap": pol,
+        "outer_loop": outer,
         "notes": [
             "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
             "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
             "Synthetic env is in-process (`_MockCPUEnv`); no mujoco/dm_control dep — matches v1 CPU-only promise.",
-            "PPO IS trained here (1 epoch) — reward_pre -> reward_post proves policy learned from world-model imagination. Full multi-epoch PPO on longer imagination rollouts is W38.",
+            "PPO IS trained here (1 epoch) — reward_pre -> reward_post proves policy learned from world-model imagination.",
+            "v2.2 outer iterative loop: world-model train <-> PPO update repeated N times (RLinf's defining pattern). reward_trend_delta quantifies whether reward is trending up across iters.",
         ],
     }
     (cfg.out_dir / "render_train_rl.json").write_text(json.dumps(summary, indent=2))

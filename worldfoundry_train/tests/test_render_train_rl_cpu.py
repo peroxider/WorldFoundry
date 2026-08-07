@@ -156,6 +156,20 @@ def test_orchestrator_v2_runs_end_to_end(tmp_path: Path) -> None:
     assert np.isfinite(pol["mean_reward_pre_update"])
     assert np.isfinite(pol["mean_reward_post_update"])
 
+    # v2.2 outer loop ran with default 2 iters.
+    outer = summary["outer_loop"]
+    assert outer["n_iters"] >= 1
+    assert len(outer["per_iter"]) == outer["n_iters"]
+    assert len(outer["reward_trajectory"]) == outer["n_iters"]
+    for it in outer["per_iter"]:
+        assert np.isfinite(it["reward_pre_update"])
+        assert np.isfinite(it["reward_post_update"])
+        assert np.isfinite(it["policy_loss_initial"])
+
+    assert (tmp_path / "manifest.csv").is_file()
+    assert (tmp_path / "tiny_jepa_v2.pt").is_file()
+    assert len(list((tmp_path / "videos").glob("clip_*.mp4"))) == 2
+
 
 def test_ppo_update_changes_policy_parameters(tmp_path: Path) -> None:
     """The PPO update must actually move policy params (proof of learning).
@@ -192,6 +206,34 @@ def test_ppo_update_changes_policy_parameters(tmp_path: Path) -> None:
     assert np.isfinite(out["mean_reward_pre_update"])
     assert np.isfinite(out["mean_reward_post_update"])
 
-    assert (tmp_path / "manifest.csv").is_file()
-    assert (tmp_path / "tiny_jepa_v2.pt").is_file()
-    assert len(list((tmp_path / "videos").glob("clip_*.mp4"))) == 2
+
+def test_iterative_loop_phase_logs_per_iter(tmp_path: Path) -> None:
+    """The outer loop must produce one entry per iter with finite metrics."""
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location(
+        "rti2", str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["rti2"] = mod
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+
+    cfg = mod.V2Config(
+        out_dir=tmp_path, num_clips=2, frames_per_clip=4, height=32, width=32,
+        seed=7, num_steps=4, learning_rate=3e-4, mask_ratio=0.5,
+        action_dim=4, obs_dim=8, ppo_env_steps=8,
+    )
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    device = "cpu"
+    manifest, _ = mod.render_phase(cfg)
+    ckpt, _, _, _ = mod.train_phase(cfg, manifest, device)
+    outer = mod.iterative_loop_phase(cfg, ckpt, device, n_iters=2, n_train_per_iter=2)
+    assert outer["n_iters"] == 2
+    assert len(outer["per_iter"]) == 2
+    assert len(outer["reward_trajectory"]) == 2
+    # All entries finite.
+    for r in outer["reward_trajectory"]:
+        assert np.isfinite(r)
+    # trend_delta is the difference last - first.
+    expected_delta = outer["reward_trajectory"][-1] - outer["reward_trajectory"][0]
+    assert abs(outer["reward_trend_delta"] - round(expected_delta, 4)) < 1e-4
