@@ -525,7 +525,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 7 | W35 RL 框架 ADR 验证门 | `024be09` | **W35.2 CPU ✅ / W35.1 待 Atlas** | W30 + Atlas (W35.1) |
 | 8 | W31 EnvPool 抽象 | `07dc9b5` | **done** | W30 (unblocked) |
 | 9 | W34 PPO 训练器 | `af460d1` | **done** | W31 (unblocked) |
-| 10 | W37 RL 训练与主训练栈集成 | not yet | **proposed** | W35 + W31 + W34 + cluster |
+| 10 | W37 RL 训练与主训练栈集成 | `fbcf7b6` | **W37 v1 CPU skeleton ✅ / cluster W37+** | W31 + W34 (unblocked; cluster待 Atlas) |
 | 11 | W36 Reward 接口 | `0264a61` | **done** | W30 (unblocked; env = MuJoCo) |
 | 12 | W38 Model-based RL | not yet | **proposed** | W37 |
 | 13 | W39 Phase-4 集成回归 | not yet | **proposed** | W37 + W38 |
