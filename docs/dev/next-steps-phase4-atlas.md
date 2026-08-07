@@ -645,6 +645,18 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     - encoder_config == predictor_config（共享架构指纹）
     35 tests 兜底 loop（v2.6 34 → v2.7 35）。外部迁移脚本 /
     非 helper 工具可读 v2 ckpt 而无需依赖 `load_tiny_checkpoint`。
+  - **v2.8 (`cfc7ae6`)**: 真实跨进程可复现——orchestrator 之前
+    per-component numpy RNG 用 `default_rng(cfg.seed)` 种子化，
+    但 torch 全局 RNG（model init / dropout / Attention reduction）
+    未显式 seed。两次 `--seed 42` 跑的 final_total_loss 差 5.4
+    ——同一 seed，不同进程，不同结果。修复：main() 开头加
+    `torch.manual_seed(cfg.seed)` + `np.random.seed(cfg.seed)`。
+    新增 `test_orchestrator_is_deterministic_under_same_seed`：
+    同 seed 跑两次 orchestrator（subprocess），所有数值字段
+    (final losses / reward_pre/post / per-iter wm_loss / reward
+    trajectory) 比对 1e-5 tolerance——任何引入非 deterministic op
+    的 refactor 都会被这个测试抓住。36 tests 兜底 loop
+    （v2.7 35 → v2.8 36）。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
