@@ -166,13 +166,29 @@ def load_tiny_checkpoint(
     predictor = predictor.to(device)
     decoder = decoder.to(device)
 
-    return {
+    bundle = {
         "encoder": encoder,
         "predictor": predictor,
         "decoder": decoder,
         "step": int(payload.get("step", 0)),
         "encoder_config": cfg_dict,
     }
+
+    # If the checkpoint carries the EMA target_state (v2.9+), rebuild
+    # the target encoder and load it. This is the EMA's slow-moving
+    # bias accumulated across training steps; without restoring it,
+    # the JEPA loss would use a target that drifts toward the
+    # just-initialized online encoder.
+    if "target_state" in payload:
+        target = TinyVJEPA2Encoder(cfg)
+        target.load_state_dict(payload["target_state"])
+        target = target.to(device)
+        target.eval()
+        for p in target.parameters():
+            p.requires_grad_(False)
+        bundle["target"] = target
+
+    return bundle
 
 
 __all__ = [

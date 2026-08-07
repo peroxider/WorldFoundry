@@ -565,11 +565,21 @@ def iterative_loop_phase(
         p.requires_grad_(False)
     pred = bundle["predictor"]
     dec = bundle["decoder"]
-    target = TinyVJEPA2Encoder(encoder.config)
-    target.load_state_dict(encoder.state_dict())
-    for p in target.parameters():
-        p.requires_grad_(False)
-    target.eval()
+    # v2.9+: if the checkpoint carries target_state, the bundle also
+    # exposes a built target encoder. Use it directly so the EMA's
+    # slow-moving bias is preserved across the train -> outer-loop
+    # boundary. Fall back to re-initializing from the online encoder
+    # for v2.8 and earlier checkpoints (no target_state on disk).
+    if "target" in bundle:
+        target = bundle["target"].eval()
+        for p in target.parameters():
+            p.requires_grad_(False)
+    else:
+        target = TinyVJEPA2Encoder(encoder.config)
+        target.load_state_dict(encoder.state_dict())
+        for p in target.parameters():
+            p.requires_grad_(False)
+        target.eval()
 
     # Build a tiny dataset that points at the existing manifest so we
     # can keep training without re-rendering.

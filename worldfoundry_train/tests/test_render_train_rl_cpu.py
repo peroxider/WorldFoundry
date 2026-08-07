@@ -685,3 +685,59 @@ def test_saved_checkpoint_persists_ema_target_separate_from_online(tmp_path: Pat
         f"target_state appears identical to encoder_state "
         f"(max diff {max_diff:.2e}) — EMA was never called"
     )
+
+
+def test_ema_target_preserved_across_outer_loop_boundary(tmp_path: Path) -> None:
+    """The EMA target from the initial train must be carried into the
+    outer loop, not re-initialized from the online encoder.
+
+    Before v2.10, ``iterative_loop_phase`` rebuilt ``target = online``
+    after loading the checkpoint. That discarded the EMA's slow-moving
+    bias accumulated over the initial train phase. v2.9 persisted
+    ``target_state`` on disk; v2.10 wires the loader to expose it as
+    ``bundle["target"]`` and the outer loop to use it.
+
+    We can't directly compare before/after EMA state without a
+    v2.8-baseline run, but we CAN verify the structural invariant:
+    the orchestrator's final checkpoint (after the outer loop) must
+    contain a target_state. If the outer loop silently fell back to
+    re-initializing from the online encoder and then *didn't* update
+    the target for several iterations, the target_state would either
+    be missing or equal to the encoder_state. With the v2.10 fix,
+    the target_state exists and differs from encoder_state.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "4",
+            "--ppo-env-steps", "8", "--num-outer-iters", "2",
+            "--num-train-per-iter", "4",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    payload = torch.load(
+        tmp_path / "tiny_jepa_v2.pt", map_location="cpu", weights_only=False,
+    )
+
+    # After the outer loop, target_state must still be present.
+    assert "target_state" in payload, (
+        "post-outer-loop checkpoint must carry target_state"
+    )
+
+    # And it must not have collapsed to encoder_state (which would mean
+    # the EMA was re-initialized from online and never moved).
+    target_keys = set(payload["target_state"].keys())
+    encoder_keys = set(payload["encoder_state"].keys())
+    assert target_keys == encoder_keys
+
+    max_diff = 0.0
+    for k in encoder_keys:
+        diff = (payload["encoder_state"][k] - payload["target_state"][k]).abs().max().item()
+        max_diff = max(max_diff, diff)
+    assert max_diff > 1e-8, (
+        f"target_state == encoder_state after outer loop "
+        f"(max diff {max_diff:.2e}) — EMA was reset, not preserved"
+    )
