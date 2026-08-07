@@ -1,0 +1,59 @@
+{
+  "label": "W34 self-built PPO learning-curve baseline (synthetic reach task, CPU; not a real-env or Atlas baseline)",
+  "mode": "cpu-synthetic",
+  "spec": "docs/dev/next-steps-phase4-atlas.md #9 (W34); closes roadmap G7",
+  "task": {
+    "name": "reach",
+    "description": "constant observation [1.0]; 1-D continuous action; reward = -(action - 0.7)^2; fixed 16-step episodes",
+    "optimal_episode_return": 0.0,
+    "random_policy_episode_return": -23.8,
+    "note": "E[-(a-0.7)^2] for a ~ N(0, 1) is -(0.49 + 1.0) = -1.49 per step, x16 steps."
+  },
+  "config": {
+    "num_envs": 8,
+    "rollout_steps": 32,
+    "minibatch_size": 64,
+    "epochs_per_update": 4,
+    "learning_rate": 0.01,
+    "entropy_coef": 0.01,
+    "gamma": 0.99,
+    "gae_lambda": 0.95,
+    "clip_ratio": 0.2,
+    "value_loss_coef": 0.5,
+    "max_grad_norm": 0.5,
+    "normalize_advantages": true,
+    "log_std_clamp": [
+      -5.0,
+      2.0
+    ],
+    "total_pool_steps": 640,
+    "total_env_steps": 5120
+  },
+  "summary": {
+    "seeds": [
+      0,
+      1,
+      2,
+      7,
+      42,
+      123
+    ],
+    "first_two_updates_mean_range": [
+      -24.406,
+      -19.188
+    ],
+    "last_two_updates_mean_range": [
+      -5.418,
+      -0.981
+    ],
+    "all_seeds_improved": true
+  },
+  "notes": [
+    "Baseline exists so the W35 framework bake-off (verl / RLinf) is scored against a known-correct reference implementation on the same task.",
+    "Hyperparameter sensitivity measured on this task: lr=3e-2 diverges (policy mean runs away to ~13.9 within 3 updates); lr=1e-2 converges on all 6 seeds; lr=3e-3 converges more slowly (~-4 after 20 updates).",
+    "entropy_coef matters: with entropy_coef=0.0 and lr=1e-2, seed 42 collapses sigma early and gets stuck at mean=-2.06 (episode return -121). The PPOConfig default 0.01 fixes all 6 seeds.",
+    "log_std is clamped to [-5, 2] inside PPOActor.distribution; without the clamp, early positive advantages far from the mean inflate sigma.",
+    "Real-env (FrankaKitchen / MuJoCo) PPO numbers are pending the mujoco+dm_control install; this file is NOT a substitute for that.",
+    "No NPU path is exercised here \u2014 Atlas PPO throughput is gated on W20 (.to('npu') migration)."
+  ]
+}

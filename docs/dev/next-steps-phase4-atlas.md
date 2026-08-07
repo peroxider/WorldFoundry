@@ -50,7 +50,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | 6 | **W30 — 仿真环境选型 ADR (MuJoCo / SAPIEN / CARLA)** | G6 前置 | none (design) | ~1 session | low | ✅ done this session |
 | 7 | **W35 — RL 框架 ADR 验证门 (verl / RLinf / 自研)** | G6, G7, G14 | partial (verl on NPU) | ~1–2 sessions | medium | W35.2 CPU ✅ / W35.1 待 Atlas |
 | 8 | **W31 — EnvPool 抽象 + 首选环境向量化封装** | G6 | first-env-side | ~1 session (after #6) | medium | ✅ done this session |
-| 9 | **W34 — PPO 训练器自研最小实现** | G7 | CPU smoke | ~1 session | medium |
+| 9 | **W34 — PPO 训练器自研最小实现** | G7 | CPU smoke | ~1 session | medium | ✅ done this session |
 | 10 | **W37 — RL 训练与主训练栈集成 (W28 编排落地)** | G7, G14 | Atlas cluster | ~2 sessions (after #7, #8) | high |
 | 11 | **W36 — Reward model / 任务奖励接口** | G9 | none | ~½ session | low | ✅ done this session |
 | 12 | **W38 — Model-based RL (predictor imagination rollout)** | G8, G7 | Atlas cluster | ~1–2 sessions (after #10) | medium |
@@ -330,7 +330,8 @@ PPO 训练器落地：rollout 收集 → advantage 估计 → 梯度更新闭环
 - 仿真任务上 reward 曲线上升（CPU smoke 即可）。
 
 ### Blocked-on
-- **W31**（env pool 才有可 rollout 的 env）。
+- ~~**W31**（env pool 才有可 rollout 的 env）。~~ — W31 已 ship（`07dc9b5`），
+  本项已解锁并于 2026-08-06 完成。
 
 ### Estimated effort
 **~1 session**。
@@ -475,7 +476,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 6 | W30 仿真环境选型 ADR | `1e3db44` | **done** | none |
 | 7 | W35 RL 框架 ADR 验证门 | `024be09` | **W35.2 CPU ✅ / W35.1 待 Atlas** | W30 + Atlas (W35.1) |
 | 8 | W31 EnvPool 抽象 | `07dc9b5` | **done** | W30 (unblocked) |
-| 9 | W34 PPO 训练器 | not yet | **proposed** | W31 |
+| 9 | W34 PPO 训练器 | `<hash this session>` | **done** | W31 (unblocked) |
 | 10 | W37 RL 训练与主训练栈集成 | not yet | **proposed** | W35 + W31 + W34 + cluster |
 | 11 | W36 Reward 接口 | `0264a61` | **done** | W30 (unblocked; env = MuJoCo) |
 | 12 | W38 Model-based RL | not yet | **proposed** | W37 |
@@ -486,12 +487,18 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 **调度建议**：
 - ~~立刻可做（无 hardware 依赖）：#6, #14, #15（三个 design tasks）。~~ — 2026-08-06 三件 ADR 全 ship，phase-4 立刻可做桶 closed。
 - 预约硬件：#1 → #2 / #3 并行 → #4 → #5。
-- 硬件到位 + ADR 完成后：#7 → #8 ✅ / #9 / #11 ✅ → #10 → #12 → #13。
+- 硬件到位 + ADR 完成后：#7 → #8 ✅ / #9 ✅ / #11 ✅ → #10 → #12 → #13。
 - W36 #15 必须是 W20/W21/W26/W27 任一实施前的先决条件（契约 + 收口门）。
 - #11 W36 canonical (Reward 接口) 已 ship（2026-08-06）：`worldfoundry_rl/reward.py`
   （RewardFn Protocol + ensure_reward_fn + compose）+ `reward_impl.py`
-  （FrankaKitchenReward + LatentDistanceReward）+ 25 个单元测试。下一条
-  unblocked implementation = W34 (PPO)，待 W31 (EnvPool) 落地后接。
+  （FrankaKitchenReward + LatentDistanceReward）+ 25 个单元测试。
+- #9 W34 (PPO) 已 ship（2026-08-06）：`worldfoundry_rl/ppo.py` + 34 个单元测试
+  + 6-seed learning-curve baseline。**Phase-4 CPU-only 桶到此清空**——剩余
+  未完成项（#1/#2/#3/#4/#5 全部 Atlas，#10/#12/#13 依赖 #10 的 Atlas cluster，
+  #7 的 W35.1/W35.4 验证门待 Atlas）无一可在 CPU 上推进。下一步需要
+  **预约 Atlas 硬件窗口**，入口是 #1 (W20 `.to("npu")` 迁移)。
+  唯一的 CPU-side 例外是可选的 `mujoco` + `dm_control` 安装，装上后可把
+  W31 的 FakeEnv 基线和 W34 的合成任务基线换成真实 FrankaKitchen 数字。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
@@ -517,4 +524,11 @@ move to the bottom of the queue.
   + ensure_reward_fn + compose）+ `worldfoundry_rl/reward_impl.py`（FrankaKitchen
   manipulation reward + LatentDistanceReward intrinsic）+ `worldfoundry_rl/tests/test_reward.py`
   （25 个单元测试全绿；`pytest worldfoundry_rl/tests/` 32/32）。
+- **W34 自研 PPO (G7)**: `worldfoundry_rl/ppo.py`（PPOActor 对角高斯策略 +
+  可学习 log_std（clamp 到 [-5, 2]）+ compute_gae + RolloutBuffer + PPOConfig +
+  PPO clipped-surrogate 训练器）+ `worldfoundry_rl/tests/test_ppo_smoke.py`
+  （34 个单元测试全绿）+ `bench_results/w34/ppo_reach_curve.json`
+  （合成 reach 任务 6 seed learning curve：约 -21 → -1~-5，全部 seed 收敛；
+  这是 W35 框架 bake-off 的正确性基线，**不是**真实环境或 Atlas 基线）。
+  `pytest worldfoundry_rl/tests/` 82/82；全仓 594 passed / 1 skipped。
 - Phase-3 final HEAD: `c9e7197` (W32)
