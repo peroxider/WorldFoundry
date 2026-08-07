@@ -313,3 +313,107 @@ def test_outer_loop_uses_iter_dependent_seeds(tmp_path: Path) -> None:
         f"outer iters produced identical losses {losses[0]} — "
         "seed discipline regression"
     )
+
+
+# ---------------------------------------------------------------------------
+# JSON schema + single-iter edge case
+# ---------------------------------------------------------------------------
+
+
+REQUIRED_SUMMARY_KEYS = {
+    "label", "mode", "config_serializable",
+    "render", "train", "inference", "policy_bootstrap", "outer_loop", "notes",
+}
+
+REQUIRED_OUTER_LOOP_KEYS = {
+    "elapsed_seconds", "n_iters", "n_train_per_iter",
+    "per_iter", "reward_trajectory", "reward_trend_delta",
+}
+
+REQUIRED_PER_ITER_KEYS = {
+    "iter", "mean_wm_total_loss", "final_wm_total_loss",
+    "reward_pre_update", "reward_post_update",
+    "policy_loss_initial", "policy_loss_final",
+    "value_loss_initial", "value_loss_final",
+    "n_ppo_epochs",
+}
+
+
+def test_summary_json_has_full_rlinf_schema(tmp_path: Path) -> None:
+    """Pin the public JSON contract: 5 RLinf-shaped phases + per-iter block.
+
+    If a future refactor silently drops a phase (e.g. wraps the outer
+    loop into a generic `train` key) the audit + the docs
+    (`docs/dev/cpu-rti-quickstart.md`) will silently desync. This
+    test guards the 5-phase contract so the failure is loud.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "2",
+            "--ppo-env-steps", "4", "--num-outer-iters", "1",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    summary = json.loads((tmp_path / "render_train_rl.json").read_text())
+
+    # Top-level RLinf-shape: 5 phases + config + notes.
+    assert REQUIRED_SUMMARY_KEYS.issubset(summary.keys()), (
+        f"summary missing required keys: "
+        f"{REQUIRED_SUMMARY_KEYS - set(summary.keys())}"
+    )
+    assert summary["mode"] == "cpu"
+    assert isinstance(summary["notes"], list) and len(summary["notes"]) >= 1
+
+    # Outer-loop block: per-iter shape + trajectory arrays.
+    outer = summary["outer_loop"]
+    assert REQUIRED_OUTER_LOOP_KEYS.issubset(outer.keys()), (
+        f"outer_loop missing required keys: "
+        f"{REQUIRED_OUTER_LOOP_KEYS - set(outer.keys())}"
+    )
+    assert len(outer["per_iter"]) == outer["n_iters"]
+    assert len(outer["reward_trajectory"]) == outer["n_iters"]
+    for it in outer["per_iter"]:
+        assert REQUIRED_PER_ITER_KEYS.issubset(it.keys()), (
+            f"per_iter missing required keys: "
+            f"{REQUIRED_PER_ITER_KEYS - set(it.keys())}"
+        )
+
+    # Policy bootstrap must show learning signal (pre/post updates).
+    pol = summary["policy_bootstrap"]
+    for k in ("mean_reward_pre_update", "mean_reward_post_update",
+             "policy_loss_initial", "policy_loss_final", "n_ppo_epochs"):
+        assert k in pol, f"policy_bootstrap missing required key {k}"
+
+
+def test_orchestrator_handles_single_outer_iter(tmp_path: Path) -> None:
+    """`--num-outer-iters 1` must produce a 1-iter trajectory, not crash.
+
+    Edge case: n_iters=1 means reward_trend_delta is defined as
+    ``trajectory[-1] - trajectory[0]`` which is 0 for a single sample
+    (the test guards this is still emitted, not silently skipped).
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "2",
+            "--ppo-env-steps", "4", "--num-outer-iters", "1",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    summary = json.loads((tmp_path / "render_train_rl.json").read_text())
+    assert summary["config_serializable"]["num_outer_iters"] == 1
+    outer = summary["outer_loop"]
+    assert outer["n_iters"] == 1
+    assert len(outer["per_iter"]) == 1
+    assert len(outer["reward_trajectory"]) == 1
+    # Single-iter trajectory: trend is the difference of one sample
+    # against itself, i.e. 0.0 (not NaN, not missing).
+    assert outer["reward_trend_delta"] == 0.0
+    assert np.isfinite(outer["reward_trajectory"][0])
