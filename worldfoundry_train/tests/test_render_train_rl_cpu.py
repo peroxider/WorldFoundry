@@ -270,3 +270,46 @@ def test_multi_epoch_ppo_reduces_policy_loss(tmp_path: Path) -> None:
     # descent because the surrogate loss is a clipped ratio; on small
     # data with lr=3e-4 the ratio can drift.
     assert out["policy_loss_final"] <= out["policy_loss_initial"] * 1.5
+
+
+def test_outer_loop_uses_iter_dependent_seeds(tmp_path: Path) -> None:
+    """Outer iterations must sample DIFFERENT action distributions.
+
+    Regression test for the seed-discipline bug where
+    ``_continue_train_world_model`` keyed its RNG on
+    ``cfg.seed + 1000 + n_extra_steps`` (a constant per phase call),
+    causing all outer iterations to replay the same noise. The fix
+    keys on the iter index, so iter-0 and iter-1 must produce
+    different first-step losses even with identical configs.
+    """
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location(
+        "rti2", str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["rti2"] = mod
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+
+    cfg = mod.V2Config(
+        out_dir=tmp_path, num_clips=2, frames_per_clip=4, height=32, width=32,
+        seed=7, num_steps=4, learning_rate=3e-4, mask_ratio=0.5,
+        action_dim=4, obs_dim=8, ppo_env_steps=8, num_ppo_epochs=2,
+    )
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    device = "cpu"
+    manifest, _ = mod.render_phase(cfg)
+    ckpt, _, _, _ = mod.train_phase(cfg, manifest, device)
+    outer = mod.iterative_loop_phase(cfg, ckpt, device, n_iters=2, n_train_per_iter=4)
+    # Per-iter metrics must differ — specifically the world-model
+    # mean_total_loss, because different RNG streams -> different
+    # action samples -> different loss trajectories.
+    losses = [it["mean_wm_total_loss"] for it in outer["per_iter"]]
+    assert len(losses) == 2
+    # If the bug were present, both losses would be identical (within
+    # floating-point noise). Allow 1e-3 to absorb torch/np
+    # non-determinism in cuBLAS, but assert they're not exactly equal.
+    assert abs(losses[0] - losses[1]) > 1e-3, (
+        f"outer iters produced identical losses {losses[0]} — "
+        "seed discipline regression"
+    )

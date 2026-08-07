@@ -477,14 +477,17 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
 def _continue_train_world_model(
     online, pred, dec, target, ds, cfg: V2Config, device: str,
     n_extra_steps: int,
+    iter_index: int = 0,
 ) -> tuple[list[dict[str, float]], torch.optim.Optimizer, "TinyEMAUpdater"]:
     """Continue training the world-model stack for ``n_extra_steps`` steps.
 
     Returns the per-step history plus the optimizer + EMA so the caller
     can keep using them across outer iterations. Uses the same JEPA +
     recon + action-align losses as :func:`train_phase` but with a
-    fresh RNG offset per outer iter so each iter sees fresh action
-    samples.
+    fresh RNG offset per outer iter (``iter_index``) so each iter sees
+    fresh action samples — otherwise all outer iterations would draw
+    the same action distribution and the "iterative" outer loop would
+    just be the same noise replayed K times.
     """
     online.train()
     pred.train()
@@ -497,7 +500,7 @@ def _continue_train_world_model(
         list(online.parameters()) + list(pred.parameters()) + list(dec.parameters()),
         lr=cfg.learning_rate,
     )
-    rng = np.random.default_rng(cfg.seed + 1000 + n_extra_steps)
+    rng = np.random.default_rng(cfg.seed + 1000 * (iter_index + 1) + iter_index)
     history: list[dict[str, float]] = []
     for step in range(n_extra_steps):
         idx = int(rng.integers(0, len(ds)))
@@ -586,9 +589,11 @@ def iterative_loop_phase(
     per_iter: list[dict[str, Any]] = []
     for it in range(n_iters):
         # World-model continuation. Build fresh optimizer + EMA per iter
-        # so we don't accumulate stale momentum.
+        # so we don't accumulate stale momentum. Pass ``it`` so the
+        # action-sampling RNG actually varies across iterations.
         wm_history, _opt, _ema = _continue_train_world_model(
             encoder, pred, dec, target, ds, cfg, device, n_train_per_iter,
+            iter_index=it,
         )
         # PPO rollout + update. Save checkpoint before evaluating so the
         # policy sees the latest world model.
@@ -597,7 +602,14 @@ def iterative_loop_phase(
             encoder=encoder, predictor=pred, decoder=dec,
             optimizer=_opt, step=it + 1,
         )
+        # Stash a per-iter seed so the bootstrap phase picks fresh env
+        # noise — keeps the loop "real" rather than replaying the same
+        # rollout every iteration.
+        _seed_attr = object.__setattr__
+        _prev_seed = cfg.seed
+        _seed_attr(cfg, "seed", cfg.seed + 1000 * (it + 1))
         pol_out = policy_bootstrap_phase(cfg, cfg.out_dir / "tiny_jepa_v2.pt", device)
+        _seed_attr(cfg, "seed", _prev_seed)
         per_iter.append({
             "iter": it,
             "mean_wm_total_loss": round(float(np.mean([s["total_loss"] for s in wm_history])), 4),
