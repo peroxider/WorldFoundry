@@ -111,6 +111,7 @@ def load_tiny_checkpoint(
     doesn't have to track which kwargs they passed).
     """
     from worldfoundry_train.model.tiny_jepa import (
+        TinyActionConditionedPredictor,
         TinyEncoderConfig,
         TinyJEPAPredictor,
         TinyPixelDecoder,
@@ -135,7 +136,15 @@ def load_tiny_checkpoint(
         "depth", "num_heads", "mlp_ratio",
     ) if k in cfg_dict})
     encoder = TinyVJEPA2Encoder(cfg)
-    predictor = TinyJEPAPredictor(cfg)
+    # Action-conditioned variant stores `_action_proj.{weight,bias}`.
+    # Infer action_dim from that weight's input dim so the loader
+    # doesn't need an external schema flag.
+    is_action_conditioned = "_action_proj.weight" in payload["predictor_state"]
+    if is_action_conditioned:
+        action_dim = int(payload["predictor_state"]["_action_proj.weight"].shape[1])
+        predictor = TinyActionConditionedPredictor(cfg, action_dim=action_dim)
+    else:
+        predictor = TinyJEPAPredictor(cfg)
     decoder = TinyPixelDecoder(cfg)
     encoder.load_state_dict(payload["encoder_state"])
     predictor.load_state_dict(payload["predictor_state"])

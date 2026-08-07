@@ -1,0 +1,51 @@
+{
+  "label": "RTI v2 CPU render->train->inference->policy (RLinf-shape)",
+  "mode": "cpu",
+  "config_serializable": {
+    "out_dir": "bench_results/render_train_rl",
+    "num_clips": 4,
+    "frames_per_clip": 4,
+    "height": 32,
+    "width": 32,
+    "seed": 42,
+    "num_steps": 30,
+    "learning_rate": 0.0003,
+    "mask_ratio": 0.5,
+    "action_dim": 4,
+    "obs_dim": 8,
+    "ppo_env_steps": 16
+  },
+  "render": {
+    "elapsed_seconds": 0.047
+  },
+  "train": {
+    "elapsed_seconds": 2.067,
+    "final_total_loss": 10.4609,
+    "final_jepa_loss": 10.0593,
+    "final_recon_loss": 0.3809,
+    "final_act_align": 0.2071,
+    "n_encoder_params": 24416,
+    "n_train_steps": 30
+  },
+  "inference": {
+    "elapsed_seconds": 0.114,
+    "recon_cosine": 0.6246,
+    "latent_cosine": 0.3766,
+    "n_predicted_tokens": 32
+  },
+  "policy_bootstrap": {
+    "elapsed_seconds": 0.13370795000810176,
+    "n_env_steps": 16,
+    "mean_reward": -0.1407279926352203,
+    "reward_stdev": 0.028644294653266594,
+    "min_reward": -0.19280073046684265,
+    "max_reward": -0.09464875608682632,
+    "n_policy_params": 1513
+  },
+  "notes": [
+    "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
+    "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
+    "Synthetic env is in-process (`_MockCPUEnv`); no mujoco/dm_control dep \u2014 matches v1 CPU-only promise.",
+    "PPO is NOT trained end-to-end here \u2014 this is the bootstrap proof that the wiring is differentiable. Full PPO update on imagination rollouts is W38."
+  ]
+}

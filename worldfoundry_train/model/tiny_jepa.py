@@ -322,9 +322,104 @@ class TinyJEPAPredictor(nn.Module):
         return out
 
 
+class TinyActionConditionedPredictor(nn.Module):
+    """Action-conditioned variant of :class:`TinyJEPAPredictor` (RTI v2 seam).
+
+    Same forward contract as ``TinyJEPAPredictor`` plus an extra
+    ``action_embedding`` tensor that is injected at every position before
+    the transformer runs. This is the smallest possible
+    action-conditioning seam — enough to make the predictor's outputs a
+    function of the actor's action so a PPO policy can backprop from
+    actor loss through the imagined latents.
+
+    Args:
+        encoder_config: shared encoder config (dim + grid shape).
+        action_dim: dimensionality of the continuous action vector.
+        pred_dim: predictor width.
+        depth: number of transformer blocks.
+        num_heads: must divide ``pred_dim``.
+    """
+
+    def __init__(
+        self,
+        encoder_config: TinyEncoderConfig,
+        *,
+        action_dim: int,
+        pred_dim: int = 48,
+        depth: int = 2,
+        num_heads: int = 3,
+    ) -> None:
+        super().__init__()
+        c = encoder_config
+        if action_dim < 1:
+            raise ValueError(f"action_dim must be >= 1; got {action_dim}")
+        if pred_dim % num_heads != 0:
+            raise ValueError(
+                f"pred_dim={pred_dim} must be divisible by num_heads={num_heads}"
+            )
+        self.encoder_config = c
+        self.action_dim = int(action_dim)
+        self._action_proj = nn.Linear(action_dim, pred_dim)
+        self._proj_in = nn.Linear(c.embed_dim, pred_dim)
+        self._mask_token = nn.Parameter(torch.zeros(1, 1, pred_dim))
+        nn.init.trunc_normal_(self._mask_token, std=0.02)
+        self._pos = nn.Parameter(
+            torch.zeros(1, c.grid_h * c.grid_w * 16, pred_dim),
+        )
+        nn.init.trunc_normal_(self._pos, std=0.02)
+        layer = nn.TransformerEncoderLayer(
+            d_model=pred_dim,
+            nhead=num_heads,
+            dim_feedforward=pred_dim * 2,
+            dropout=0.0,
+            activation="gelu",
+            batch_first=True,
+            norm_first=True,
+        )
+        self._blocks = nn.TransformerEncoder(layer, num_layers=depth)
+        self._proj_out = nn.Linear(pred_dim, c.embed_dim)
+
+    def forward(
+        self,
+        context_tokens: torch.Tensor,
+        bool_masked_pos: torch.Tensor,
+        action_embedding: torch.Tensor,
+    ) -> torch.Tensor:
+        """Predict at masked positions, conditioned on ``action_embedding``.
+
+        Args:
+            context_tokens: ``(B, N, embed_dim)`` — full-sequence encoder output.
+            bool_masked_pos: ``(B, N)`` bool — positions to predict.
+            action_embedding: ``(B, action_dim)`` — actor's continuous action.
+
+        Returns:
+            ``(M_total, embed_dim)`` — predictions at masked positions.
+        """
+        if bool_masked_pos.dtype != torch.bool:
+            bool_masked_pos = bool_masked_pos.bool()
+        if action_embedding.dim() != 2 or action_embedding.shape[1] != self.action_dim:
+            raise ValueError(
+                f"action_embedding must be (B, {self.action_dim}); got "
+                f"{tuple(action_embedding.shape)}"
+            )
+        B, N, _ = context_tokens.shape
+        x = self._proj_in(context_tokens)
+        mask = bool_masked_pos.unsqueeze(-1)
+        x = torch.where(mask, self._mask_token.expand(B, N, -1), x)
+        x = x + self._pos[:, :N, :]
+        # Inject action at every token — equivalent to a FiLM-style
+        # additive bias shared across positions.
+        bias = self._action_proj(action_embedding).unsqueeze(1)
+        x = x + bias
+        x = self._blocks(x)
+        x = self._proj_out(x)
+        return x[bool_masked_pos]
+
+
 __all__ = [
     "TinyEncoderConfig",
     "TinyVJEPA2Encoder",
     "TinyPixelDecoder",
     "TinyJEPAPredictor",
+    "TinyActionConditionedPredictor",
 ]
