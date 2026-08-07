@@ -417,3 +417,95 @@ def test_orchestrator_handles_single_outer_iter(tmp_path: Path) -> None:
     # against itself, i.e. 0.0 (not NaN, not missing).
     assert outer["reward_trend_delta"] == 0.0
     assert np.isfinite(outer["reward_trajectory"][0])
+
+
+# ---------------------------------------------------------------------------
+# On-disk checkpoint schema pin (no helper)
+# ---------------------------------------------------------------------------
+
+
+EXPECTED_CHECKPOINT_TOP_LEVEL_KEYS = {
+    "step",
+    "encoder_state",
+    "predictor_state",
+    "decoder_state",
+    "optimizer_state",
+    "rng_state_torch",
+    "rng_state_numpy",
+    "encoder_config",
+    "predictor_config",
+}
+
+EXPECTED_V2_PREDICTOR_KEYS = {
+    "_action_proj.weight",  # marks it as action-conditioned (v2)
+    "_action_proj.bias",
+}
+
+
+def test_saved_checkpoint_uses_v2_on_disk_schema(tmp_path: Path) -> None:
+    """Pin the on-disk v2 checkpoint schema via plain ``torch.load``.
+
+    The ``load_tiny_checkpoint`` helper hides the schema behind an
+    auto-dispatch. This test loads the saved file with raw
+    ``torch.load`` so the contract is auditable independently — a
+    future migration or external tool can read the file without the
+    helper.
+
+    v2 contract (RTI v2 orchestrator):
+      - Top-level keys: step, encoder_state, predictor_state,
+        decoder_state, optimizer_state, rng_state_torch,
+        rng_state_numpy, encoder_config, predictor_config.
+      - predictor_state MUST contain ``_action_proj.weight`` (the
+        marker that distinguishes v2 from v1).
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "2",
+            "--ppo-env-steps", "4", "--num-outer-iters", "1",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    ckpt_path = tmp_path / "tiny_jepa_v2.pt"
+    assert ckpt_path.is_file()
+
+    # Plain torch.load — no helper, no auto-dispatch.
+    payload = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+
+    missing = EXPECTED_CHECKPOINT_TOP_LEVEL_KEYS - set(payload.keys())
+    assert not missing, f"on-disk v2 checkpoint missing keys: {missing}"
+
+    # step is a positive int (we ran num_steps=2). Exact value depends
+    # on log_every_n (only the last step is recorded in history), so
+    # just assert the smoke ran at least 1 step.
+    assert isinstance(payload["step"], int)
+    assert payload["step"] >= 1
+
+    # The three component state dicts are non-empty.
+    for k in ("encoder_state", "predictor_state", "decoder_state"):
+        assert isinstance(payload[k], dict) and len(payload[k]) > 0, (
+            f"{k} should be a non-empty state dict"
+        )
+
+    # v2 marker: predictor_state must carry the action projection.
+    pred_keys = set(payload["predictor_state"].keys())
+    assert EXPECTED_V2_PREDICTOR_KEYS.issubset(pred_keys), (
+        f"predictor_state missing v2 action-proj keys: "
+        f"{EXPECTED_V2_PREDICTOR_KEYS - pred_keys}"
+    )
+
+    # Architectural config signatures are dicts (signature() outputs).
+    for k in ("encoder_config", "predictor_config"):
+        assert isinstance(payload[k], dict), f"{k} should be a config signature dict"
+
+    # encoder_config and predictor_config should agree on the architectural
+    # fingerprint (same grid, same embed_dim, same depth) — they share
+    # the encoder config that the predictor was built from.
+    assert payload["encoder_config"] == payload["predictor_config"], (
+        "encoder_config and predictor_config should be the same "
+        "architectural fingerprint (the predictor is built from the "
+        "encoder's config)"
+    )
