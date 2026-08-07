@@ -532,6 +532,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 14 | W40 帧生成路线 ADR | `759dd28` | **done** | none |
 | 15 | W36 NPU worker 同构契约 | `f923170` | **done** | none (CPU-only doc) |
 | 16 | RTI v1 CPU 渲训推闭环 | `aede80b` | **done** | none (CPU-only, 无 HF 1.2B 下载) |
+| 17 | RTI v2 CPU 渲训推 + RLinf-shape imagination | `254aecf` | **done** | none (CPU-only; bootstrap proof, 非 end-to-end PPO 训练) |
 
 **调度建议**：
 - ~~立刻可做（无 hardware 依赖）：#6, #14, #15（三个 design tasks）。~~ — 2026-08-06 三件 ADR 全 ship，phase-4 立刻可做桶 closed。
@@ -569,6 +570,24 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     train 4.01s（loss 44.20 → 11.05）、inference 0.19s、recon_cosine 0.7554。
   - 与 W40 Route A（轻量 pixel decoder）一致；是 #12 W38 (imagination rollout)
     的 CPU 前置件——W38 可直接复用 TinyJEPAPredictor + TinyPixelDecoder。
+- #17 RTI v2 (RLinf-shape imagination) 已 ship（2026-08-07，`254aecf`）：
+  在 v1 之上闭合「world-model 想象 → actor」的反馈回路，CPU 可重现。
+  - 新增 `TinyActionConditionedPredictor`：在 `TinyJEPAPredictor` 之外加一
+    个 `action_embedding → pred_dim` 线性层，注入每个 token 前作为
+    FiLM-style 加性 bias。Forward 多收 `action_embedding: (B, action_dim)`。
+  - `ema_compat.load_tiny_checkpoint` 自动 dispatch：state_dict 含
+    `_action_proj.weight` 时实例化 `TinyActionConditionedPredictor`，否则
+    `TinyJEPAPredictor`——v1 checkpoint 仍可加载（回归测试已加）。
+  - `scripts/render_train_rl_cpu.py`：4 阶段 R→T→I→P 编排；Train 加
+    0.1·MSE(pred_a, pred_a.detach@zero) 作为 action-align 辅助损失，
+    验证 conditioning 真的接到 transformer 上。
+  - **Policy bootstrap** 用 `worldfoundry_rl.vision_policy.VisionPolicy`：
+    actor 输出 tanh→action → predictor 输入 → 想象 latents 拼回 obs_dim，
+    经 in-process 合成 env（`_MockCPUEnv`，无 mujoco 依赖）走 16 步。
+    16 env-steps / mean_reward -0.141 / 1.5k policy params / 0.13s。
+  - 是 #12 W38（imagination rollout PPO 训练）的最小可复用件——W38
+    可直接消费 `TinyActionConditionedPredictor` + bootstrap 阶段的
+    想象-回填 obs 模式，无需新写耦合代码。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
