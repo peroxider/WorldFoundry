@@ -617,6 +617,13 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     验证两 iter 的 wm_loss 差值 > 1e-3。
     修复后实测 iter1 wm_loss=13.19 vs iter2 wm_loss=7.78——真方差，
     非重放。
+  - **v2.5 (`58587e3`)**: 可发现性——RTI loop 闭环，但 README 没指针，
+    无 operator guide。新增 `docs/dev/cpu-rti-quickstart.md`（250 LOC
+    全指南：prereqs / run / expected output / JSON schema / CLI flags /
+    32 tests / 架构表 / "what this is NOT"）+ README.md 顶层加 "CPU
+    render-train-inference loop (RTI)" 章节 + smoke summary JSON 入仓。
+    现在 `bash scripts/render_train_rl_cpu.sh` 即可端到端复现 5-phase
+    RLinf-shape loop，无 Atlas、无 HF 1.2B 下载。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
