@@ -679,6 +679,15 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     outer iters，验证 post-loop checkpoint 的 target_state 仍
     ≠ encoder_state（max diff > 1e-8）。18 tests 兜底 loop
     （v2.9 17 → v2.10 18）。
+  - **v2.11 (`faed09a`)**: 直接 pin loader 契约——v2.10 让 orchestrator
+    依赖 `bundle["target"]`，但只有 e2e 测试覆盖；缺 unit test
+    验证 loader 本身。新增
+    `test_load_tiny_checkpoint_exposes_target_when_persisted`：
+    合成带 target_state 的 ckpt，load via helper，断言
+    (1) bundle["target"] 存在，(2) 加载的 target 权重 与 disk 上
+    target_state 1e-7 tolerance 一致，(3) target 是 eval mode 且
+    requires_grad=False。19 tests 兜底 loader contract
+    （v2.10 18 → v2.11 19）。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
