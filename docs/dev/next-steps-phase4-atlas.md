@@ -657,6 +657,17 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     trajectory) 比对 1e-5 tolerance——任何引入非 deterministic op
     的 refactor 都会被这个测试抓住。36 tests 兜底 loop
     （v2.7 35 → v2.8 36）。
+  - **v2.9 (`763e4e4`)**: EMA 目标 encoder 持久化——orchestrator
+    训练过程中构建 EMA target encoder（用 `TinyEMAUpdater` 每步
+    慢更新），但 checkpoint 只存了 online encoder；resume 时 target
+    会从 online 重新初始化，丢掉跨 iter 累积的 momentum。扩展
+    `save_tiny_checkpoint` 加可选 `target` kwarg → 写入
+    `target_state` 键；orchestrator 两个 save 点都传 target。
+    Schema 扩展 forward-compatible（v2.7 9-key 测试不变）。
+    新增 `test_saved_checkpoint_persists_ema_target_separate_from_online`：
+    校验 (1) target_state 存在，(2) keys 与 encoder_state 一致，
+    (3) max_diff > 1e-8（证明 EMA 真的调用过，没有 target ==
+    encoder 的退化路径）。17 tests 兜底 loop（v2.8 16 → v2.9 17）。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
