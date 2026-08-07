@@ -624,6 +624,15 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     render-train-inference loop (RTI)" 章节 + smoke summary JSON 入仓。
     现在 `bash scripts/render_train_rl_cpu.sh` 即可端到端复现 5-phase
     RLinf-shape loop，无 Atlas、无 HF 1.2B 下载。
+  - **v2.6 (`85b7ac3`)**: 审计强化——32 tests 覆盖 loop 行为，但
+    未 pin 公开 JSON 契约；未来重构若把 outer_loop 折进 train 键，
+    docs 与 audit 会静默 desync。新增 2 个 test：
+    - `test_summary_json_has_full_rlinf_schema`：锁 5-phase
+      (render/train/inference/policy_bootstrap/outer_loop) + per-iter
+      字段契约
+    - `test_orchestrator_handles_single_outer_iter`：n_iters=1 边界
+      是否产出 1-iter trajectory + reward_trend_delta=0.0（不静默跳过）
+    34 tests 兜底 loop（v2.5 32 → v2.6 34）。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
