@@ -19,73 +19,73 @@
     "num_train_per_iter": 10
   },
   "render": {
-    "elapsed_seconds": 0.054
+    "elapsed_seconds": 0.046
   },
   "train": {
-    "elapsed_seconds": 2.106,
-    "final_total_loss": 10.8622,
-    "final_jepa_loss": 10.4389,
-    "final_recon_loss": 0.3792,
-    "final_act_align": 0.4419,
+    "elapsed_seconds": 2.006,
+    "final_total_loss": 7.6906,
+    "final_jepa_loss": 7.301,
+    "final_recon_loss": 0.3661,
+    "final_act_align": 0.2351,
     "n_encoder_params": 24416,
     "n_train_steps": 30
   },
   "inference": {
-    "elapsed_seconds": 0.121,
-    "recon_cosine": 0.6242,
-    "latent_cosine": 0.5243,
+    "elapsed_seconds": 0.108,
+    "recon_cosine": 0.6243,
+    "latent_cosine": 0.5605,
     "n_predicted_tokens": 32
   },
   "policy_bootstrap": {
-    "elapsed_seconds": 0.2108714859932661,
+    "elapsed_seconds": 0.24140542597160675,
     "n_env_steps": 16,
-    "mean_reward_pre_update": -0.6167643014341593,
-    "mean_reward_post_update": -0.1754518887028098,
-    "reward_stdev_pre_update": 0.27528563763266994,
-    "policy_loss_initial": 0.5688146948814392,
-    "value_loss_initial": 23.842639923095703,
-    "policy_loss_final": 0.5635395646095276,
-    "value_loss_final": 23.408180236816406,
-    "min_reward": -1.2309890985488892,
-    "max_reward": -0.1982707977294922,
+    "mean_reward_pre_update": -0.8844828046858311,
+    "mean_reward_post_update": -0.17635336983948946,
+    "reward_stdev_pre_update": 0.32699329790724707,
+    "policy_loss_initial": 1.801200032234192,
+    "value_loss_initial": 44.56481170654297,
+    "policy_loss_final": 1.7843480110168457,
+    "value_loss_final": 44.05622863769531,
+    "min_reward": -1.5924570560455322,
+    "max_reward": -0.43388640880584717,
     "n_policy_params": 1513,
     "n_ppo_epochs": 4
   },
   "outer_loop": {
-    "elapsed_seconds": 1.2078898180043325,
+    "elapsed_seconds": 1.0075935059867334,
     "n_iters": 2,
     "n_train_per_iter": 10,
     "per_iter": [
       {
         "iter": 0,
-        "mean_wm_total_loss": 13.1942,
-        "final_wm_total_loss": 14.2907,
-        "reward_pre_update": -0.6806,
-        "reward_post_update": -0.1683,
-        "policy_loss_initial": 3.349,
-        "policy_loss_final": 3.3096,
-        "value_loss_initial": 30.9212,
-        "value_loss_final": 30.5058,
+        "mean_wm_total_loss": 10.4191,
+        "final_wm_total_loss": 7.3225,
+        "reward_pre_update": -1.757,
+        "reward_post_update": -0.163,
+        "policy_loss_initial": 7.4001,
+        "policy_loss_final": 7.2933,
+        "value_loss_initial": 215.6039,
+        "value_loss_final": 214.2893,
         "n_ppo_epochs": 4
       },
       {
         "iter": 1,
-        "mean_wm_total_loss": 7.7824,
-        "final_wm_total_loss": 8.0525,
-        "reward_pre_update": -0.5747,
-        "reward_post_update": -0.2681,
-        "policy_loss_initial": 9.6876,
-        "policy_loss_final": 9.5276,
-        "value_loss_initial": 17.6761,
-        "value_loss_final": 17.3206,
+        "mean_wm_total_loss": 5.6175,
+        "final_wm_total_loss": 4.991,
+        "reward_pre_update": -1.3685,
+        "reward_post_update": -0.2799,
+        "policy_loss_initial": 0.6297,
+        "policy_loss_final": 0.6214,
+        "value_loss_initial": 121.7365,
+        "value_loss_final": 120.7939,
         "n_ppo_epochs": 4
       }
     ],
     "reward_trajectory": [
-      -0.1683,
-      -0.2681
+      -0.163,
+      -0.2799
     ],
-    "reward_trend_delta": -0.0998
+    "reward_trend_delta": -0.1169
   },
   "notes": [
     "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
