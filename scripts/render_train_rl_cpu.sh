@@ -66,8 +66,14 @@ run_step() {
 }
 
 # Gate 1: unit tests (tiny model + ema_compat + RTI v2 predictor).
+# Both files: the v1 file covers the tiny stack / checkpoint round-trip,
+# the v2 file covers the action-conditioned predictor, PPO update and the
+# outer RLinf loop. Running only the v1 file (as this gate did through
+# v2.11) left every RL-loop test unguarded by the smoke.
 run_step "GATE 1: RTI v2 unit tests" "rti2-unit" \
-    "$PY" -m pytest worldfoundry_train/tests/test_render_train_inference_cpu.py -q --tb=short || {
+    "$PY" -m pytest worldfoundry_train/tests/test_render_train_inference_cpu.py \
+                    worldfoundry_train/tests/test_render_train_rl_cpu.py \
+                    -q --tb=short || {
         echo "FATAL: RTI v2 unit-test gate failed (rc=$?)" >&2
         exit 3
     }

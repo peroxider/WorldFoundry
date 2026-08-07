@@ -11,6 +11,7 @@ Covers the seams that close the RLinf loop:
 """
 from __future__ import annotations
 
+import csv
 import json
 import subprocess
 import sys
@@ -387,6 +388,116 @@ def test_summary_json_has_full_rlinf_schema(tmp_path: Path) -> None:
     for k in ("mean_reward_pre_update", "mean_reward_post_update",
              "policy_loss_initial", "policy_loss_final", "n_ppo_epochs"):
         assert k in pol, f"policy_bootstrap missing required key {k}"
+
+
+def test_render_block_counts_match_manifest_on_disk(tmp_path: Path) -> None:
+    """`render.n_clips` / `render.n_frames` must agree with the manifest CSV.
+
+    These two keys are documented in `docs/dev/cpu-rti-quickstart.md`
+    ("total frames across all clips. Real mp4s on disk."). They are
+    counted from the manifest rather than derived from
+    ``num_clips * frames_per_clip`` so that a short or failed video
+    write shows up as a mismatch instead of being masked by the
+    requested count. This test pins that they track the actual file.
+    """
+    n_clips, frames_per_clip = 3, 4
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path),
+            "--num-clips", str(n_clips),
+            "--frames-per-clip", str(frames_per_clip),
+            "--height", "32", "--width", "32", "--num-steps", "2",
+            "--ppo-env-steps", "4", "--num-outer-iters", "1",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    render = json.loads((tmp_path / "render_train_rl.json").read_text())["render"]
+    for key in ("elapsed_seconds", "n_clips", "n_frames"):
+        assert key in render, f"render block missing documented key {key}"
+
+    with open(tmp_path / "manifest.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    assert render["n_clips"] == len(rows) == n_clips
+    assert render["n_frames"] == sum(int(r["num_frames"]) for r in rows)
+    assert render["n_frames"] == n_clips * frames_per_clip
+
+    # The mp4s the manifest points at must actually exist and be non-empty.
+    for row in rows:
+        clip = Path(row["video_path"])
+        assert clip.is_file(), f"manifest references missing clip {clip}"
+        assert clip.stat().st_size > 0, f"manifest references empty clip {clip}"
+
+
+def test_outer_loop_ppo_update_improves_reward_within_iter(tmp_path: Path) -> None:
+    """Within a single outer iter, PPO must raise reward: post > pre.
+
+    This is the loop's honest learning signal, and the one
+    `docs/dev/cpu-rti-quickstart.md` tells readers to trust. It holds
+    15/15 across seeds 42/7/99/123/2024 at --num-outer-iters 3.
+
+    Deliberately NOT asserted here: the sign of
+    ``outer_loop.reward_trend_delta`` (post-update reward of the last
+    iter minus the first). At --ppo-env-steps 16 that quantity is
+    dominated by rollout variance -- it came out positive in only 2 of
+    those 5 seeds -- so gating on it would be a flaky test asserting a
+    property the loop does not have at this scale.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "2",
+            "--ppo-env-steps", "8", "--num-outer-iters", "3",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    per_iter = json.loads(
+        (tmp_path / "render_train_rl.json").read_text()
+    )["outer_loop"]["per_iter"]
+    assert len(per_iter) == 3
+
+    for it in per_iter:
+        gain = it["reward_post_update"] - it["reward_pre_update"]
+        assert gain > 0.0, (
+            f"iter {it['iter']}: PPO update did not improve reward "
+            f"(pre={it['reward_pre_update']:.4f} "
+            f"post={it['reward_post_update']:.4f} gain={gain:+.4f})"
+        )
+
+
+def test_outer_loop_world_model_loss_decreases_across_iters(tmp_path: Path) -> None:
+    """`mean_wm_total_loss` must be lower on the last iter than the first.
+
+    The world model keeps training across outer iters (the encoder and
+    predictor are carried over via the checkpoint, not reinitialised),
+    so this loss should fall. Verified monotone on seeds
+    42/7/99/123/2024; asserted here only first-vs-last so a single noisy
+    middle iter does not make the test flaky.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "2",
+            "--ppo-env-steps", "8", "--num-outer-iters", "3",
+            "--num-train-per-iter", "10",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    per_iter = json.loads(
+        (tmp_path / "render_train_rl.json").read_text()
+    )["outer_loop"]["per_iter"]
+    losses = [it["mean_wm_total_loss"] for it in per_iter]
+    assert losses[-1] < losses[0], (
+        f"world-model loss did not improve across outer iters: {losses}"
+    )
 
 
 def test_orchestrator_handles_single_outer_iter(tmp_path: Path) -> None:

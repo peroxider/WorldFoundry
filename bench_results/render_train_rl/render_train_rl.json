@@ -19,10 +19,12 @@
     "num_train_per_iter": 10
   },
   "render": {
-    "elapsed_seconds": 0.051
+    "elapsed_seconds": 0.049,
+    "n_clips": 4,
+    "n_frames": 16
   },
   "train": {
-    "elapsed_seconds": 3.129,
+    "elapsed_seconds": 2.005,
     "final_total_loss": 13.5935,
     "final_jepa_loss": 13.1845,
     "final_recon_loss": 0.3867,
@@ -31,13 +33,13 @@
     "n_train_steps": 30
   },
   "inference": {
-    "elapsed_seconds": 0.17,
+    "elapsed_seconds": 0.126,
     "recon_cosine": 0.6269,
     "latent_cosine": 0.1361,
     "n_predicted_tokens": 32
   },
   "policy_bootstrap": {
-    "elapsed_seconds": 0.235521119000623,
+    "elapsed_seconds": 0.20305915898643434,
     "n_env_steps": 16,
     "mean_reward_pre_update": -0.4952528476715088,
     "mean_reward_post_update": -0.18145921919494867,
@@ -52,7 +54,7 @@
     "n_ppo_epochs": 4
   },
   "outer_loop": {
-    "elapsed_seconds": 1.120129529008409,
+    "elapsed_seconds": 1.0759118179848883,
     "n_iters": 2,
     "n_train_per_iter": 10,
     "per_iter": [

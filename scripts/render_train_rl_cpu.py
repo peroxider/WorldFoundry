@@ -23,6 +23,7 @@ in <60 s for the default config (4 clips x 4 frames, 30 train steps,
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 import time
@@ -91,6 +92,21 @@ def render_phase(cfg: V2Config) -> tuple[Path, float]:
     )
     manifest = build_synthetic_manifest(spec)
     return manifest, time.perf_counter() - t0
+
+
+def _manifest_counts(manifest: Path) -> dict[str, int]:
+    """Count clips + total frames from the manifest CSV written by render_phase.
+
+    Columns: video_path,num_frames,height,width. Returns
+    ``{"n_clips": int, "n_frames": int}`` where n_frames is the sum of the
+    per-clip num_frames column (not num_clips * frames_per_clip).
+    """
+    with open(manifest, newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    return {
+        "n_clips": len(rows),
+        "n_frames": sum(int(r["num_frames"]) for r in rows),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -741,7 +757,13 @@ def main(argv=None) -> int:
             "num_outer_iters": args.num_outer_iters,
             "num_train_per_iter": args.num_train_per_iter,
         },
-        "render": {"elapsed_seconds": round(render_t, 3)},
+        "render": {
+            "elapsed_seconds": round(render_t, 3),
+            # Counted from the manifest on disk, not derived from cfg, so the
+            # numbers reflect what was actually written (a short/failed write
+            # shows up here instead of being masked by the requested count).
+            **_manifest_counts(manifest),
+        },
         "train": {
             "elapsed_seconds": round(train_t, 3),
             "final_total_loss": round(history[-1]["total_loss"], 4),
