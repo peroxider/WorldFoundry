@@ -497,7 +497,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | # | Task | Committed on master? | Status | Blocked-on |
 |---|---|---|---|---|
 | 1 | W20 `.to("npu")` + Atlas 单卡 LoRA smoke | `6f34894` | **CPU prep done; Atlas 上机待硬件** | Atlas single-card |
-| 2 | W26 W8A8 量化加载器 | not yet | **proposed** | Atlas single-card |
+| 2 | W26 W8A8 量化加载器 | `0f6c305` | **CPU prep done; Atlas 上机待硬件** | Atlas single-card |
 | 3 | W21 8 卡 FSDP 上机 | not yet | **proposed** | W20 |
 | 4 | W27 vLLM-Ascend worker e2e | not yet | **proposed** | W20 + W26 |
 | 5 | W29 Phase-3 集成回归 | not yet | **proposed** | W20 + W21 + W26 + W27 |
@@ -527,7 +527,11 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
   PR + `tests/test_npu_trainer.py` mock 版（`is_npu_available()` 永远 False
   的路径上 PR 本身 CI 跑通，见第 100-104 行）——**今日 ship**。
   剩下的：(b) `#2 W26` 的 `_patch_quantized_loader` 实现 + CPU 单元测试
-  （精度回归对比，见第 145-147 行）。两项均在等 Atlas 硬件窗口做最终上机。
+  （精度回归对比，见第 145-147 行）。**2026-08-07 更新**：`(b)` 已 ship
+  （`0f6c305`）——`worldfoundry_inf/quantize.py` (28 个新 unpack 工具) +
+  替换 `_vllm_ascend_plugin._patch_quantized_loader` stub 为 W8A8 loader
+  hook + `tests/test_quantize_loader.py` (28 个单元测试, MSE < 1e-3
+  验收门全绿)。两项均在等 Atlas 硬件窗口做最终上机。
   其余未完成项（#1/#2 上机、#3/#4/#5、#10/#12/#13、#7 的 W35.1/W35.4）
   无一可在 CPU 上推进——下一步是
   **预约 Atlas 硬件窗口**，入口仍是 #1 (W20 `.to("npu")` 迁移)。
