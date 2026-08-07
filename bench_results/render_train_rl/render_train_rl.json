@@ -16,31 +16,35 @@
     "ppo_env_steps": 16
   },
   "render": {
-    "elapsed_seconds": 0.047
+    "elapsed_seconds": 0.054
   },
   "train": {
-    "elapsed_seconds": 2.067,
-    "final_total_loss": 10.4609,
-    "final_jepa_loss": 10.0593,
-    "final_recon_loss": 0.3809,
-    "final_act_align": 0.2071,
+    "elapsed_seconds": 2.215,
+    "final_total_loss": 13.8123,
+    "final_jepa_loss": 13.3981,
+    "final_recon_loss": 0.3891,
+    "final_act_align": 0.2517,
     "n_encoder_params": 24416,
     "n_train_steps": 30
   },
   "inference": {
-    "elapsed_seconds": 0.114,
+    "elapsed_seconds": 0.119,
     "recon_cosine": 0.6246,
-    "latent_cosine": 0.3766,
+    "latent_cosine": 0.0348,
     "n_predicted_tokens": 32
   },
   "policy_bootstrap": {
-    "elapsed_seconds": 0.13370795000810176,
+    "elapsed_seconds": 0.19943671001237817,
     "n_env_steps": 16,
-    "mean_reward": -0.1407279926352203,
-    "reward_stdev": 0.028644294653266594,
-    "min_reward": -0.19280073046684265,
-    "max_reward": -0.09464875608682632,
-    "n_policy_params": 1513
+    "mean_reward_pre_update": -1.5464528687298298,
+    "mean_reward_post_update": -0.16841682000085711,
+    "reward_stdev_pre_update": 0.4661840127529158,
+    "policy_loss_initial": 5.143369674682617,
+    "value_loss_initial": 138.38404846191406,
+    "min_reward": -2.2273600101470947,
+    "max_reward": -0.6545426845550537,
+    "n_policy_params": 1513,
+    "n_ppo_epochs": 1
   },
   "notes": [
     "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",

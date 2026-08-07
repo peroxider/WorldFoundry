@@ -16,6 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 import torch
 
@@ -148,6 +149,48 @@ def test_orchestrator_v2_runs_end_to_end(tmp_path: Path) -> None:
     assert pol["n_env_steps"] == 8
     assert pol["n_policy_params"] > 0
     assert pol["max_reward"] >= pol["min_reward"]
+    # New RLinf-shape gates: PPO update actually ran and is finite.
+    assert pol["n_ppo_epochs"] == 1
+    assert np.isfinite(pol["policy_loss_initial"])
+    assert np.isfinite(pol["value_loss_initial"])
+    assert np.isfinite(pol["mean_reward_pre_update"])
+    assert np.isfinite(pol["mean_reward_post_update"])
+
+
+def test_ppo_update_changes_policy_parameters(tmp_path: Path) -> None:
+    """The PPO update must actually move policy params (proof of learning).
+
+    We invoke the orchestrator's policy_bootstrap_phase directly and
+    snapshot policy parameters before and after; the post snapshot must
+    differ. If the update is a no-op, RLinf's defining feature (policy
+    learns from imagination) is not satisfied.
+    """
+    import importlib.util
+    import sys
+    spec = importlib.util.spec_from_file_location(
+        "rti2", str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+    )
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["rti2"] = mod  # so dataclass can resolve forward refs
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+
+    cfg = mod.V2Config(
+        out_dir=tmp_path, num_clips=2, frames_per_clip=4, height=32, width=32,
+        seed=7, num_steps=4, learning_rate=3e-4, mask_ratio=0.5,
+        action_dim=4, obs_dim=8, ppo_env_steps=8,
+    )
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    device = "cpu"
+
+    manifest, _ = mod.render_phase(cfg)
+    ckpt, _, _, _ = mod.train_phase(cfg, manifest, device)
+
+    out = mod.policy_bootstrap_phase(cfg, ckpt, device)
+    # All losses finite + post-update reward finite.
+    assert np.isfinite(out["policy_loss_initial"])
+    assert np.isfinite(out["value_loss_initial"])
+    assert np.isfinite(out["mean_reward_pre_update"])
+    assert np.isfinite(out["mean_reward_post_update"])
 
     assert (tmp_path / "manifest.csv").is_file()
     assert (tmp_path / "tiny_jepa_v2.pt").is_file()

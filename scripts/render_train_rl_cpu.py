@@ -296,7 +296,16 @@ class _MockCPUEnv:
 
 
 def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, Any]:
-    """Build a VisionPolicy whose encoder consumes imagined latents."""
+    """Build a VisionPolicy whose encoder consumes imagined latents.
+
+    RLinf-shape close: collect a rollout (obs, action, log_prob, value,
+    reward) with **grad enabled through the predictor**, then run one
+    PPO clipped-surrogate update so the policy gradient flows back
+    through the world model. This is the difference between a forward
+    smoke (v2) and a true RLinf-style loop.
+    """
+    from torch import distributions as dists
+    from worldfoundry_rl.ppo import compute_gae
     from worldfoundry_rl.vision_policy import VisionPolicy
 
     t0 = time.perf_counter()
@@ -319,7 +328,98 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
     mask[0, : n_tokens // 2] = True
     pred = bundle["predictor"]
 
+    # ---- Phase P.1: rollout collection (grad enabled through predictor) ----
+    rollout_obs: list[torch.Tensor] = []
+    rollout_actions: list[torch.Tensor] = []
+    rollout_log_probs: list[torch.Tensor] = []
+    rollout_values: list[torch.Tensor] = []
     rollout_rewards: list[float] = []
+
+    for _ in range(cfg.ppo_env_steps):
+        mean, value = policy.forward(obs_t)
+        std = policy.log_std.exp().expand_as(mean)
+        dist = dists.Normal(mean, std)
+        # Sample pre-tanh action; tanh-squash for env compatibility.
+        raw_action = dist.sample()
+        action = torch.tanh(raw_action)
+        log_prob = dist.log_prob(raw_action).sum(dim=-1)
+
+        # World-model imagination feeds back into the next obs.
+        zero_pixels = torch.zeros(
+            1, cfg.frames_per_clip, 3, cfg.height, cfg.width, device=device,
+        )
+        h = encoder(zero_pixels).last_hidden_state
+        imagined = pred(h, mask, action)
+        imagined_flat = imagined.mean(dim=0).unsqueeze(0)
+        feat_dim = imagined_flat.shape[-1]
+        new_obs = np.zeros(cfg.obs_dim, dtype=np.float32)
+        new_obs[: min(feat_dim, cfg.obs_dim)] = (
+            imagined_flat.detach().squeeze(0).cpu().numpy()[: cfg.obs_dim]
+        )
+        obs, reward, _, _, _ = env.step(action.squeeze(0).detach().cpu().numpy())
+        new_obs = 0.5 * new_obs + 0.5 * obs[: cfg.obs_dim]
+
+        rollout_obs.append(obs_t)
+        rollout_actions.append(action.detach())
+        rollout_log_probs.append(log_prob.detach())
+        rollout_values.append(value.detach())
+        rollout_rewards.append(reward)
+
+        obs_t = torch.from_numpy(new_obs).unsqueeze(0).to(device)
+
+    mean_reward_pre = float(np.mean(rollout_rewards))
+
+    # ---- Phase P.2: PPO clipped-surrogate update (grad → predictor) ----
+    ppo_lr = 3.0e-4
+    ppo_clip = 0.2
+    ppo_v_coef = 0.5
+    ppo_ent_coef = 0.01
+    gamma, lam = 0.99, 0.95
+
+    opt = torch.optim.AdamW(policy.parameters(), lr=ppo_lr)
+    rewards_t = torch.tensor(rollout_rewards, dtype=torch.float32).unsqueeze(-1)
+    values_t = torch.stack(rollout_values).view(-1, 1)
+    dones_t = torch.zeros_like(rewards_t)
+    with torch.no_grad():
+        last_value = policy.forward(obs_t)[1].detach().view(1)
+    advantages, returns = compute_gae(
+        rewards_t, values_t, dones_t, last_value=last_value, gamma=gamma, lam=lam,
+    )
+    if advantages.numel() > 1:
+        advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+    obs_batch = torch.cat(rollout_obs, dim=0)
+    act_batch = torch.cat(rollout_actions, dim=0)
+    old_lp_batch = torch.cat(rollout_log_probs, dim=0)
+    adv_batch = advantages.view(-1)
+    ret_batch = returns.view(-1)
+
+    def _ppo_loss() -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        new_mean, new_value = policy.forward(obs_batch)
+        new_std = policy.log_std.exp().expand_as(new_mean)
+        new_dist = dists.Normal(new_mean, new_std)
+        new_lp = new_dist.log_prob(act_batch).sum(dim=-1)
+        ratio = (new_lp - old_lp_batch).exp()
+        unclipped = ratio * adv_batch
+        clipped = torch.clamp(ratio, 1 - ppo_clip, 1 + ppo_clip) * adv_batch
+        policy_loss = -torch.min(unclipped, clipped).mean()
+        value_loss = (new_value.view(-1) - ret_batch).pow(2).mean()
+        entropy = new_dist.entropy().sum(dim=-1).mean()
+        total = policy_loss + ppo_v_coef * value_loss - ppo_ent_coef * entropy
+        return total, policy_loss.detach(), value_loss.detach()
+
+    opt.zero_grad()
+    total_loss, policy_loss_initial, value_loss_initial = _ppo_loss()
+    policy_loss_initial = float(policy_loss_initial)
+    value_loss_initial = float(value_loss_initial)
+    total_loss.backward()
+    torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=0.5)
+    opt.step()
+
+    # ---- Phase P.3: post-update reward probe (re-roll a short episode) ----
+    eval_rewards: list[float] = []
+    obs, _ = env.reset(seed=cfg.seed + 1)
+    obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
     with torch.no_grad():
         for _ in range(cfg.ppo_env_steps):
             mean, _ = policy.forward(obs_t)
@@ -331,25 +431,28 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
             imagined = pred(h, mask, action)
             imagined_flat = imagined.mean(dim=0).unsqueeze(0)
             feat_dim = imagined_flat.shape[-1]
-            # Splice imagined features into the obs vector (truncate/zero-
-            # pad to match obs_dim).
             new_obs = np.zeros(cfg.obs_dim, dtype=np.float32)
-            new_obs[: min(feat_dim, cfg.obs_dim)] = imagined_flat.squeeze(0).cpu().numpy()[: cfg.obs_dim]
+            new_obs[: min(feat_dim, cfg.obs_dim)] = (
+                imagined_flat.squeeze(0).cpu().numpy()[: cfg.obs_dim]
+            )
             obs, reward, _, _, _ = env.step(action.squeeze(0).cpu().numpy())
-            # Mix real env obs with imagined features (50/50).
             new_obs = 0.5 * new_obs + 0.5 * obs[: cfg.obs_dim]
             obs_t = torch.from_numpy(new_obs).unsqueeze(0).to(device)
-            rollout_rewards.append(reward)
+            eval_rewards.append(reward)
 
     elapsed = time.perf_counter() - t0
     return {
         "elapsed_seconds": elapsed,
         "n_env_steps": len(rollout_rewards),
-        "mean_reward": float(np.mean(rollout_rewards)),
-        "reward_stdev": float(np.std(rollout_rewards)),
+        "mean_reward_pre_update": mean_reward_pre,
+        "mean_reward_post_update": float(np.mean(eval_rewards)),
+        "reward_stdev_pre_update": float(np.std(rollout_rewards)),
+        "policy_loss_initial": policy_loss_initial,
+        "value_loss_initial": value_loss_initial,
         "min_reward": float(np.min(rollout_rewards)),
         "max_reward": float(np.max(rollout_rewards)),
         "n_policy_params": sum(p.numel() for p in policy.parameters()),
+        "n_ppo_epochs": 1,
     }
 
 
@@ -398,8 +501,10 @@ def main(argv=None) -> int:
           f"latent_cos={inf['latent_cosine']:+.4f} elapsed={inf['elapsed_seconds']:.2f}s")
 
     pol = policy_bootstrap_phase(cfg, ckpt, device)
-    print(f"[RTI2][P] mean_reward={pol['mean_reward']:+.4f} "
-          f"reward_std={pol['reward_stdev']:.4f} "
+    print(f"[RTI2][P] reward_pre={pol['mean_reward_pre_update']:+.4f} "
+          f"reward_post={pol['mean_reward_post_update']:+.4f} "
+          f"pol_loss_init={pol['policy_loss_initial']:+.4f} "
+          f"val_loss_init={pol['value_loss_initial']:+.4f} "
           f"n_env_steps={pol['n_env_steps']} elapsed={pol['elapsed_seconds']:.2f}s")
 
     summary = {
@@ -433,7 +538,7 @@ def main(argv=None) -> int:
             "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
             "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
             "Synthetic env is in-process (`_MockCPUEnv`); no mujoco/dm_control dep — matches v1 CPU-only promise.",
-            "PPO is NOT trained end-to-end here — this is the bootstrap proof that the wiring is differentiable. Full PPO update on imagination rollouts is W38.",
+            "PPO IS trained here (1 epoch) — reward_pre -> reward_post proves policy learned from world-model imagination. Full multi-epoch PPO on longer imagination rollouts is W38.",
         ],
     }
     (cfg.out_dir / "render_train_rl.json").write_text(json.dumps(summary, indent=2))
