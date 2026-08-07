@@ -741,3 +741,58 @@ def test_ema_target_preserved_across_outer_loop_boundary(tmp_path: Path) -> None
         f"target_state == encoder_state after outer loop "
         f"(max diff {max_diff:.2e}) — EMA was reset, not preserved"
     )
+
+
+def test_load_tiny_checkpoint_exposes_target_when_persisted(tmp_path: Path) -> None:
+    """``load_tiny_checkpoint`` must expose ``bundle["target"]`` when
+    the on-disk payload carries ``target_state`` (v2.9+).
+
+    The v2.10 orchestrator depends on this: the outer loop reads
+    ``bundle["target"]`` instead of rebuilding from the online
+    encoder. Without this hook, the EMA's slow-moving bias would
+    be silently dropped at the train -> outer loop boundary.
+
+    Set up a synthetic checkpoint with target_state distinct from
+    encoder_state, then load via the helper and verify:
+    1. ``"target" in bundle``
+    2. The loaded target's weights match the persisted target_state
+       (within float32 precision).
+    3. The loaded target is in eval mode with requires_grad=False.
+    """
+    from worldfoundry_train.model.tiny_jepa import TinyActionConditionedPredictor, TinyPixelDecoder, TinyVJEPA2Encoder
+    from worldfoundry_train.ema_compat import save_tiny_checkpoint
+
+    CFG = TinyEncoderConfig(image_size=32, patch_size=8, embed_dim=32, depth=2, num_heads=2)
+    enc = TinyVJEPA2Encoder(CFG)
+    pred = TinyActionConditionedPredictor(CFG, action_dim=3)
+    dec = TinyPixelDecoder(CFG)
+    target = TinyVJEPA2Encoder(CFG)
+    # Make target visibly different from encoder so the test is
+    # meaningfully distinct from "all weights are init zeros".
+    target_state = {k: v.detach().clone() + 0.01 for k, v in enc.state_dict().items()}
+    target.load_state_dict(target_state)
+    opt = torch.optim.AdamW(enc.parameters(), lr=1e-3)
+    path = save_tiny_checkpoint(
+        tmp_path / "ck.pt", encoder=enc, predictor=pred, decoder=dec,
+        optimizer=opt, step=1, target=target,
+    )
+    bundle = load_tiny_checkpoint(path, device="cpu")
+
+    # 1. target is exposed.
+    assert "target" in bundle, (
+        "load_tiny_checkpoint must expose bundle['target'] for v2.9+ "
+        "checkpoints that carry target_state"
+    )
+
+    # 2. Loaded target's weights match the persisted target_state.
+    loaded_target = bundle["target"]
+    target_state_persisted = torch.load(path, map_location="cpu", weights_only=False)["target_state"]
+    for k, v in target_state_persisted.items():
+        assert torch.allclose(loaded_target.state_dict()[k], v, atol=1e-7), (
+            f"loaded target weight {k} does not match persisted target_state"
+        )
+
+    # 3. Loaded target is in eval mode with frozen grads.
+    assert not loaded_target.training, "target must be in eval mode"
+    for p in loaded_target.parameters():
+        assert not p.requires_grad, "target must have requires_grad=False"
