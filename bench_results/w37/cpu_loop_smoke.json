@@ -1,0 +1,40 @@
+{
+  "label": "W37 v1 CPU RL training skeleton smoke",
+  "mode": "cpu",
+  "spec": "docs/dev/next-steps-phase4-atlas.md W37 row #17",
+  "task": {
+    "name": "manipulator:bring_ball",
+    "description": "dm_control 5-DoF planar arm brings a ball to a target position. drives the W37 CLI runner end-to-end on CPU.",
+    "env_class": "worldfoundry_rl.env_manipulator.ManipulatorEnv",
+    "env_kwargs": {
+      "task_kwargs": {
+        "random": 42
+      }
+    }
+  },
+  "config": {
+    "config_yaml": "worldfoundry_rl/configs/rl_manipulator_cpu.yaml",
+    "total_pool_steps": 192,
+    "seed": 42,
+    "parallel": "ddp"
+  },
+  "summary": {
+    "updates": 6,
+    "total_pool_steps": 192,
+    "total_env_steps": 768,
+    "device": "cpu",
+    "wall_seconds": 0.623,
+    "final_policy_loss": -0.0021109883673489094,
+    "final_value_loss": 0.003531397436745465,
+    "final_mean_episode_reward": 0.0
+  },
+  "notes": [
+    "W37 v1 CPU skeleton: env -> VisionPolicy -> PPO via YAML-driven CLI runner.",
+    "Mirrors worldfoundry_train/train.py surface (--config / --steps / --parallel).",
+    "Reuses worldfoundry_train.device.{resolve_device,to_device} (W20 .to('npu') seam).",
+    "Reuses worldfoundry_train.checkpoint.{save,load}_checkpoint with new rl_payload kwarg.",
+    "make_strategy('rl') is a DDPStrategy alias in v1 (single-process; no DDP wrap of PPO).",
+    "Reward/value curves reported but NOT enforced: manipulator:bring_ball's sparse reward produces noisy per-update returns.",
+    "Multi-rank + actor_pool/learner_pool/scheduler are W37+ (gated on W35 framework choice + Atlas cluster)."
+  ]
+}

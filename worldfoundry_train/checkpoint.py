@@ -274,6 +274,7 @@ def save_checkpoint(
     *,
     lora_signature: LoraSignature | None = None,
     jepa_objective: Any | None = None,
+    rl_payload: dict | None = None,
 ) -> Path:
     """Save trainable model state + optimizer state + RNG + step to .pt.
 
@@ -284,6 +285,12 @@ def save_checkpoint(
     (``predictor_state`` / ``ema_state`` / ``ema_step`` / ``jepa_signature``,
     see ``_OPTIONAL_JEPA_KEYS``) are added. The predictor never participates
     in FSDP (design §8.1), so its state_dict needs no FULL_STATE_DICT path.
+
+    ``rl_payload`` (W37, optional): when given, a top-level ``"rl_payload"``
+    key is added to the checkpoint. The dict is CPU-cloned at the leaves
+    via :func:`_cpu_clone_tree` (mirrors the JEPA pattern). v1 carries only
+    scalar metadata (e.g. ``{"total_env_steps": int}``); full env / Pool
+    state is W37+.
 
     Returns the resolved path.
     """
@@ -316,6 +323,9 @@ def save_checkpoint(
         payload["jepa_signature"] = dict(jepa_state["jepa_signature"])
         payload["jepa_hyperparams"] = dict(jepa_state["jepa_hyperparams"])
 
+    if rl_payload is not None:
+        payload["rl_payload"] = _cpu_clone_tree(rl_payload)
+
     if world_size > 1 and _is_fsdp_module(model) and rank != 0:
         return path
 
@@ -331,6 +341,7 @@ def load_checkpoint(
     *,
     map_location: str | torch.device = "cpu",
     jepa_objective: Any | None = None,
+    rl_payload: dict | None = None,
 ) -> dict[str, Any]:
     """Load .pt, restore trainable params + optimizer + RNG. Returns {step, lora_signature}.
 
@@ -339,6 +350,11 @@ def load_checkpoint(
     caller to disable jepa.enabled or train from scratch (design §7.4). The
     stored ``jepa_signature`` is validated against the live objective
     (architectural mismatch -> ValueError) before any state is restored.
+
+    ``rl_payload`` (W37, optional): caller may pass a dict to receive the
+    stored ``"rl_payload"`` key in-place. Absence is non-fatal — pre-W37
+    checkpoints simply leave the caller's dict untouched. No structural
+    validation (RL state is opaque metadata in v1).
 
     Raises:
         FileNotFoundError: path doesn't exist.
@@ -429,6 +445,11 @@ def load_checkpoint(
     }
     if "ema_step" in payload:
         result["ema_step"] = int(payload["ema_step"])
+    if "rl_payload" in payload:
+        result["rl_payload"] = payload["rl_payload"]
+        if rl_payload is not None:
+            rl_payload.clear()
+            rl_payload.update(payload["rl_payload"])
     return result
 
 

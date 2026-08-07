@@ -48,6 +48,9 @@ def make_strategy(profile: str = "train") -> "DistributedStrategy":
     - ``"fsdp"`` -> :class:`~worldfoundry_train.parallel.fsdp.FSDPStrategy`
     - ``"train"`` -> FSDPStrategy (legacy Phase-1 alias, kept for backward
       compatibility; new configs should use ``"ddp"`` / ``"fsdp"``)
+    - ``"rl"``   -> DDPStrategy (W37 v1 CPU skeleton; single-process mirror
+      of ``"ddp"`` — the profile name aligns with the RL workload but no
+      DDP wrapping of PPO is performed; multi-rank = W37+).
 
     Unknown names raise ValueError (fail-fast per G4) instead of silently
     returning a default.
@@ -58,8 +61,11 @@ def make_strategy(profile: str = "train") -> "DistributedStrategy":
     if profile in ("train", "fsdp"):
         from worldfoundry_train.parallel.fsdp import FSDPStrategy
         return FSDPStrategy()
+    if profile == "rl":
+        from worldfoundry_train.parallel.ddp import DDPStrategy
+        return DDPStrategy()
     raise ValueError(
-        f"unknown profile: {profile!r}; expected 'ddp', 'fsdp' or legacy 'train'"
+        f"unknown profile: {profile!r}; expected 'ddp', 'fsdp', 'rl' or legacy 'train'"
     )
 
 

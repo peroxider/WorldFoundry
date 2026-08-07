@@ -1,0 +1,55 @@
+# W37 v1 CPU RL training config — manipulator:bring_ball (dm_control).
+#
+# Drives `python -m worldfoundry_rl.train --config worldfoundry_rl/configs/rl_manipulator_cpu.yaml`.
+# Asset-free (no FrankaKitchen meshes), runs on a single CPU thread in <5s for
+# 192 pool-steps. Mirrors top-level keys of worldfoundry_train/configs/vjepa2_vitl_1.2b.yaml
+# for analyzer-ergonomics; JEPA-specific blocks replaced with RL blocks.
+#
+# Validation exit codes are handled by the CLI runner; this file is consumed
+# verbatim (no env-var overrides) on the v1 single-process path.
+
+env:
+  # env_class follows the format `package.module:ClassName` so the CLI can
+  # string-import without a separate registry. W36 ships a `RewardFn`
+  # Protocol but v1 uses the env's intrinsic reward and leaves the hook
+  # for W37+. `task_kwargs` is forwarded to dm_control's `suite.load` for
+  # reproducibility (see ManipulatorEnv docstring at env_manipulator.py:31-36).
+  type: worldfoundry_rl.env_manipulator:ManipulatorEnv
+  kwargs:
+    task_kwargs:
+      random: 42
+  num_envs: 4
+
+policy:
+  hidden_dim: 64
+  # encoder: state_mlp | cnn | vjepa2 — v1 implements state_mlp via
+  # VisionPolicy.from_state_dim. cnn / vjepa2 reserved for v2.
+  encoder: state_mlp
+
+ppo:                       # fields map directly to PPOConfig.__init__
+  rollout_steps: 32
+  epochs_per_update: 4
+  minibatch_size: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_ratio: 0.2
+  value_loss_coef: 0.5
+  entropy_coef: 0.01
+  max_grad_norm: 0.5
+  learning_rate: 3.0e-4
+  normalize_advantages: true
+
+training:
+  parallel: ddp              # v1 single-process; 'rl' is an accepted alias
+  total_pool_steps: 192       # 6 PPO updates @ rollout_steps=32
+  save_every_n: 0             # 0 = final-only for v1
+  log_every_n: 1
+
+# Optional data block mirrors the JEPA YAML so analyzers that expect
+# `data.manifest` etc. don't crash. Not consumed by the RL path.
+data:
+  manifest: null
+  mask_tubelet_size: [2, 14, 14]
+  mask_ratio: 0.75
+
+seed: 42
