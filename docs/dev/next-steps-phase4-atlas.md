@@ -531,6 +531,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 13 | W39 Phase-4 集成回归 | not yet | **proposed** | W37 + W38 |
 | 14 | W40 帧生成路线 ADR | `759dd28` | **done** | none |
 | 15 | W36 NPU worker 同构契约 | `f923170` | **done** | none (CPU-only doc) |
+| 16 | RTI v1 CPU 渲训推闭环 | `aede80b` | **done** | none (CPU-only, 无 HF 1.2B 下载) |
 
 **调度建议**：
 - ~~立刻可做（无 hardware 依赖）：#6, #14, #15（三个 design tasks）。~~ — 2026-08-06 三件 ADR 全 ship，phase-4 立刻可做桶 closed。
@@ -553,6 +554,21 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
   **预约 Atlas 硬件窗口**，入口仍是 #1 (W20 `.to("npu")` 迁移)。
   唯一的额外 CPU-side 动作是可选的 `mujoco` + `dm_control` 安装，装上后可把
   W31 的 FakeEnv 基线和 W34 的合成任务基线换成真实 FrankaKitchen 数字。
+- #16 RTI v1 (CPU 渲训推闭环) 已 ship（2026-08-07，`aede80b`）：把「渲染 →
+  训练 → 推理」在纯 CPU 上跑通，不依赖 HF V-JEPA 2 1.2B 下载、不依赖 Atlas。
+  - **Render** `worldfoundry_train/data/synthetic_video.py` +
+    `synthetic_manifest.py` —— cv2.VideoWriter 写确定性 `.mp4`（弹球 / 旋转条纹）
+    + Vjepa2Dataset 可直接消费的 CSV manifest（schema 未改）。
+  - **Train** `worldfoundry_train/model/tiny_jepa.py` —— TinyVJEPA2Encoder
+    （325k 参数，forward 接口对齐 HF `VJEPA2Model`）+ TinyJEPAPredictor（96k）
+    + TinyPixelDecoder（28k）；`ema_compat.py` 提供常动量 EMA + 原子 checkpoint。
+  - **Inference** 用训练好的 pixel decoder 把 predictor 的 masked-token 预测
+    渲回像素，与 GT 并排出 PNG，cosine 相似度作质量探针。
+  - 入口：`bash scripts/render_train_inference_cpu.sh`（2 gate：pytest +
+    orchestrator）。实测 8 clips × 4 帧 @64×64 / 50 步单 CPU：render 0.09s、
+    train 4.01s（loss 44.20 → 11.05）、inference 0.19s、recon_cosine 0.7554。
+  - 与 W40 Route A（轻量 pixel decoder）一致；是 #12 W38 (imagination rollout)
+    的 CPU 前置件——W38 可直接复用 TinyJEPAPredictor + TinyPixelDecoder。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
