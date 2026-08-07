@@ -45,7 +45,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | 1 | **W20 — 训练链路 `.to("npu")` 迁移 + Atlas 单卡 LoRA smoke** | G1 | Atlas single-card | ½ session | low | ✅ done this session (CPU prep; Atlas 上机待硬件) |
 | 2 | **W26 — `_patch_quantized_loader` 实现 + Atlas 上机** | G11 (partial) | Atlas single-card | ~1 session | low | ✅ done this session (CPU prep; Atlas 上机待硬件) |
 | 3 | **W21 — 8 卡 FSDP 上机 + 多卡 checkpoint save** | G1, G4 | Atlas 8×NPU | ~1 session (after #1) | medium |
-| 4 | **W27 — vLLM-Ascend worker Atlas e2e 验证** | G11 | Atlas single-card | ~½ session (after #2) | low |
+| 4 | **W27 — vLLM-Ascend worker Atlas e2e 验证** | G11 | Atlas single-card | ~½ session (after #2) | low | ✅ done this session (CPU prep; Atlas e2e 待硬件) |
 | 5 | **W29 — Phase-3 集成回归** | G1–G10 regression | Atlas 8×NPU | ~1 session (after #1, #3) | medium |
 | 6 | **W30 — 仿真环境选型 ADR (MuJoCo / SAPIEN / CARLA)** | G6 前置 | none (design) | ~1 session | low | ✅ done this session |
 | 7 | **W35 — RL 框架 ADR 验证门 (verl / RLinf / 自研)** | G6, G7, G14 | partial (verl on NPU) | ~1–2 sessions | medium | W35.2 CPU ✅ / W35.1 待 Atlas |
@@ -231,6 +231,25 @@ Atlas 8×NPU 上跑 FSDP 8 卡 LoRA 微调；checkpoint save/resume 签名校验
 
 ### Blocked-on
 - **W20 + W26**（NPU 加载 + 量化加载是 e2e 的前提）。
+
+### CPU-only prep (do while waiting for hardware)
+- ✅ NPU worker stub parity 测试，保证 Atlas 上机时「NPU 路径契约与 CPU
+  路径一致」，不必等硬件就能 catch 一类整类潜在 bug。**2026-08-07 ship**：
+  `worldfoundry_inf/vllm_ascend_worker.py` 新增 `predict_action_conditioned_batch`
+  stub（CPU sister 在 `vjepa2_worker.py:358` 早已实现，NPU 路径之前完全缺失——
+  5 个 batched / temporal / action-conditioned predict 方法在 NPU 路径上
+  之前只暴露 4 个，W33 batcher surface 不闭合；新增 stub 与现有 4 个 stub
+  一致：`raise NotImplementedError("... deferred to Atlas pilot (roadmap G11)")`）
+  + `worldfoundry_inf/tests/test_vllm_ascend_worker_parity.py`（新，19 个
+  CPU 单元测试）：(1) `inspect.signature` 跨类对比 5 个 parity method
+  的参数 (kind, default, annotation) + return annotation 严格相等（参数重命名
+  / 重排 / 漏标 return 都会失败）；(2) 参数顺序逐项匹配（dispatch 走 positional
+  args）；(3) 每个 stub 调用都 raise NotImplementedError 含 "Atlas pilot"（防止
+  未来 refactor 把它意外接成 eager CPU fallback，defeat the Atlas-pilot gate）；
+  (4) 即使 `load_model` 真实跑过，stub 仍然 raise（regression guard）；
+  (5) `predict_action_conditioned_batch` 的 NPU 签名精确等于 CPU 签名
+  + CPU 端签名 introspectable smoke。CPU 现有 109 个 `worldfoundry_inf/tests/`
+  测试不退化（161 全绿，1 skip 是原有）。ruff check 干净。
 
 ### Estimated effort
 **~½ session**（前提项完成后）。

@@ -241,3 +241,27 @@ class VJEPA2NPUWorker(_resolve_base_class()):
             "(roadmap G11); use the CPU VJEPA2Worker for the predictor "
             "module while the inference bundle is being built."
         )
+
+    @torch.no_grad()
+    def predict_action_conditioned_batch(
+        self,
+        videos: list[torch.Tensor],
+        actions_per_sample: list[torch.Tensor],
+        past_frames_list: list[int],
+        future_frames_list: list[int],
+    ) -> list[tuple[torch.Tensor, float]]:
+        """NPU-accelerated W33 batched action-conditioned prediction.
+
+        Sister to :meth:`predict_temporal_batch`. The CPU sister at
+        :meth:`worldfoundry_inf.vjepa2_worker.VJEPA2Worker.predict_action_conditioned_batch`
+        is fully implemented; the NPU path is deferred to the Atlas pilot
+        for the same reason as :meth:`predict_action_conditioned`. Adding
+        the stub now keeps the surface parity that
+        ``test_vllm_ascend_worker_parity`` asserts, so the Atlas wiring is
+        contract-correct the moment a worker class lands.
+        """
+        raise NotImplementedError(
+            "W33 NPU batched action-conditioned path deferred to Atlas pilot "
+            "(roadmap G11); use the CPU VJEPA2Worker for batched "
+            "action-conditioned inference."
+        )
