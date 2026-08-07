@@ -633,6 +633,18 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     - `test_orchestrator_handles_single_outer_iter`：n_iters=1 边界
       是否产出 1-iter trajectory + reward_trend_delta=0.0（不静默跳过）
     34 tests 兜底 loop（v2.5 32 → v2.6 34）。
+  - **v2.7 (`998ab0e`)**: 磁盘 checkpoint schema pin——`load_tiny_checkpoint`
+    helper 隐藏了 v2 磁盘契约（auto-dispatch 根据 `_action_proj.weight`
+    选 predictor 子类）。新增 `test_saved_checkpoint_uses_v2_on_disk_schema`：
+    用 plain `torch.load`（无 helper）打开 orchestrator 写出的
+    `tiny_jepa_v2.pt`，断言：
+    - 9 个顶层键必齐（step / encoder_state / predictor_state /
+      decoder_state / optimizer_state / rng_state_torch /
+      rng_state_numpy / encoder_config / predictor_config）
+    - predictor_state 含 `_action_proj.weight`（v2 marker）
+    - encoder_config == predictor_config（共享架构指纹）
+    35 tests 兜底 loop（v2.6 34 → v2.7 35）。外部迁移脚本 /
+    非 helper 工具可读 v2 ckpt 而无需依赖 `load_tiny_checkpoint`。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
