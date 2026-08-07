@@ -509,3 +509,110 @@ def test_saved_checkpoint_uses_v2_on_disk_schema(tmp_path: Path) -> None:
         "architectural fingerprint (the predictor is built from the "
         "encoder's config)"
     )
+
+
+# ---------------------------------------------------------------------------
+# End-to-end determinism: same seed -> same numerical metrics
+# ---------------------------------------------------------------------------
+
+
+def _numerical_metrics(summary: dict) -> dict:
+    """Flatten the summary down to the numerical fields that should be
+    deterministic under the same seed.
+
+    Excludes elapsed_seconds (wall-clock) and any per-iter timing.
+    Keeps final losses, policy rewards, per-iter losses, and reward
+    trajectory vectors.
+    """
+    out: dict = {}
+    tr = summary["train"]
+    for k in ("final_total_loss", "final_jepa_loss",
+             "final_recon_loss", "final_act_align"):
+        out[f"train.{k}"] = tr[k]
+    inf = summary["inference"]
+    out["inference.recon_cosine"] = inf["recon_cosine"]
+    out["inference.latent_cosine"] = inf["latent_cosine"]
+    pol = summary["policy_bootstrap"]
+    for k in ("mean_reward_pre_update", "mean_reward_post_update",
+             "policy_loss_initial", "policy_loss_final"):
+        out[f"policy.{k}"] = pol[k]
+    outer = summary["outer_loop"]
+    out["outer.reward_trend_delta"] = outer["reward_trend_delta"]
+    out["outer.reward_trajectory"] = list(outer["reward_trajectory"])
+    for i, it in enumerate(outer["per_iter"]):
+        for k in ("mean_wm_total_loss", "final_wm_total_loss",
+                 "reward_pre_update", "reward_post_update",
+                 "policy_loss_initial", "policy_loss_final"):
+            out[f"outer.per_iter[{i}].{k}"] = it[k]
+    return out
+
+
+def test_orchestrator_is_deterministic_under_same_seed(tmp_path: Path) -> None:
+    """Two orchestrator runs with the same seed produce the same metrics.
+
+    This is the strongest reproducibility signal: not just per-component
+    determinism (already covered by `test_bouncing_ball_is_deterministic`
+    and friends), but the full 5-phase pipeline producing matching
+    losses, rewards, and per-iter trajectories.
+
+    Tolerance: 1e-5 absolute. The cpu-only orchestrator uses
+    deterministic numpy RNGs (np.random.default_rng) and torch ops on
+    CPU which are deterministic up to float32 reduction-order noise.
+    If a refactor introduces nondeterministic ops (cuBLAS, async
+    kernels), this test will fail and the regression will be caught.
+    """
+    out_a = tmp_path / "run_a"
+    out_b = tmp_path / "run_b"
+    out_a.mkdir()
+    out_b.mkdir()
+
+    cmd = [
+        sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+        "--num-clips", "2", "--frames-per-clip", "4",
+        "--height", "32", "--width", "32", "--num-steps", "4",
+        "--ppo-env-steps", "8", "--num-outer-iters", "2",
+        "--num-train-per-iter", "2", "--seed", "42",
+    ]
+
+    proc_a = subprocess.run(
+        [*cmd, "--out-dir", str(out_a)], cwd=REPO_ROOT,
+        capture_output=True, text=True, timeout=600,
+    )
+    proc_b = subprocess.run(
+        [*cmd, "--out-dir", str(out_b)], cwd=REPO_ROOT,
+        capture_output=True, text=True, timeout=600,
+    )
+    assert proc_a.returncode == 0, proc_a.stderr[-3000:]
+    assert proc_b.returncode == 0, proc_b.stderr[-3000:]
+
+    summary_a = json.loads((out_a / "render_train_rl.json").read_text())
+    summary_b = json.loads((out_b / "render_train_rl.json").read_text())
+
+    # Non-numerical fields should match exactly (config, paths, keys).
+    # out_dir is excluded because each run writes to a different tmp path.
+    cfg_a = {k: v for k, v in summary_a["config_serializable"].items() if k != "out_dir"}
+    cfg_b = {k: v for k, v in summary_b["config_serializable"].items() if k != "out_dir"}
+    assert cfg_a == cfg_b
+    assert summary_a["outer_loop"]["n_iters"] == summary_b["outer_loop"]["n_iters"]
+    assert len(summary_a["outer_loop"]["per_iter"]) == len(
+        summary_b["outer_loop"]["per_iter"]
+    )
+
+    # Numerical fields should match within tight tolerance.
+    metrics_a = _numerical_metrics(summary_a)
+    metrics_b = _numerical_metrics(summary_b)
+    assert set(metrics_a) == set(metrics_b), (
+        f"metric key mismatch: {set(metrics_a) ^ set(metrics_b)}"
+    )
+
+    for k in metrics_a:
+        va, vb = metrics_a[k], metrics_b[k]
+        if isinstance(va, list):
+            for i, (xa, xb) in enumerate(zip(va, vb)):
+                assert abs(xa - xb) <= 1e-5, (
+                    f"{k}[{i}] mismatch: {va} vs {vb}"
+                )
+        else:
+            assert abs(va - vb) <= 1e-5, (
+                f"{k} mismatch: {va} vs {vb}"
+            )

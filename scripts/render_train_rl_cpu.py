@@ -681,6 +681,13 @@ def main(argv=None) -> int:
         ppo_env_steps=args.ppo_env_steps, num_ppo_epochs=args.num_ppo_epochs,
     )
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    # Seed torch's global RNG and numpy's legacy RNG so the
+    # orchestrator is reproducible across processes. Per-component
+    # numpy RNGs (np.random.default_rng) are already seeded via
+    # cfg.seed, but torch ops that use the global RNG state (model
+    # init, dropout, etc.) need an explicit seed to be deterministic.
+    torch.manual_seed(cfg.seed)
+    np.random.seed(cfg.seed)
     device = resolve_device()
 
     manifest, render_t = render_phase(cfg)
