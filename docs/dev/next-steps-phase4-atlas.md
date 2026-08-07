@@ -42,7 +42,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 
 | # | Task | Closes | Hardware | CPU-only prep | Risk |
 |---|---|---|---|---|---|
-| 1 | **W20 — 训练链路 `.to("npu")` 迁移 + Atlas 单卡 LoRA smoke** | G1 | Atlas single-card | ½ session | low |
+| 1 | **W20 — 训练链路 `.to("npu")` 迁移 + Atlas 单卡 LoRA smoke** | G1 | Atlas single-card | ½ session | low | ✅ done this session (CPU prep; Atlas 上机待硬件) |
 | 2 | **W26 — `_patch_quantized_loader` 实现 + Atlas 上机** | G11 (partial) | Atlas single-card | ~1 session | low |
 | 3 | **W21 — 8 卡 FSDP 上机 + 多卡 checkpoint save** | G1, G4 | Atlas 8×NPU | ~1 session (after #1) | medium |
 | 4 | **W27 — vLLM-Ascend worker Atlas e2e 验证** | G11 | Atlas single-card | ~½ session (after #2) | low |
@@ -98,10 +98,20 @@ steps LoRA 微调，loss 曲线正常下降。W20 是 G1 的物理前提。
 - **Atlas 硬件窗口**（预约）。
 
 ### CPU-only prep (do while waiting for hardware)
-- 起草 `.to("npu")` 的设备迁移点 PR（默认 `device = "cpu"` until
+- ✅ 起草 `.to("npu")` 的设备迁移点 PR（默认 `device = "cpu"` until
   `is_npu_available()`），让 PR 本身可在 CPU 上 CI 跑通（`is_npu_available`
-  永远 False 的路径）。
-- 写 `tests/test_npu_trainer.py` 的 mock 版。
+  永远 False 的路径）。**2026-08-07 ship**：`worldfoundry_train/device.py`
+  （`resolve_device` + `to_device` + `is_npu_available` proxy；不重复
+  `npu_env.py`，因为 `worldfoundry_common.npu_env.is_npu_available()`
+  已存在——按 G8）+ `worldfoundry_train/trainer.py` 注入迁移点
+  （`strategy.wrap` 之后立刻 `model = to_device(model, resolve_device())`，
+  JEPA 时也迁 predictor；print 一行 `[TRAIN] device=... npu_available=...`
+  让迁移可见）+ `worldfoundry_train/tests/test_npu_trainer.py`（12 个单元
+  测试：`resolve_device` CPU/NPU/override/env-var 路径 + 失败态 +
+  `to_device` 调 `Module.to` + 不接受 unknown 设备 + chainable + 端到端
+  `run_training` spy 验证迁移点真的发生在 `strategy.wrap` 之后）。
+  CPU 路径字节级不变（现有 392 个 trainer 测试不退化），新加 12 个。
+- ✅ 写 `tests/test_npu_trainer.py` 的 mock 版（已含在上一条交付里）。
 
 ### Out of scope
 - 8 卡 FSDP（W21）。
@@ -468,7 +478,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 
 | # | Task | Committed on master? | Status | Blocked-on |
 |---|---|---|---|---|
-| 1 | W20 `.to("npu")` + Atlas 单卡 LoRA smoke | not yet | **proposed** | Atlas single-card |
+| 1 | W20 `.to("npu")` + Atlas 单卡 LoRA smoke | `<hash this session>` | **CPU prep done; Atlas 上机待硬件** | Atlas single-card |
 | 2 | W26 W8A8 量化加载器 | not yet | **proposed** | Atlas single-card |
 | 3 | W21 8 卡 FSDP 上机 | not yet | **proposed** | W20 |
 | 4 | W27 vLLM-Ascend worker e2e | not yet | **proposed** | W20 + W26 |
@@ -494,12 +504,14 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
   （FrankaKitchenReward + LatentDistanceReward）+ 25 个单元测试。
 - #9 W34 (PPO) 已 ship（2026-08-06）：`worldfoundry_rl/ppo.py` + 34 个单元测试
   + 6-seed learning-curve baseline。**Phase-4 CPU-only 实现桶清空**——`#6/#14/#15/#7/#8/#9/#11`
-  七件不需 Atlas 的实现 / ADR / 设计项全部 ship。CPU 上仍可做的不是 "实现"
-  而是**两项预备**：(a) `#1 W20` 的 `.to("npu")` PR + `tests/test_npu_trainer.py`
-  mock 版（`is_npu_available()` 永远 False 的路径上 PR 本身 CI 跑通，见第 100-104 行）；
-  (b) `#2 W26` 的 `_patch_quantized_loader` 实现 + CPU 单元测试（精度回归对比，
-  见第 145-147 行）。两项均在等 Atlas 硬件窗口做最终上机。其余未完成项（#1/#2 上机、
-  #3/#4/#5、#10/#12/#13、#7 的 W35.1/W35.4）无一可在 CPU 上推进——下一步是
+  七件不需 Atlas 的实现 / ADR / 设计项全部 ship。
+  2026-08-07 更新：CPU 上仅剩**一项预备**：(a) `#1 W20` 的 `.to("npu")`
+  PR + `tests/test_npu_trainer.py` mock 版（`is_npu_available()` 永远 False
+  的路径上 PR 本身 CI 跑通，见第 100-104 行）——**今日 ship**。
+  剩下的：(b) `#2 W26` 的 `_patch_quantized_loader` 实现 + CPU 单元测试
+  （精度回归对比，见第 145-147 行）。两项均在等 Atlas 硬件窗口做最终上机。
+  其余未完成项（#1/#2 上机、#3/#4/#5、#10/#12/#13、#7 的 W35.1/W35.4）
+  无一可在 CPU 上推进——下一步是
   **预约 Atlas 硬件窗口**，入口仍是 #1 (W20 `.to("npu")` 迁移)。
   唯一的额外 CPU-side 动作是可选的 `mujoco` + `dm_control` 安装，装上后可把
   W31 的 FakeEnv 基线和 W34 的合成任务基线换成真实 FrankaKitchen 数字。
@@ -535,4 +547,16 @@ move to the bottom of the queue.
   （合成 reach 任务 6 seed learning curve：约 -21 → -1~-5，全部 seed 收敛；
   这是 W35 框架 bake-off 的正确性基线，**不是**真实环境或 Atlas 基线）。
   `pytest worldfoundry_rl/tests/` 82/82；全仓 594 passed / 1 skipped。
+- **W20 CPU prep (G1 物理前提)**: `worldfoundry_train/device.py`（`resolve_device`
+  + `to_device` + `is_npu_available` proxy；显式不创建重复的
+  `npu_env.py`，按 G8 重用 `worldfoundry_common.npu_env.is_npu_available()`）
+  + `worldfoundry_train/trainer.py` 注入 `.to(device)` 迁移点
+  （`strategy.wrap(peft_model)` 之后立刻 `model = to_device(model, resolve_device())`，
+  JEPA 时也迁 predictor；print `[TRAIN] device=... npu_available=...` 一行
+  让迁移可见）+ `worldfoundry_train/tests/test_npu_trainer.py`（12 个 mock 测试
+  含端到端 `run_training` spy 验证迁移点真在 `strategy.wrap` 之后发生）。
+  CPU 路径字节级不变——`pytest worldfoundry_train/tests/` 392/392；全仓
+  606 passed / 1 skipped，无回归。剩余的 Atlas 上机步骤
+  （`scripts/w20_atlas_smoke.sh` 5/100 step smoke +
+  `bench_results/atlas_baseline/single_card.json`）等硬件窗口。
 - Phase-3 final HEAD: `c9e7197` (W32)

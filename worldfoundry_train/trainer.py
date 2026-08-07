@@ -24,6 +24,7 @@ from worldfoundry_train.checkpoint import (
 from worldfoundry_train.data.collator import collate_vjepa2_batch
 from worldfoundry_train.data.dataset import Vjepa2Dataset
 from worldfoundry_train.data.tubelet_mask import tubelet_mask
+from worldfoundry_train.device import resolve_device, to_device
 from worldfoundry_train.jepa_objective import JEPAObjective, PredictorGradSyncStrategy
 from worldfoundry_train.model.lora_wrapper import build_lora_model
 from worldfoundry_train.model.predictor import JEPAPredictor
@@ -313,6 +314,21 @@ def run_training(
         )
 
     model = strategy.wrap(peft_model)
+    # --- W20 device migration ---
+    # Resolve the training device once and migrate the wrapped model
+    # (and the JEPA predictor, which lives outside the DDP/FSDP wrap)
+    # onto it. On a CPU-only host `resolve_device()` returns "cpu" and
+    # `to_device` is a no-op aside from a single `.to("cpu")` call; the
+    # surrounding test suite continues to pass unchanged. On an Atlas
+    # box the same code path migrates onto `torch.npu`. Visibility of
+    # the resolved device in the log is part of the contract: a missing
+    # `[TRAIN] device=...` line means the migration was bypassed.
+    device = resolve_device()
+    model = to_device(model, device)
+    if jepa_objective is not None:
+        to_device(jepa_objective.predictor, device)
+    from worldfoundry_train.device import is_npu_available as _is_npu
+    print(f"[TRAIN] device={device} npu_available={_is_npu()}")
     if jepa_objective is not None:
         # W22.6: EMA gather-then-update needs the wrapped (maybe FSDP) model
         # (design §5.4); predictor grads live outside the DDP/FSDP wrap and
