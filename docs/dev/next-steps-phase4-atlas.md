@@ -43,7 +43,7 @@ c9e7197  feat(w32): AC latent-action head (actor.predict_latent_action)  ← HEA
 | # | Task | Closes | Hardware | CPU-only prep | Risk |
 |---|---|---|---|---|---|
 | 1 | **W20 — 训练链路 `.to("npu")` 迁移 + Atlas 单卡 LoRA smoke** | G1 | Atlas single-card | ½ session | low | ✅ done this session (CPU prep; Atlas 上机待硬件) |
-| 2 | **W26 — `_patch_quantized_loader` 实现 + Atlas 上机** | G11 (partial) | Atlas single-card | ~1 session | low |
+| 2 | **W26 — `_patch_quantized_loader` 实现 + Atlas 上机** | G11 (partial) | Atlas single-card | ~1 session | low | ✅ done this session (CPU prep; Atlas 上机待硬件) |
 | 3 | **W21 — 8 卡 FSDP 上机 + 多卡 checkpoint save** | G1, G4 | Atlas 8×NPU | ~1 session (after #1) | medium |
 | 4 | **W27 — vLLM-Ascend worker Atlas e2e 验证** | G11 | Atlas single-card | ~½ session (after #2) | low |
 | 5 | **W29 — Phase-3 集成回归** | G1–G10 regression | Atlas 8×NPU | ~1 session (after #1, #3) | medium |
@@ -153,8 +153,26 @@ steps LoRA 微调，loss 曲线正常下降。W20 是 G1 的物理前提。
 - **Atlas 硬件窗口**（W20 之后；不需要等 FSDP，单卡即可）。
 
 ### CPU-only prep
-- 实现 `_patch_quantized_loader` 本身（逻辑不依赖 NPU）。
-- CPU 单元测试 + 精度回归对比。
+- ✅ 实现 `_patch_quantized_loader` 本身（逻辑不依赖 NPU）。
+- ✅ CPU 单元测试 + 精度回归对比。**2026-08-07 ship**：
+  `worldfoundry_inf/quantize.py`（`pack_w8a8_weight` / `unpack_w8a8_weight`
+  per-output-channel 对称 int8 + `pack_w8a8_activation` /
+  `unpack_w8a8_activation` per-tensor 对称 int8 + `pack_linear` /
+  `unpack_linear` 别名 + `load_quant_meta` / `is_w8a8_quantized` sidecar 读取
+  + `ACCEPTANCE_MSE_THRESHOLD = 1e-3` round-trip 验收门；公开 API 与
+  `worldfoundry_inf.compile.quantize` facade 严格分开 — G8 避免重复模块，
+  二者负责 write vs read 不同职责）+ 替换 `_vllm_ascend_plugin.py
+  ::_patch_quantized_loader` stub 为真实实现（lazy import `worldfoundry_inf.quantize`，
+  通过 `quant_meta.json` sidecar 检测 W8A8 → 注册 vLLM ModelRegistry
+  `register_model_loader` hook，weights_iterator 在遇到 int8 tensor + 邻接
+  scale（`_load_w8a8_scales` 读 safetensors）时调用 `unpack_linear` 解包；
+  非量化模型走默认 bf16 pass-through；malformed sidecar log + 退回 pass-through；
+  AttributeError（旧 vLLM 无 `register_model_loader`）/ 其它异常 swallow + log，
+  fail-soft per G4）+ `tests/test_quantize_loader.py`（28 个新单元测试：
+  pack/unpack round-trip MSE 验收、validation errors、sidecar IO、loader
+  hook 的 4 个 fail-soft 路径、closure 的 pass-through / unpack / missing-scale /
+  malformed-sidecar / missing-safetensors-lib 5 个分支）。CPU 现有 109 个
+  `worldfoundry_inf/tests/` 测试不退化（142 全绿，1 skip 是原有）。
 
 ### Estimated effort
 **~1 session**（CPU 实现 ½ session + Atlas 上机 ½ session）。
