@@ -393,13 +393,15 @@ def test_summary_json_has_full_rlinf_schema(tmp_path: Path) -> None:
 def test_video_extra_declares_every_hard_import_of_the_render_path() -> None:
     """`pip install -e .[dev,video]` must actually make the loop importable.
 
-    docs/dev/cpu-rti-quickstart.md tells a new user that `.[dev,video]`
-    is all they need. worldfoundry_train/data/synthetic_video.py does a
-    top-level, unguarded `import cv2`, so the orchestrator dies at import
-    -- before phase 1 -- without opencv. opencv-python was undeclared
-    until v2.13 and the quickstart only worked because the box image
-    happened to ship it; on a clean venv the documented command produced
-    an immediate ImportError.
+    docs/dev/cpu-rti-quickstart.md names `.[dev,video]` as the canonical
+    install for the Ascend image (the stock-CPU path uses `--no-deps`
+    + a manual minimal dep set). Either way,
+    worldfoundry_train/data/synthetic_video.py does a top-level,
+    unguarded `import cv2`, so the orchestrator dies at import — before
+    phase 1 — without opencv. opencv-python was undeclared until v2.13
+    and the quickstart only worked because the box image happened to
+    ship it; on a clean venv the documented Ascend-image command
+    produced an immediate ImportError.
 
     Guards the declaration rather than the installed env, so it stays
     meaningful on machines that already have cv2 present.

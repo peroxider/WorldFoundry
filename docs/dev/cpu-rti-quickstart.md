@@ -27,11 +27,46 @@ world model is shaped by the policy gradient.
 
 ## Prerequisites
 
+`pip install -e .[dev,video]` is the **Ascend image** install path.
+It declares `torch_npu==2.9.0` and pins `requires-python = "==3.11.*"`
+per the G2 version-matrix gate
+(`docs/superpowers/plans/2026-07-27-worldforge-phase1.md:18,151`), so
+it will **not** install on a stock CPU box — `torch_npu` has no PyPI
+wheels outside the Ascend driver, and a stock box's interpreter is
+usually Python 3.12 not 3.11.
+
+The loop itself only imports six things at runtime (no transformers,
+no peft, no fastapi, no HF download, no mujoco, no RL stack). On a
+stock CPU box, skip the base deps and install only what the loop
+actually uses:
+
 ```bash
-pip install -e .[dev,video]   # pytest + av + decord + opencv-python
+# 1. Install the project without resolving base deps — skips torch_npu
+#    (the hard dep on the Ascend driver), transformers/peft/accelerate/
+#    datasets (the HF stack the loop never touches), and fastapi/
+#    uvicorn/pydantic/otel (the web stack the loop never touches).
+pip install --no-deps -e .
+
+# 2. Install only what the CPU RTI loop imports at runtime:
+#    - torch + numpy<2.0   — tensor math + numerics
+#    - opencv-python       — synthetic_video.py imports cv2 at module top
+#    - decord + av         — video_source.py imports decord lazily;
+#                           av is the codec backend
+#    - pytest              — Gate 1 of the smoke
+pip install "torch" "numpy<2.0" "opencv-python>=4.8" "decord==0.6.0" "av==14.0.0" "pytest>=8.0"
 ```
 
-No NPU. No HF download. No mujoco. Runs on a stock CPU.
+On the Ascend image (`docker/worldfoundry-base/Dockerfile`) the
+canonical command is unchanged:
+
+```bash
+pip install -e .[dev,video]   # full G2-locked matrix
+```
+
+No NPU, no HF download, no mujoco, no Ray — the loop runs on a stock
+CPU. The Ascend-only base deps (`torch_npu`, `transformers`, `peft`,
+`accelerate`, `datasets`, the FastAPI/OTel web stack) are **declared**
+for the full matrix but are not touched by the CPU path.
 
 ## Run
 
