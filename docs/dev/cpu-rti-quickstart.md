@@ -158,7 +158,7 @@ within-iter reward gain instead.
 
 ## Tests
 
-42 tests back the loop:
+43 tests back the loop:
 
 ```bash
 pytest worldfoundry_train/tests/test_render_train_inference_cpu.py \
@@ -201,7 +201,7 @@ Highlights:
 | PPO update | `scripts/render_train_rl_cpu.py` | `policy_bootstrap_phase` |
 | Outer loop | `scripts/render_train_rl_cpu.py` | `iterative_loop_phase` |
 | Smoke shell | `scripts/render_train_rl_cpu.sh` | 2-gate runner |
-| Test suite | `worldfoundry_train/tests/test_render_train_rl_cpu.py` | 22 tests |
+| Test suite | `worldfoundry_train/tests/test_render_train_rl_cpu.py` | 23 tests |
 
 ## What this is NOT
 

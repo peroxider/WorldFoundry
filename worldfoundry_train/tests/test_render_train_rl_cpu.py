@@ -390,6 +390,35 @@ def test_summary_json_has_full_rlinf_schema(tmp_path: Path) -> None:
         assert k in pol, f"policy_bootstrap missing required key {k}"
 
 
+def test_video_extra_declares_every_hard_import_of_the_render_path() -> None:
+    """`pip install -e .[dev,video]` must actually make the loop importable.
+
+    docs/dev/cpu-rti-quickstart.md tells a new user that `.[dev,video]`
+    is all they need. worldfoundry_train/data/synthetic_video.py does a
+    top-level, unguarded `import cv2`, so the orchestrator dies at import
+    -- before phase 1 -- without opencv. opencv-python was undeclared
+    until v2.13 and the quickstart only worked because the box image
+    happened to ship it; on a clean venv the documented command produced
+    an immediate ImportError.
+
+    Guards the declaration rather than the installed env, so it stays
+    meaningful on machines that already have cv2 present.
+    """
+    import tomllib
+
+    pyproject = REPO_ROOT / "pyproject.toml"
+    video_extra = tomllib.loads(pyproject.read_text())[
+        "project"]["optional-dependencies"]["video"]
+
+    # Distribution name is opencv-python; the import name is cv2.
+    assert any(dep.lower().startswith("opencv-python") for dep in video_extra), (
+        "worldfoundry_train/data/synthetic_video.py hard-imports cv2, but the "
+        f"[video] extra does not declare opencv-python: {video_extra}. "
+        "A clean `pip install -e .[dev,video]` would leave the RTI loop "
+        "unimportable."
+    )
+
+
 def test_render_block_counts_match_manifest_on_disk(tmp_path: Path) -> None:
     """`render.n_clips` / `render.n_frames` must agree with the manifest CSV.
 
