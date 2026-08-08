@@ -711,6 +711,51 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     刻意**不**断言 `reward_trend_delta` 的符号——那会是一个断言
     "loop 在此规模下并不具备的性质" 的 flaky test。
     42 tests（v2.11 19 → v2.12 22，含 v1 文件 20）；ruff clean。
+  - **v2.13 (`f73f001`)**: 文档"setup 一行 install 即可"漏声明 `opencv-python`。
+    PYTHONPATH shadow（`/tmp/nocv2/cv2.py` raise `ImportError`）证明
+    `worldfoundry_train/data/synthetic_video.py:1` 的顶层
+    `import cv2` 无 guard——没装 opencv 时 orchestrator 在 phase 1
+    之前就 import 死。原 quickstart 只 work 是因为 box image 恰好装
+    opencv 4.13.0；clean venv 跑 `pip install -e .[dev,video]` 立刻
+    `ImportError: No module named cv2`。fix：把 `opencv-python>=4.8`
+    加进 `pyproject.toml [video]` extra（已有 `av==14.0.0` +
+    `decord==0.6.0`；opencv 同理必须在 video extra 里，否则单装
+    `.[video]` 仍 crash）。guard 测试
+    `test_video_extra_declares_every_hard_import_of_the_render_path`：
+    `tomllib.loads(pyproject.read_text())` 读 `[video]`，
+    断言 `opencv-python` 出现；guard declaration 而非 installed env，
+    在已有 cv2 的 box 上仍 meaningful。43 tests
+    （v2.12 42 → v2.13 43，v2 文件 22→23，v1 文件 20）。
+    ruff clean。Guard 测试本身**非** tautological：回滚
+    `[video]` → 删 opencv-python 行 → red；restore → green。
+  - **v2.14 (`6b4ebd2`)**: Prereq 文档误导 stock CPU 用户。
+    `cpu-rti-quickstart.md:30-34` 原文让 user 跑
+    `pip install -e .[dev,video]`，但 `pyproject.toml` base deps 硬
+    要求 `torch_npu==2.9.0`（无 PyPI wheel outside Ascend driver，
+    `importlib.util.find_spec` 报告 MISSING）和
+    `requires-python = "==3.11.*"`（实测 interpreter 3.12.3）——
+    stock CPU 机器根本装不上。pyproject 是 G2 锁定的（spec
+    `2026-07-27-worldforge-phase1.md:18,151` + Dockerfile
+    `docker/worldfoundry-base/Dockerfile:53`），改 torch_npu/扩
+    requires-python 会破门禁——所以**不动 pyproject**。
+    真问题是文档：原 quickstart 只 work 是因为 box image 把全部
+    base deps 装好了，"`.[dev,video]` 即入口" 把这条隐式假设
+    暴露成了事实。
+    PYTHONPATH-shadow 实测 loop 运行时只 import `torch` /
+    `numpy<2.0` / `opencv-python` / `decord` / `av`——shadow 其余
+    9 个 base deps（transformers / peft / accelerate / datasets /
+    fastapi / uvicorn / pydantic / prometheus_client /
+    opentelemetry）orchestrator 仍 end-to-end 跑通，summary JSON
+    完整（`render.n_clips=4, n_frames=16, n_encoder_params=24416`）。
+    rewrite `cpu-rti-quickstart.md` Prereq：明确 `.[dev,video]` 是
+    Ascend image 路径（`docker/worldfoundry-base/Dockerfile`），
+    stock CPU 用 `pip install --no-deps -e .` + 仅装上述 5+1 包。
+    同步更新
+    `test_video_extra_declares_every_hard_import_of_the_render_path`
+    docstring——它仍 guard Ascend-image install path
+    (`.[dev,video]` 必须 declare opencv-python)。G2 锁定项不动；
+    ruff clean；doc-only change 验证：`render_train_rl.json`
+    summary 与 v2.13 同 seed run 一致（n_clips=4 / n_frames=16）。
 
 > 注：标号 "W36" 在本候选表里同时出现两次——#11（项目 canonical W36 =
 > Reward model 接口 / G9）与 #15（pre-Atlas NPU parity 契约 / G11），
