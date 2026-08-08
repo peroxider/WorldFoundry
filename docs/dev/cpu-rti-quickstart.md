@@ -243,10 +243,19 @@ Highlights:
 - **Not a faithful V-JEPA 2 1.2B reproduction.** The tiny stack is
   interface-compatible (same forward signature, same mask semantics)
   but the encoder is 24k params, not 1.2B.
-- **Not a real MuJoCo/dm_control rollout.** The CPU env is an
+- **Mock env by default.** `--env=mock` (the v2.x default) is an
   in-process random agent whose reward is `-||state||² - 0.1*||action||²`.
-  The state dimension is `--obs-dim` (default 8), not a real
-  FrankaKitchen observation.
+  State dimension is `--obs-dim` (default 8). Opt-in to a real
+  MuJoCo 9-DoF manipulation env via `--env=franka_kitchen` —
+  see `worldfoundry_rl/env_franka_kitchen.py` for the dm_control.
+  manipulation backend (Kinova Jaco arm, `lift_brick_features`
+  task by default; 9-dim action, 6-dim flat obs, real task reward).
+  The world model is **still** trained on synthetic cv2 video, not
+  on FrankaKitchen pixel observations — so the imagined latents
+  in the policy phase are a structured noise prior mixed 50/50
+  with real FrankaKitchen state, not a faithful FrankaKitchen
+  world model. Wiring the render phase to FrankaKitchen pixel
+  obs is a separate v2.16+ item.
 - **Not multi-process.** `actor_pool.py` / `learner_pool.py` /
   Ray / async rollouts are explicitly out of scope (cluster segment
   of W37). This is single-process, single-thread.
@@ -271,6 +280,8 @@ Highlights:
 | `--num-outer-iters` | 2 | world-model ↔ PPO iterations |
 | `--num-train-per-iter` | 10 | JEPA steps per outer iter |
 | `--seed` | 42 | base RNG seed |
+| `--env` | `mock` | `mock` (in-process random agent at ~3.5 s smoke) or `franka_kitchen` (real MuJoCo 9-DoF manipulation via dm_control.manipulation; smoke ~5-10 s) |
+| `--franka-task-name` | `lift_brick_features` | dm_control.manipulation task when `--env=franka_kitchen`. Other options: `reach_site_features`, `place_brick_features`, `stack_2_bricks_features` |
 
 ## See also
 

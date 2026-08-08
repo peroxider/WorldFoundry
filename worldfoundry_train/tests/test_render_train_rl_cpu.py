@@ -938,3 +938,69 @@ def test_load_tiny_checkpoint_exposes_target_when_persisted(tmp_path: Path) -> N
     assert not loaded_target.training, "target must be in eval mode"
     for p in loaded_target.parameters():
         assert not p.requires_grad, "target must have requires_grad=False"
+
+
+def test_orchestrator_runs_with_franka_kitchen_env(tmp_path: Path) -> None:
+    """The orchestrator must run end-to-end with --env=franka_kitchen.
+
+    v2.15 wires FrankaKitchenEnv (real MuJoCo 9-DoF manipulation via
+    dm_control.manipulation.lift_brick_features) into the policy phase.
+    This subprocess test pins that the wiring actually closes: the
+    orchestrator must produce a valid summary JSON with FrankaKitchen's
+    real task reward in policy_bootstrap.min_reward / max_reward, and
+    the ``notes`` block must reflect the env_type=franka_kitchen mode.
+
+    Skipped when dm_control isn't available (so the test still passes
+    on stock CPU boxes without the MuJoCo stack). Uses minimal step
+    counts to keep CI fast (~3-5 s for the FrankaKitchen path).
+    """
+    pytest.importorskip("dm_control")
+
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path),
+            "--num-clips", "4", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32",
+            "--num-steps", "4", "--ppo-env-steps", "4",
+            "--num-outer-iters", "1", "--num-train-per-iter", "2",
+            "--num-ppo-epochs", "1",
+            "--env", "franka_kitchen",
+            "--seed", "42",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, (
+        f"orchestrator --env=franka_kitchen rc={proc.returncode}\n"
+        f"stderr (tail): {proc.stderr[-2000:]}"
+    )
+
+    summary = json.loads((tmp_path / "render_train_rl.json").read_text())
+
+    # config_serializable must reflect the FrankaKitchen obs/action dims
+    cfg = summary["config_serializable"]
+    assert cfg["env_type"] == "franka_kitchen" or cfg.get("env_type") == "franka_kitchen", (
+        f"summary.config_serializable.env_type must be 'franka_kitchen', got {cfg.get('env_type')!r}"
+    )
+    assert cfg["obs_dim"] == 6, f"FrankaKitchen flat obs_dim must be 6, got {cfg['obs_dim']}"
+    assert cfg["action_dim"] == 9, f"FrankaKitchen action_dim must be 9, got {cfg['action_dim']}"
+
+    # Policy bootstrap must produce a real FrankaKitchen task reward
+    # (not the mock's -||state||² formula).
+    pol = summary["policy_bootstrap"]
+    assert "min_reward" in pol and "max_reward" in pol, (
+        "policy_bootstrap must expose min_reward / max_reward for FrankaKitchen"
+    )
+    assert pol["min_reward"] != 0.0 or pol["max_reward"] != 0.0, (
+        f"FrankaKitchen reward signal must be non-zero (real task reward); "
+        f"got min={pol['min_reward']}, max={pol['max_reward']}"
+    )
+
+    # Notes block must reflect the FrankaKitchen env (not _MockCPUEnv).
+    notes = " ".join(summary["notes"])
+    assert "dm_control.manipulation" in notes or "FrankaKitchen" in notes, (
+        f"notes must mention FrankaKitchen backend; got: {notes[:300]}"
+    )
+    assert "_MockCPUEnv" not in notes, (
+        f"notes must NOT mention _MockCPUEnv when env_type=franka_kitchen; got: {notes[:300]}"
+    )

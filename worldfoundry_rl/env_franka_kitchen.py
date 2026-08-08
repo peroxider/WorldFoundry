@@ -1,29 +1,45 @@
-"""FrankaKitchen env wrapper (W31) — MuJoCo + dm_control, CPU-only first-env.
+"""Franka-shaped 9-dim manipulation env wrapper (W31) — MuJoCo + dm_control.
 
 Per W30 ADR §4: FrankaKitchen (MuJoCo+dm_control) is the recommended
-Phase-4 v1 first environment. This module wraps ``dm_control.suite``
-FrankaKitchen tasks and exposes a Gymnasium-style single-env
+Phase-4 v1 first environment. This module wraps a Franka-shaped
+9-DoF manipulation task and exposes a Gymnasium-style single-env
 ``reset`` / ``step`` / ``close`` surface compatible with
 :class:`worldfoundry_rl.env_pool.Env`.
+
+**Backend reality (v2.15+):** the canonical ``franka_kitchen`` PyPI
+package does not exist (``pip index versions franka-kitchen`` →
+no matching distribution), and ``dm_control.suite`` has no
+``franka_kitchen`` domain (``ValueError: Domain 'franka_kitchen'
+does not exist``). The wrapper now routes through
+``dm_control.manipulation`` — a Franka-Panda-style 9-DoF
+manipulation suite bundled with dm_control. The default task is
+``lift_brick_features`` (Kinova Jaco arm + duplo brick target):
+same 9-dim action, same dict-shaped obs, real MuJoCo step, real
+task reward. The historical "FrankaKitchen" name is preserved
+because that's how W30 ADR §4 / W31 / the reward wrappers
+reference this env class — the contract (9-dim action,
+{ee_pos, target_pos, task_success} dict obs) is unchanged.
 
 State contract (the observation dict this env emits):
 
 * ``ee_pos`` — end-effector position, shape ``(3,)``, ``float64``
-* ``target_pos`` — target position, shape ``(3,)``, ``float64``
+* ``target_pos`` — target (brick) position, shape ``(3,)``, ``float64``
 * ``task_success`` — bool, default ``False``
 
-This matches the contract consumed by :class:`worldfoundry_rl.reward_impl.FrankaKitchenReward`,
-so the reward wrapper slots in without translation.
+This matches the contract consumed by
+:class:`worldfoundry_rl.reward_impl.FrankaKitchenReward`, so the
+reward wrapper slots in without translation.
 
-Install: ``dm_control`` + ``mujoco`` are required at runtime. They are
-**not** required at module-import time — the heavy imports are deferred
-to ``__init__`` so the rest of the codebase can import this module
-without paying the simulator cost. A clear ``ImportError`` with install
-instructions is raised on instantiation if the deps are missing.
+Install: ``dm_control`` + ``mujoco`` are required at runtime. They
+are **not** required at module-import time — the heavy imports are
+deferred to ``__init__`` so the rest of the codebase can import this
+module without paying the simulator cost. A clear ``ImportError``
+with install instructions is raised on instantiation if the deps
+are missing.
 
 Per W30 ADR §6 acceptance gates: W31.1 unit-tested with fake env
-(``tests/test_env_pool.py``); W31.2 step latency benchmark on real env
-after install (``bench_results/w31/vec_env_throughput.json``).
+(``tests/test_env_pool.py``); W31.2 step latency benchmark on real
+env after install (``bench_results/w31/vec_env_throughput.json``).
 """
 from __future__ import annotations
 
@@ -31,16 +47,29 @@ from typing import Any
 
 
 class FrankaKitchenEnv:
-    """Single-env Gymnasium-style wrapper around dm_control's FrankaKitchen.
+    """Single-env Gymnasium-style wrapper around dm_control.manipulation.
+
+    The default backend task is ``lift_brick_features``: a Franka-Panda-
+    style 9-DoF manipulation task with a duplo brick as the lift target.
+    dm_control.manipulation also offers ``reach_site_features``,
+    ``place_brick_features``, ``stack_2_bricks_features``, etc. — all
+    share the 9-dim action contract and dict-shaped obs.
 
     Args:
-        task_name: dm_control task name. Default ``"microwave_kettle"``
-            matches W30 ADR §4 (entry-level FrankaKitchen manipulation).
+        task_name: dm_control.manipulation task name. Default
+            ``"lift_brick_features"`` is the closest Franka-shaped
+            entry-level manipulation task available in the installed
+            dm_control (1.0.44).
         seed: optional master seed (broadcast to dm_control's internal
             RNG).
     """
 
-    DEFAULT_TASK = "microwave_kettle"
+    DEFAULT_TASK = "lift_brick_features"
+
+    # dm_control.manipulation obs keys → our 3-key contract.
+    # The Jaco-arm pin site is the EE; the brick position is the target.
+    _EE_KEY = "jaco_arm/jaco_hand/pinch_site_pos"
+    _TARGET_KEY = "duplo2x4/position"
 
     def __init__(
         self,
@@ -49,11 +78,10 @@ class FrankaKitchenEnv:
         seed: int | None = None,
     ) -> None:
         # Deferred import: dm_control pulls in mujoco + gl context + native
-        # bindings. We only pay that cost when an actual FrankaKitchen
-        # instance is constructed.
+        # bindings. We only pay that cost when an actual env instance is
+        # constructed.
         try:
-            from dm_control import suite  # type: ignore[import-not-found]
-            from dm_control.suite.wrappers import pixels  # noqa: F401  (importable smoke)
+            from dm_control import manipulation  # type: ignore[import-not-found]
         except ImportError as exc:
             raise ImportError(
                 "FrankaKitchenEnv requires `dm_control` and `mujoco`. "
@@ -62,14 +90,22 @@ class FrankaKitchenEnv:
                 "install needed). Original error: " + repr(exc)
             ) from exc
 
-        self._suite = suite
+        self._manipulation = manipulation
         self.task_name = str(task_name)
         self._seed = seed
-        self._env = suite.load(
-            domain_name="franka_kitchen",
-            task_name=self.task_name,
-            task_kwargs={"random": seed} if seed is not None else None,
-        )
+        try:
+            self._env = manipulation.load(
+                environment_name=self.task_name,
+                seed=seed,
+            )
+        except KeyError as exc:
+            available = ", ".join(sorted(manipulation.ALL)) if hasattr(
+                manipulation, "ALL"
+            ) else "(unknown)"
+            raise ValueError(
+                f"dm_control.manipulation has no task {self.task_name!r}. "
+                f"Available tasks: {available}"
+            ) from exc
 
         # Observation / action spaces — declare them as plain attributes so
         # the :class:`worldfoundry_rl.env_pool.Env` Protocol's duck-typed
@@ -80,8 +116,9 @@ class FrankaKitchenEnv:
             shapes={"ee_pos": (3,), "target_pos": (3,)},
             dtypes={"ee_pos": "float64", "target_pos": "float64", "task_success": "bool"},
         )
-        # dm_control FrankaKitchen has 9-dim action: 7 arm joints + 2
-        # gripper (the env splits 9 DoF into arm + gripper internally).
+        # 9-dim action: 6 arm joints + 3 finger joints. Same shape as a
+        # canonical FrankaKitchen task (7 arm + 2 gripper), but the Jaco
+        # arm in dm_control.manipulation uses 6 + 3 = 9 DoF.
         self.action_space = _BoxSpace(shape=(9,), dtype="float32")
 
     def reset(
@@ -93,8 +130,6 @@ class FrankaKitchenEnv:
         effective_seed = self._seed if seed is None else seed
         timestep = self._env.reset()
         if effective_seed is not None:
-            # dm_control doesn't re-seed on reset() — apply via internal
-            # random_state for repeatability.
             try:
                 self._env.task.random.seed(int(effective_seed))
             except Exception:
@@ -111,25 +146,26 @@ class FrankaKitchenEnv:
             raise ValueError(
                 f"FrankaKitchen action must be 9-dim, got shape {action_arr.shape}"
             )
+        # dm_control.manipulation action_spec dtype is float64; cast.
+        action_arr = action_arr.astype(np.float64)
         timestep = self._env.step(action_arr)
         obs = self._extract_obs(timestep)
-        reward = float(getattr(timestep, "reward", 0.0)) if timestep.last() is False else 0.0
-        # dm_control Timestep: ``last()`` returns "step"/"limit"/"time"/None
-        # depending on which termination triggered. Map "step"/"limit"/"time"
-        # to terminated/truncated; default both False.
+        # dm_control returns the per-step reward (not 0 on terminal) so
+        # PPO can learn from terminal-step bonuses. Convert to plain float.
+        reward = float(getattr(timestep, "reward", 0.0))
         last = timestep.last()
-        terminated = bool(last == "step")  # task success / failure cutoff
+        terminated = bool(last == "step")
         truncated = bool(last in ("limit", "time"))
         info: dict = {}
-        if timestep.last() is not None:
+        if last is not None:
             info["dm_control_last"] = last
         return obs, reward, terminated, truncated, info
 
     def close(self) -> None:
-        # dm_control suite envs hold an EGL/OSMesa context; release the
-        # underlying mujoco model via suite's internal cleanup. There is
-        # no public close() on suite.load() envs; the model is reclaimed
-        # when Python GC's the reference. We drop the ref explicitly.
+        # dm_control.manipulation envs hold an EGL/OSMesa context; release
+        # the underlying mujoco model by dropping the reference. There is
+        # no public close() on manipulation.load() envs; the model is
+        # reclaimed when Python GC's the reference. We drop the ref explicitly.
         try:
             del self._env
         except Exception:
@@ -140,11 +176,11 @@ class FrankaKitchenEnv:
         import numpy as np
 
         obs_dict: dict = {}
-        # End-effector position: dm_control exposes a sites API; the
-        # FrankaKitchen tasks expose "end_effector" under physics.named.data.
+        # End-effector position: dm_control.manipulation obs keys have
+        # shape (1, 3) — flatten to (3,).
         try:
             ee = np.asarray(
-                timestep.observation.get("end_effector_pos", None), dtype=np.float64
+                timestep.observation.get(self._EE_KEY, None), dtype=np.float64
             ).ravel()
             if ee.size < 3:
                 raise ValueError
@@ -152,13 +188,10 @@ class FrankaKitchenEnv:
         except Exception:
             obs_dict["ee_pos"] = np.zeros(3, dtype=np.float64)
 
-        # Target position: dm_control FrankaKitchen tasks publish the
-        # per-task target under ``target_pos`` (microwave_kettle: kettle
-        # spout position). Fall back to a zero vector if the task layout
-        # omits it (older dm_control versions).
+        # Target (brick) position: same flattening.
         try:
             tgt = np.asarray(
-                timestep.observation.get("target_pos", None), dtype=np.float64
+                timestep.observation.get(self._TARGET_KEY, None), dtype=np.float64
             ).ravel()
             if tgt.size < 3:
                 raise ValueError

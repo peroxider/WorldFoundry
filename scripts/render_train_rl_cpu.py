@@ -77,6 +77,13 @@ class V2Config:
     ppo_env_steps: int = 16
     num_ppo_epochs: int = 4
     log_every_n: int = 10
+    # v2.15+: env selection. ``mock`` (default) preserves v2.x smoke
+    # behavior at ~3.5 s; ``franka_kitchen`` swaps in a real MuJoCo
+    # 9-DoF manipulation env via dm_control.manipulation. The latter
+    # requires ``dm_control`` + ``mujoco`` at runtime (both already
+    # transitive deps of the CPU loop, no install change).
+    env_type: str = "mock"
+    franka_task_name: str = "lift_brick_features"
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +319,62 @@ class _MockCPUEnv:
         return self._state.copy(), reward, False, False, {}
 
 
+class _FrankaKitchenAdapter:
+    """Adapter: FrankaKitchenEnv (dict obs, 9-dim action) -> flat obs (6-dim).
+
+    Translates ``FrankaKitchenEnv``'s dict-shaped observation to a flat
+    ``np.ndarray`` of shape ``(6,)`` so it slots into the orchestrator's
+    existing ``VisionPolicy.from_state_dim(obs_dim=6, action_dim=9)``
+    contract. The 6 dims are ``ee_pos[:3] + target_pos[:3]`` — both
+    ``float64`` from dm_control, cast to ``float32`` here.
+
+    The reward signal is whatever ``dm_control.manipulation``'s task
+    emits (e.g. for ``lift_brick_features``: dense reward based on
+    brick lift height). This is a meaningful manipulation reward —
+    not the mock env's ``-||state||^2 - 0.1*||action||^2`` formula —
+    so PPO has a real task to learn from.
+
+    See :class:`worldfoundry_rl.env_franka_kitchen.FrankaKitchenEnv`
+    for the underlying env (W31 deliverable, v2.15+ routes through
+    ``dm_control.manipulation`` because canonical ``franka_kitchen``
+    PyPI package does not exist).
+    """
+
+    FLAT_OBS_DIM = 6  # ee_pos(3) + target_pos(3)
+
+    def __init__(self, task_name: str, seed: int):
+        from worldfoundry_rl.env_franka_kitchen import FrankaKitchenEnv
+        self._env = FrankaKitchenEnv(task_name=task_name, seed=seed)
+        self._task_name = task_name
+
+    def reset(self, *, seed=None, options=None):
+        obs_dict, info = self._env.reset(seed=seed, options=options)
+        return self._flatten(obs_dict), info
+
+    def step(self, action):
+        obs_dict, reward, term, trunc, info = self._env.step(action)
+        return self._flatten(obs_dict), reward, term, trunc, info
+
+    def close(self):
+        self._env.close()
+
+    @property
+    def task_name(self) -> str:
+        return self._task_name
+
+    @staticmethod
+    def _flatten(obs_dict: dict) -> np.ndarray:
+        ee = np.asarray(
+            obs_dict.get("ee_pos", np.zeros(3, dtype=np.float64)),
+            dtype=np.float32,
+        ).ravel()[:3]
+        tgt = np.asarray(
+            obs_dict.get("target_pos", np.zeros(3, dtype=np.float64)),
+            dtype=np.float32,
+        ).ravel()[:3]
+        return np.concatenate([ee, tgt])
+
+
 def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, Any]:
     """Build a VisionPolicy whose encoder consumes imagined latents.
 
@@ -325,6 +388,13 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
     from worldfoundry_rl.ppo import compute_gae
     from worldfoundry_rl.vision_policy import VisionPolicy
 
+    # Defer the env import so the cold-start path of the orchestrator
+    # does not pay dm_control's loader cost when running --env=mock.
+    def _build_env(cfg: V2Config):
+        if cfg.env_type == "franka_kitchen":
+            return _FrankaKitchenAdapter(cfg.franka_task_name, seed=cfg.seed)
+        return _MockCPUEnv(cfg.obs_dim, cfg.action_dim, seed=cfg.seed)
+
     t0 = time.perf_counter()
     bundle = load_tiny_checkpoint(ckpt, device=device)
     encoder = bundle["encoder"].eval()
@@ -334,7 +404,7 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
         cfg.obs_dim, cfg.action_dim, hidden_dim=32,
     ).to(device)
 
-    env = _MockCPUEnv(cfg.obs_dim, cfg.action_dim, seed=cfg.seed)
+    env = _build_env(cfg)
     obs, _ = env.reset(seed=cfg.seed)
     obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
 
@@ -694,17 +764,38 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="World-model train steps per outer iteration.")
     p.add_argument("--num-ppo-epochs", type=int, default=4,
                    help="PPO epochs per (rollout, update) cycle. RLinf default is 4-8.")
+    p.add_argument("--env", choices=("mock", "franka_kitchen"), default="mock",
+                   help="Env for the policy phase. ``mock`` (default) is the "
+                        "v2.x in-process random agent at ~3.5 s smoke. "
+                        "``franka_kitchen`` swaps in a real MuJoCo 9-DoF "
+                        "manipulation env via dm_control.manipulation.")
+    p.add_argument("--franka-task-name", default="lift_brick_features",
+                   help="dm_control.manipulation task name when "
+                        "--env=franka_kitchen. Available: lift_brick_features, "
+                        "reach_site_features, place_brick_features, "
+                        "stack_2_bricks_features, etc.")
     return p.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    # When the franka_kitchen env is selected, override obs_dim + action_dim
+    # BEFORE constructing V2Config: VisionPolicy.from_state_dim is built off
+    # cfg.action_dim / cfg.obs_dim in policy_bootstrap_phase, and the
+    # adapter's flat obs is exactly 6-dim (ee_pos 3 + target_pos 3).
+    if args.env == "franka_kitchen":
+        obs_dim = 6
+        action_dim = 9
+    else:
+        obs_dim = args.obs_dim
+        action_dim = args.action_dim
     cfg = V2Config(
         out_dir=args.out_dir, num_clips=args.num_clips,
         frames_per_clip=args.frames_per_clip, height=args.height, width=args.width,
         seed=args.seed, num_steps=args.num_steps, learning_rate=args.learning_rate,
-        mask_ratio=args.mask_ratio, action_dim=args.action_dim, obs_dim=args.obs_dim,
+        mask_ratio=args.mask_ratio, action_dim=action_dim, obs_dim=obs_dim,
         ppo_env_steps=args.ppo_env_steps, num_ppo_epochs=args.num_ppo_epochs,
+        env_type=args.env, franka_task_name=args.franka_task_name,
     )
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     # Seed torch's global RNG and numpy's legacy RNG so the
@@ -756,6 +847,8 @@ def main(argv=None) -> int:
             "num_ppo_epochs": cfg.num_ppo_epochs,
             "num_outer_iters": args.num_outer_iters,
             "num_train_per_iter": args.num_train_per_iter,
+            "env_type": cfg.env_type,
+            "franka_task_name": cfg.franka_task_name,
         },
         "render": {
             "elapsed_seconds": round(render_t, 3),
@@ -783,9 +876,16 @@ def main(argv=None) -> int:
         "notes": [
             "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
             "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
-            "Synthetic env is in-process (`_MockCPUEnv`); no mujoco/dm_control dep — matches v1 CPU-only promise.",
+            (
+                f"Env for policy phase: "
+                f"{'real MuJoCo 9-DoF manipulation (dm_control.manipulation/' + cfg.franka_task_name + ') via FrankaKitchenEnv + _FrankaKitchenAdapter' if cfg.env_type == 'franka_kitchen' else 'in-process random agent (_MockCPUEnv); no mujoco/dm_control dep — matches v1 CPU-only promise'}."
+            ),
             "PPO IS trained here (default 4 epochs per outer iter) — reward_pre -> reward_post proves policy learned from world-model imagination.",
             "v2.2 outer iterative loop: world-model train <-> PPO update repeated N times (RLinf's defining pattern). reward_trend_delta quantifies whether reward is trending up across iters.",
+            (
+                f"env_type={cfg.env_type!r}; obs_dim={cfg.obs_dim} (ee_pos 3 + target_pos 3 for franka_kitchen); "
+                f"action_dim={cfg.action_dim} (9-DoF for franka_kitchen)."
+            ) if cfg.env_type == "franka_kitchen" else f"env_type={cfg.env_type!r}.",
         ],
     }
     (cfg.out_dir / "render_train_rl.json").write_text(json.dumps(summary, indent=2))
