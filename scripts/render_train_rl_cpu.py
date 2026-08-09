@@ -154,13 +154,14 @@ def render_phase(cfg: V2Config) -> RenderOutput:
         )
         from worldfoundry_rl.env_franka_kitchen import FrankaKitchenEnv
 
-        env_factory = lambda: FrankaKitchenEnv(
-            task_name=cfg.franka_task_name,
-            seed=cfg.seed,
-            render_height=cfg.height,
-            render_width=cfg.width,
-            camera_id=cfg.camera_id,
-        )
+        def env_factory():
+            return FrankaKitchenEnv(
+                task_name=cfg.franka_task_name,
+                seed=cfg.seed,
+                render_height=cfg.height,
+                render_width=cfg.width,
+                camera_id=cfg.camera_id,
+            )
         manifest, frames, actions = collect_franka_video_clips(
             env_factory,
             num_clips=cfg.num_clips,
@@ -368,7 +369,8 @@ def train_phase(
         ds = Vjepa2Dataset(
             manifest_path=manifest, mask_fn=mask_fn, patch_size=patch, mask_count=1,
         )
-        collate_fn = lambda item, _rng=None: _collate(item, cfg.action_dim)
+        def collate_fn(item, _rng=None):
+            return _collate(item, cfg.action_dim)
     if len(ds) == 0:
         raise ValueError(f"{cfg.data_source} dataset is empty")
     history: list[dict[str, float]] = []
