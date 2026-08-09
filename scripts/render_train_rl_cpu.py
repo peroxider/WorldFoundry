@@ -39,6 +39,7 @@ import torch
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from torch import nn
 
 from worldfoundry_train.data.dataset import Vjepa2Dataset
 from worldfoundry_train.data.synthetic_manifest import (
@@ -56,6 +57,34 @@ from worldfoundry_train.model.tiny_jepa import (
     TinyVJEPA2Encoder,
 )
 from worldfoundry_train.device import resolve_device, to_device
+
+
+@dataclass(frozen=True)
+class RenderOutput:
+    """Container for render-phase output (W2.16+).
+
+    The synthetic path uses just ``(manifest, elapsed_seconds)``; the
+    frankk path additionally returns aligned ``frames`` and ``actions``
+    arrays so the train phase can train on real env transitions without
+    re-decoding the .mp4s. Keeping the dataclass frozen avoids accidental
+    mutation across phases.
+
+    Iteration order is ``(manifest, elapsed_seconds)`` so legacy
+    v2.x callers using ``manifest, elapsed_seconds = render_phase(cfg)``
+    keep working unchanged. Tests that need the extra fields access
+    them by attribute (``render_out.frames``, ``render_out.actions``).
+    """
+
+    manifest: Path
+    elapsed_seconds: float
+    frames: np.ndarray | None = None
+    actions: np.ndarray | None = None
+
+    def __iter__(self):
+        # Preserve the v2.x tuple contract: callers can unpack as
+        # ``manifest, elapsed_seconds = render_phase(cfg)``.
+        yield self.manifest
+        yield self.elapsed_seconds
 
 
 @dataclass(frozen=True)
@@ -84,21 +113,78 @@ class V2Config:
     # transitive deps of the CPU loop, no install change).
     env_type: str = "mock"
     franka_task_name: str = "lift_brick_features"
+    # v2.16+: data source for the train phase. ``synthetic`` (default)
+    # keeps v2.x behavior — procedural cv2 .mp4s via
+    # :func:`worldfoundry_train.data.synthetic_manifest.build_synthetic_manifest`.
+    # ``franka_kitchen`` drives a real MuJoCo env through
+    # :func:`worldfoundry_rl.data.franka_video_collector.collect_franka_video_clips`
+    # and trains on those RGB + action transitions (env must also be
+    # ``franka_kitchen`` so the collector has an env to drive).
+    data_source: str = "synthetic"
+    # v2.17+: policy encoder selection. ``state_mlp`` (default) keeps
+    # the v2.x MLP-over-flat-obs actor; ``tiny_vjepa2`` swaps in a
+    # frozen TinyVJEPA2Encoder so the actor consumes RGB latents and
+    # the latent rollout can flow back through the encoder/predictor.
+    policy_encoder: str = "state_mlp"
+    # v2.17+: number of consecutive latent-rollout steps the planner
+    # takes between env steps. ``1`` matches the v2.x behavior (one
+    # predictor pass); ``>=2`` walks the predictor recurrently.
+    rollout_horizon: int = 1
+    # v2.16+: dm_control camera id passed to FrankaKitchenEnv render.
+    # Default 0 is dm_control's default; override if a task exposes
+    # alternate cameras via ``physics.model.cam_*`` naming.
+    camera_id: int | str = 0
+    # v2.18+: which encoder to use. ``tiny`` (default) keeps the v2.x
+    # 24k-param ``TinyVJEPA2Encoder`` stack; ``hf_vjepa2`` swaps in a
+    # randomly-initialised HF ``VJEPA2Model`` + LoRA via
+    # :mod:`worldfoundry_train.model.hf_vjepa_shim`. No HF Hub call —
+    # both paths are local.
+    encoder_kind: str = "tiny"
 
 
 # ---------------------------------------------------------------------------
 # Phase R: Render (reuse v1)
 # ---------------------------------------------------------------------------
 
-def render_phase(cfg: V2Config) -> tuple[Path, float]:
+def render_phase(cfg: V2Config) -> RenderOutput:
     t0 = time.perf_counter()
+    if cfg.data_source == "franka_kitchen":
+        from worldfoundry_rl.data.franka_video_collector import (
+            collect_franka_video_clips,
+        )
+        from worldfoundry_rl.env_franka_kitchen import FrankaKitchenEnv
+
+        env_factory = lambda: FrankaKitchenEnv(
+            task_name=cfg.franka_task_name,
+            seed=cfg.seed,
+            render_height=cfg.height,
+            render_width=cfg.width,
+            camera_id=cfg.camera_id,
+        )
+        manifest, frames, actions = collect_franka_video_clips(
+            env_factory,
+            num_clips=cfg.num_clips,
+            frames_per_clip=cfg.frames_per_clip,
+            height=cfg.height,
+            width=cfg.width,
+            seed=cfg.seed,
+            out_dir=cfg.out_dir,
+        )
+        return RenderOutput(
+            manifest=manifest,
+            elapsed_seconds=time.perf_counter() - t0,
+            frames=frames,
+            actions=actions,
+        )
     spec = SyntheticManifestSpec(
         out_dir=cfg.out_dir, num_clips=cfg.num_clips,
         frames_per_clip=cfg.frames_per_clip, height=cfg.height, width=cfg.width,
         seed=cfg.seed,
     )
     manifest = build_synthetic_manifest(spec)
-    return manifest, time.perf_counter() - t0
+    return RenderOutput(
+        manifest=manifest, elapsed_seconds=time.perf_counter() - t0,
+    )
 
 
 def _manifest_counts(manifest: Path) -> dict[str, int]:
@@ -121,8 +207,67 @@ def _manifest_counts(manifest: Path) -> dict[str, int]:
 # ---------------------------------------------------------------------------
 
 def _build_stack(cfg: V2Config, device: str) -> tuple[
-    TinyVJEPA2Encoder, TinyActionConditionedPredictor, TinyPixelDecoder, TinyVJEPA2Encoder,
+    "nn.Module", "nn.Module", "nn.Module", "nn.Module",
 ]:
+    """Build (online_encoder, predictor, decoder, target_encoder).
+
+    Two encoder kinds are supported (W2.18+):
+
+    - ``cfg.encoder_kind == "tiny"`` (default): the v2.x 24k-param
+      ``TinyVJEPA2Encoder`` + ``TinyActionConditionedPredictor`` +
+      ``TinyPixelDecoder`` stack. The predictor is action-conditioned
+      (FiLM-style bias) — the v2.17 seam.
+    - ``cfg.encoder_kind == "hf_vjepa2"``: a randomly-initialised
+      HF ``VJEPA2Model`` + LoRA wrapped via
+      :mod:`worldfoundry_train.model.hf_vjepa_shim`, paired with the
+      W22 ``JEPAPredictor`` (no action conditioning — the smoke proves
+      the encoder seam, action conditioning on HF is a future item).
+      No HF Hub call.
+
+    Both paths return ``nn.Module`` quads whose downstream consumers
+    (``policy_bootstrap_phase``, ``inference_phase``,
+    ``iterative_loop_phase``) treat the modules as opaque — only
+    ``.config``, ``.parameters()``, ``.eval()``, ``.forward(...)``
+    are touched, and both stacks expose that surface.
+    """
+    if cfg.encoder_kind == "hf_vjepa2":
+        from worldfoundry_train.model.hf_vjepa_shim import (
+            HfJEPAPredictorShim,
+            HfPixelDecoderShim,
+            HfVJEPA2EncoderShim,
+        )
+        # Defaults tuned for CPU-tractability (live-probed:
+        # ~0.12 s/forward on (1, 4, 3, 32, 32); ~80k total params,
+        # ~1k trainable via LoRA). patch_size=8 matches the v2.x tiny
+        # default so the orchestrator's ``cfg.height // patch`` math
+        # produces the same grid as the tiny path. ``tubelet_size=1``
+        # is required so HF's token count matches the v2.x mask layout
+        # (``N = T * Hg * Wg``); HF defaults to ``tubelet_size=2``
+        # which would emit ``(T // tubelet) * Hg * Wg`` tokens and
+        # mismatch the predictor's expected ``N``.
+        patch = 8
+        online = HfVJEPA2EncoderShim.from_random_init(
+            image_size=cfg.height, patch_size=patch,
+            hidden_size=64, num_hidden_layers=2,
+            num_attention_heads=2,
+            tubelet_size=1, frames_per_clip=cfg.frames_per_clip,
+            lora_r=4, lora_alpha=8, lora_dropout=0.0,
+        )
+        Hg = cfg.height // patch
+        Wg = cfg.width // patch
+        N = cfg.frames_per_clip * Hg * Wg
+        pred = HfJEPAPredictorShim(
+            num_patches=N,
+            grid_size=(cfg.frames_per_clip, Hg, Wg),
+            encoder_dim=online.config.embed_dim,
+            predictor_dim=64, depth=2, num_heads=2,
+        )
+        dec = HfPixelDecoderShim(online.config)
+        target = online.deep_copy_base()
+        target.freeze_encoder()
+        target.eval()
+        return online, pred, dec, target
+
     enc_cfg = TinyEncoderConfig(
         image_size=cfg.height, embed_dim=cfg.encoder_embed_dim,
         depth=cfg.encoder_depth, num_heads=2,
@@ -146,7 +291,42 @@ def _collate(item: dict[str, np.ndarray], action_dim: int) -> dict[str, torch.Te
     }
 
 
-def train_phase(cfg: V2Config, manifest: Path, device: str) -> tuple[Path, list[dict], float, int]:
+def _collate_franka(
+    item: dict[str, np.ndarray],
+    rng: np.random.Generator,
+    action_dim: int,
+) -> dict[str, torch.Tensor]:
+    """Collate a FrankaTransitionDataset sample.
+
+    Picks a random time-step action (the dataset stores the full
+    per-frame action sequence ``item["actions"]`` of shape
+    ``(T, action_dim)``). The synthetic path uses
+    :func:`rng.standard_normal`; here we deliberately sample one of
+    the real env actions to keep the predictor aligned with the
+    transitions the world model is learning.
+    """
+    T = int(item["actions"].shape[0])
+    t_idx = int(rng.integers(0, T))
+    action = item["actions"][t_idx]
+    if action.shape != (action_dim,):
+        raise ValueError(
+            f"franka action at t={t_idx} has shape {action.shape}; expected ({action_dim},)"
+        )
+    return {
+        "pixel_values_videos": torch.from_numpy(item["frames"]).unsqueeze(0),
+        "bool_masked_pos": torch.from_numpy(item["mask"]).reshape(-1).unsqueeze(0),
+        "action": torch.from_numpy(action.astype(np.float32)).unsqueeze(0),
+    }
+
+
+def train_phase(
+    cfg: V2Config,
+    manifest: Path,
+    device: str,
+    *,
+    frames: np.ndarray | None = None,
+    actions: np.ndarray | None = None,
+) -> tuple[Path, list[dict], float, int]:
     t0 = time.perf_counter()
     online, pred, dec, target = _build_stack(cfg, device)
     online = to_device(online, device)
@@ -165,9 +345,32 @@ def train_phase(cfg: V2Config, manifest: Path, device: str) -> tuple[Path, list[
     def mask_fn(grid, rng):
         return tubelet_mask(grid, tubelet_size=(2, Hg, Wg), mask_ratio=cfg.mask_ratio, rng=rng)
 
-    ds = Vjepa2Dataset(manifest_path=manifest, mask_fn=mask_fn, patch_size=patch, mask_count=1)
+    if cfg.data_source == "franka_kitchen" and frames is not None and actions is not None:
+        from worldfoundry_rl.data.franka_dataset import FrankaTransitionDataset
+
+        ds = FrankaTransitionDataset(
+            frames=frames, actions=actions,
+            frame_size=cfg.height, patch_size=patch, mask_fn=mask_fn,
+        )
+        # Capture cfg.seed (not ``rng`` — it isn't defined yet at this
+        # point in the function). The franka collate picks a random
+        # time-step from the real action sequence; we want per-step
+        # randomness to vary across train steps so the predictor sees
+        # different action samples. Build a fresh per-call generator
+        # seeded by (cfg.seed + step_counter); the counter lives in a
+        # list cell so the closure mutates it across calls.
+        _step_counter = [0]
+        def collate_fn(item, _seed=int(cfg.seed), _counter=_step_counter):
+            rng_call = np.random.default_rng(_seed + _counter[0])
+            _counter[0] += 1
+            return _collate_franka(item, rng_call, cfg.action_dim)
+    else:
+        ds = Vjepa2Dataset(
+            manifest_path=manifest, mask_fn=mask_fn, patch_size=patch, mask_count=1,
+        )
+        collate_fn = lambda item, _rng=None: _collate(item, cfg.action_dim)
     if len(ds) == 0:
-        raise ValueError("synthetic manifest is empty")
+        raise ValueError(f"{cfg.data_source} dataset is empty")
     history: list[dict[str, float]] = []
     rng = np.random.default_rng(cfg.seed + 1)
     online.train()
@@ -177,10 +380,15 @@ def train_phase(cfg: V2Config, manifest: Path, device: str) -> tuple[Path, list[
     for step in range(cfg.num_steps):
         idx = int(rng.integers(0, len(ds)))
         sample = ds[idx]
-        batch = {k: v.to(device) for k, v in _collate(sample, cfg.action_dim).items()}
-        batch["action"] = torch.from_numpy(
-            rng.standard_normal((1, cfg.action_dim)).astype(np.float32)
-        ).to(device)
+        if cfg.data_source == "franka_kitchen":
+            batch = {k: v.to(device) for k, v in collate_fn(sample).items()}
+        else:
+            batch = {k: v.to(device) for k, v in collate_fn(sample).items()}
+            # Synthetic path: action is rng-sampled so the predictor
+            # sees a fresh action distribution every step (v2.x contract).
+            batch["action"] = torch.from_numpy(
+                rng.standard_normal((1, cfg.action_dim)).astype(np.float32)
+            ).to(device)
 
         h_online = online(batch["pixel_values_videos"]).last_hidden_state
         with torch.no_grad():
@@ -233,11 +441,42 @@ def train_phase(cfg: V2Config, manifest: Path, device: str) -> tuple[Path, list[
     return ckpt, history, elapsed, n_params
 
 
+def _encoder_lora_stats(cfg: V2Config) -> dict[str, int]:
+    """Return LoRA subset stats for the configured encoder kind.
+
+    Tiny path returns ``{"trainable": 0, "total": 0}`` (no LoRA). HF
+    path instantiates a fresh :class:`HfVJEPA2EncoderShim` via the same
+    ``from_random_init`` kwargs as :func:`_build_stack` and returns
+    its ``lora_stats()``. The shim's LoRA subset is deterministic from
+    the kwargs, so a fresh instance reports the same trainable/total
+    counts as the in-train module.
+    """
+    if cfg.encoder_kind != "hf_vjepa2":
+        return {"trainable": 0, "total": 0}
+    from worldfoundry_train.model.hf_vjepa_shim import HfVJEPA2EncoderShim
+
+    patch = 8
+    shim = HfVJEPA2EncoderShim.from_random_init(
+        image_size=cfg.height, patch_size=patch,
+        hidden_size=64, num_hidden_layers=2, num_attention_heads=2,
+        tubelet_size=1, frames_per_clip=cfg.frames_per_clip,
+        lora_r=4, lora_alpha=8, lora_dropout=0.0,
+    )
+    return shim.lora_stats()
+
+
 # ---------------------------------------------------------------------------
 # Phase I: Inference with action-conditioned rollout
 # ---------------------------------------------------------------------------
 
-def inference_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, Any]:
+def inference_phase(
+    cfg: V2Config,
+    ckpt: Path,
+    device: str,
+    *,
+    frames: np.ndarray | None = None,
+    actions: np.ndarray | None = None,
+) -> dict[str, Any]:
     t0 = time.perf_counter()
     bundle = load_tiny_checkpoint(ckpt, device=device)
     encoder = bundle["encoder"]
@@ -250,14 +489,24 @@ def inference_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, Any]:
     Hg, Wg = cfg.height // patch, cfg.width // patch
     def mask_fn(grid, rng):
         return tubelet_mask(grid, tubelet_size=(2, Hg, Wg), mask_ratio=cfg.mask_ratio, rng=rng)
-    manifest = cfg.out_dir / "manifest.csv"
-    if not manifest.is_file():
-        manifest = build_synthetic_manifest(SyntheticManifestSpec(
-            out_dir=cfg.out_dir, num_clips=cfg.num_clips,
-            frames_per_clip=cfg.frames_per_clip, height=cfg.height, width=cfg.width,
-            seed=cfg.seed,
-        ))
-    ds = Vjepa2Dataset(manifest_path=manifest, mask_fn=mask_fn, patch_size=patch, mask_count=1)
+    if cfg.data_source == "franka_kitchen" and frames is not None:
+        from worldfoundry_rl.data.franka_dataset import FrankaTransitionDataset
+
+        ds = FrankaTransitionDataset(
+            frames=frames, actions=actions if actions is not None else np.zeros(
+                (frames.shape[0], frames.shape[1], cfg.action_dim), dtype=np.float32,
+            ),
+            frame_size=cfg.height, patch_size=patch, mask_fn=mask_fn,
+        )
+    else:
+        manifest = cfg.out_dir / "manifest.csv"
+        if not manifest.is_file():
+            manifest = build_synthetic_manifest(SyntheticManifestSpec(
+                out_dir=cfg.out_dir, num_clips=cfg.num_clips,
+                frames_per_clip=cfg.frames_per_clip, height=cfg.height, width=cfg.width,
+                seed=cfg.seed,
+            ))
+        ds = Vjepa2Dataset(manifest_path=manifest, mask_fn=mask_fn, patch_size=patch, mask_count=1)
     sample = ds[0]
     frames_gt = sample["frames"]
     rng = np.random.default_rng(cfg.seed + 99)
@@ -344,7 +593,17 @@ class _FrankaKitchenAdapter:
 
     def __init__(self, task_name: str, seed: int):
         from worldfoundry_rl.env_franka_kitchen import FrankaKitchenEnv
-        self._env = FrankaKitchenEnv(task_name=task_name, seed=seed)
+        # Disable the render seam (W2.16): the policy phase consumes a
+        # flat (ee_pos, target_pos) obs, not pixels. Leaving
+        # ``enable_render=True`` here re-creates a second dm_control GL
+        # context after the collector already opened one, which segfaults
+        # glfw.create_window in headless/WSL sandboxes. The render seam
+        # stays enabled for the collector's ``FrankaKitchenEnv``
+        # instance inside :func:`render_phase` (it has its own GL
+        # context and is closed before the policy phase runs).
+        self._env = FrankaKitchenEnv(
+            task_name=task_name, seed=seed, enable_render=False,
+        )
         self._task_name = task_name
 
     def reset(self, *, seed=None, options=None):
@@ -375,6 +634,31 @@ class _FrankaKitchenAdapter:
         return np.concatenate([ee, tgt])
 
 
+def _env_seed_pixel_frame(env: Any, cfg: V2Config, device: str) -> torch.Tensor:
+    """Return ``(1, num_context_frames, 3, H, W)`` float in ``[0, 1]``.
+
+    Used by the planner's :meth:`reset_context` to seed the rollout
+    from the env's current ``last_frame()`` if it exposes one; falls
+    back to zero pixels (the v2.x placeholder) when the env is a flat
+    mock. Real envs expose ``last_frame()`` via the Franka adapter;
+    mocks do not.
+    """
+    last_frame = getattr(env, "last_frame", None)
+    if callable(last_frame):
+        try:
+            frame = last_frame()
+        except Exception:
+            frame = None
+        if frame is not None and isinstance(frame, np.ndarray) and frame.ndim == 3:
+            arr = frame.astype(np.float32) / 255.0
+            arr = np.transpose(arr, (2, 0, 1))
+            tensor = torch.from_numpy(arr).unsqueeze(0).unsqueeze(0).to(device)
+            return tensor
+    return torch.zeros(
+        1, cfg.frames_per_clip, 3, cfg.height, cfg.width, device=device,
+    )
+
+
 def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, Any]:
     """Build a VisionPolicy whose encoder consumes imagined latents.
 
@@ -400,20 +684,94 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
     encoder = bundle["encoder"].eval()
     for p in encoder.parameters():
         p.requires_grad_(False)
-    policy = VisionPolicy.from_state_dim(
-        cfg.obs_dim, cfg.action_dim, hidden_dim=32,
-    ).to(device)
+    pred = bundle["predictor"]
+    dec = bundle["decoder"]
+
+    # v2.17+: build a vision-backed policy when ``policy_encoder ==
+    # tiny_vjepa2`` so the actor can ingest the planner's imagined
+    # latents. The state_mlp path keeps the v2.x flat-obs actor.
+    # W2.19+: the image-policy path is now compatible with both
+    # encoder kinds (tiny + hf_vjepa2); ``from_image_obs`` is the tiny
+    # factory, ``from_hf_image_obs`` is the HF factory. Both call
+    # sites below read ``encoder.config.{patch_size, embed_dim,
+    # depth, num_heads}`` which the W2.18 shim exposes.
+    image_policy: VisionPolicy | None = None
+    planner: Any = None
+    if cfg.policy_encoder == "tiny_vjepa2":
+        from worldfoundry_train.model.latent_rollout import LatentRolloutPlanner
+
+        if cfg.encoder_kind == "hf_vjepa2":
+            image_policy = VisionPolicy.from_hf_image_obs(
+                image_size=cfg.height, action_dim=cfg.action_dim,
+                patch_size=encoder.config.patch_size,
+                embed_dim=encoder.config.embed_dim,
+                depth=encoder.config.depth,
+                num_heads=encoder.config.num_heads,
+                frames_per_clip=cfg.frames_per_clip,
+                freeze_encoder=True,
+            ).to(device)
+        else:
+            image_policy = VisionPolicy.from_image_obs(
+                image_size=cfg.height, action_dim=cfg.action_dim,
+                patch_size=encoder.config.patch_size,
+                embed_dim=encoder.config.embed_dim,
+                depth=encoder.config.depth,
+                num_heads=encoder.config.num_heads,
+                freeze_encoder=True,
+            ).to(device)
+        # Build a frozen copy of the encoder for the planner's
+        # "refresh context" step. Same weights, no grad — the planner
+        # itself controls whether grads flow through its predictor.
+        # Tiny: rebuild via TinyVJEPA2Encoder + state-dict copy.
+        # HF: deepcopy the LoRA-wrapped base via the shim's
+        # ``deep_copy_base()`` (avoids re-running ``from_random_init``,
+        # which would re-seed the LoRA adapters).
+        if cfg.encoder_kind == "hf_vjepa2":
+            target = encoder.deep_copy_base()
+            target.freeze_encoder()
+            target.eval()
+        else:
+            target = TinyVJEPA2Encoder(encoder.config)
+            target.load_state_dict(encoder.state_dict())
+            for p in target.parameters():
+                p.requires_grad_(False)
+            target.eval()
+        planner = LatentRolloutPlanner(
+            encoder=encoder, target_encoder=target, predictor=pred,
+            decoder=dec, image_size=cfg.height,
+            patch_size=encoder.config.patch_size,
+            action_dim=cfg.action_dim, horizon=cfg.rollout_horizon,
+            grad_through_predictor=True,
+            num_context_frames=cfg.frames_per_clip,
+        ).to(device)
+    policy = (
+        image_policy
+        if image_policy is not None
+        else VisionPolicy.from_state_dim(cfg.obs_dim, cfg.action_dim, hidden_dim=32).to(device)
+    )
 
     env = _build_env(cfg)
     obs, _ = env.reset(seed=cfg.seed)
-    obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
+    # Image-policy path: actor sees pixel batches (``B, T, 3, H, W``).
+    # State-mlp path: actor sees a flat 1-D tensor (``B, obs_dim``).
+    if planner is not None:
+        obs_t = _env_seed_pixel_frame(env, cfg, device)
+    else:
+        obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
 
     patch = encoder.config.patch_size
     Hg, Wg = cfg.height // patch, cfg.width // patch
     n_tokens = cfg.frames_per_clip * Hg * Wg
     mask = torch.zeros(1, n_tokens, dtype=torch.bool, device=device)
     mask[0, : n_tokens // 2] = True
-    pred = bundle["predictor"]
+
+    # Seed the planner's context latent from the first real RGB frame
+    # when the image-policy path is active. We reuse the env's adapter
+    # by asking it for an env that exposes ``last_frame()`` if it can;
+    # otherwise fall back to zero pixels (preserves v2.x behavior).
+    if planner is not None:
+        seed_frame = _env_seed_pixel_frame(env, cfg, device)
+        planner.reset_context(seed_frame)
 
     # ---- Phase P.1: rollout collection (grad enabled through predictor) ----
     rollout_obs: list[torch.Tensor] = []
@@ -431,18 +789,31 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
         action = torch.tanh(raw_action)
         log_prob = dist.log_prob(raw_action).sum(dim=-1)
 
-        # World-model imagination feeds back into the next obs.
-        zero_pixels = torch.zeros(
-            1, cfg.frames_per_clip, 3, cfg.height, cfg.width, device=device,
-        )
-        h = encoder(zero_pixels).last_hidden_state
-        imagined = pred(h, mask, action)
-        imagined_flat = imagined.mean(dim=0).unsqueeze(0)
-        feat_dim = imagined_flat.shape[-1]
-        new_obs = np.zeros(cfg.obs_dim, dtype=np.float32)
-        new_obs[: min(feat_dim, cfg.obs_dim)] = (
-            imagined_flat.detach().squeeze(0).cpu().numpy()[: cfg.obs_dim]
-        )
+        # World-model imagination feeds back into the next obs. The
+        # image-policy path uses the planner's recurrent latent rollout;
+        # the state-mlp path keeps the v2.x single-pass zero-pixels
+        # imagination so the old contract is byte-for-byte preserved.
+        if planner is not None:
+            imagined_latents = planner.predict_step(action)
+            # imagined_latents: (1, N, embed_dim) -> mean-pool to (1, embed_dim).
+            imagined_flat = imagined_latents.mean(dim=1)
+            feat_dim = imagined_flat.shape[-1]
+            new_obs = np.zeros(cfg.obs_dim, dtype=np.float32)
+            new_obs[: min(feat_dim, cfg.obs_dim)] = (
+                imagined_flat.detach().squeeze(0).cpu().numpy()[: cfg.obs_dim]
+            )
+        else:
+            zero_pixels = torch.zeros(
+                1, cfg.frames_per_clip, 3, cfg.height, cfg.width, device=device,
+            )
+            h = encoder(zero_pixels).last_hidden_state
+            imagined = pred(h, mask, action)
+            imagined_flat = imagined.mean(dim=0).unsqueeze(0)
+            feat_dim = imagined_flat.shape[-1]
+            new_obs = np.zeros(cfg.obs_dim, dtype=np.float32)
+            new_obs[: min(feat_dim, cfg.obs_dim)] = (
+                imagined_flat.detach().squeeze(0).cpu().numpy()[: cfg.obs_dim]
+            )
         obs, reward, _, _, _ = env.step(action.squeeze(0).detach().cpu().numpy())
         new_obs = 0.5 * new_obs + 0.5 * obs[: cfg.obs_dim]
 
@@ -452,7 +823,13 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
         rollout_values.append(value.detach())
         rollout_rewards.append(reward)
 
-        obs_t = torch.from_numpy(new_obs).unsqueeze(0).to(device)
+        # Image-policy path: feed the next policy obs as the latest
+        # imagined pixel batch so the actor stays in pixel-space.
+        # State-mlp path: keep the v2.x flat-obs tensor.
+        if planner is not None:
+            obs_t = _env_seed_pixel_frame(env, cfg, device)
+        else:
+            obs_t = torch.from_numpy(new_obs).unsqueeze(0).to(device)
 
     mean_reward_pre = float(np.mean(rollout_rewards))
 
@@ -517,17 +894,26 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
     # ---- Phase P.3: post-update reward probe (re-roll a short episode) ----
     eval_rewards: list[float] = []
     obs, _ = env.reset(seed=cfg.seed + 1)
-    obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
+    if planner is not None:
+        obs_t = _env_seed_pixel_frame(env, cfg, device)
+        seed_frame = _env_seed_pixel_frame(env, cfg, device)
+        planner.reset_context(seed_frame)
+    else:
+        obs_t = torch.from_numpy(obs).unsqueeze(0).to(device)
     with torch.no_grad():
         for _ in range(cfg.ppo_env_steps):
             mean, _ = policy.forward(obs_t)
             action = torch.tanh(mean)
-            zero_pixels = torch.zeros(
-                1, cfg.frames_per_clip, 3, cfg.height, cfg.width, device=device,
-            )
-            h = encoder(zero_pixels).last_hidden_state
-            imagined = pred(h, mask, action)
-            imagined_flat = imagined.mean(dim=0).unsqueeze(0)
+            if planner is not None:
+                imagined_latents = planner.predict_step(action)
+                imagined_flat = imagined_latents.mean(dim=1)
+            else:
+                zero_pixels = torch.zeros(
+                    1, cfg.frames_per_clip, 3, cfg.height, cfg.width, device=device,
+                )
+                h = encoder(zero_pixels).last_hidden_state
+                imagined = pred(h, mask, action)
+                imagined_flat = imagined.mean(dim=0).unsqueeze(0)
             feat_dim = imagined_flat.shape[-1]
             new_obs = np.zeros(cfg.obs_dim, dtype=np.float32)
             new_obs[: min(feat_dim, cfg.obs_dim)] = (
@@ -535,7 +921,10 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
             )
             obs, reward, _, _, _ = env.step(action.squeeze(0).cpu().numpy())
             new_obs = 0.5 * new_obs + 0.5 * obs[: cfg.obs_dim]
-            obs_t = torch.from_numpy(new_obs).unsqueeze(0).to(device)
+            if planner is not None:
+                obs_t = _env_seed_pixel_frame(env, cfg, device)
+            else:
+                obs_t = torch.from_numpy(new_obs).unsqueeze(0).to(device)
             eval_rewards.append(reward)
 
     elapsed = time.perf_counter() - t0
@@ -774,6 +1163,33 @@ def parse_args(argv=None) -> argparse.Namespace:
                         "--env=franka_kitchen. Available: lift_brick_features, "
                         "reach_site_features, place_brick_features, "
                         "stack_2_bricks_features, etc.")
+    p.add_argument("--data-source", choices=("synthetic", "franka_kitchen"),
+                   default="synthetic",
+                   help="W2.16+: data source for the train phase. "
+                        "``synthetic`` (default) keeps the v2.x procedural cv2 "
+                        "clips; ``franka_kitchen`` drives the env to produce "
+                        "real RGB + action transitions. Cross-validated: when "
+                        "--env=mock the data_source must also be ``synthetic``.")
+    p.add_argument("--policy-encoder", choices=("state_mlp", "tiny_vjepa2"),
+                   default="state_mlp",
+                   help="W2.17+: policy encoder. ``state_mlp`` (default) keeps "
+                        "the v2.x flat-obs actor; ``tiny_vjepa2`` uses a frozen "
+                        "TinyVJEPA2Encoder so the actor ingests RGB and the "
+                        "latent rollout can flow through the encoder.")
+    p.add_argument("--rollout-horizon", type=int, default=1,
+                   help="W2.17+: number of latent-rollout steps between env "
+                        "steps. ``1`` matches the v2.x behavior (one "
+                        "predictor pass); ``>=2`` walks the predictor recurrently.")
+    p.add_argument("--camera-id", default=0,
+                   help="W2.16+: dm_control camera id forwarded to "
+                        "FrankaKitchenEnv.render(...). Default 0.")
+    p.add_argument("--encoder", choices=("tiny", "hf_vjepa2"), default="tiny",
+                   help="W2.18+: encoder kind. ``tiny`` (default) keeps the "
+                        "v2.x 24k-param TinyVJEPA2Encoder stack; "
+                        "``hf_vjepa2`` swaps in a randomly-initialised "
+                        "HF VJEPA2Model + LoRA via "
+                        "worldfoundry_train.model.hf_vjepa_shim. "
+                        "Forces --policy-encoder state_mlp (HF smoke).")
     return p.parse_args(argv)
 
 
@@ -789,6 +1205,12 @@ def main(argv=None) -> int:
     else:
         obs_dim = args.obs_dim
         action_dim = args.action_dim
+    # W2.16 cross-validation: franka data source needs a frankk env to drive.
+    if args.data_source == "franka_kitchen" and args.env != "franka_kitchen":
+        raise SystemExit(
+            f"--data-source=franka_kitchen requires --env=franka_kitchen "
+            f"(env={args.env}); the collector has no env to drive otherwise."
+        )
     cfg = V2Config(
         out_dir=args.out_dir, num_clips=args.num_clips,
         frames_per_clip=args.frames_per_clip, height=args.height, width=args.width,
@@ -796,7 +1218,18 @@ def main(argv=None) -> int:
         mask_ratio=args.mask_ratio, action_dim=action_dim, obs_dim=obs_dim,
         ppo_env_steps=args.ppo_env_steps, num_ppo_epochs=args.num_ppo_epochs,
         env_type=args.env, franka_task_name=args.franka_task_name,
+        data_source=args.data_source,
+        policy_encoder=args.policy_encoder,
+        rollout_horizon=args.rollout_horizon,
+        camera_id=args.camera_id,
+        encoder_kind=args.encoder,
     )
+    # W2.19: the HF encoder is now architecturally compatible with the
+    # image-policy path (``--policy-encoder tiny_vjepa2``); the shim
+    # exposes every ``config.*`` attribute the planner / actor need,
+    # and ``LatentRolloutPlanner`` is duck-typed on
+    # ``encoder(x).last_hidden_state``. The W2.18 cross-validation that
+    # forced ``state_mlp`` is removed.
     cfg.out_dir.mkdir(parents=True, exist_ok=True)
     # Seed torch's global RNG and numpy's legacy RNG so the
     # orchestrator is reproducible across processes. Per-component
@@ -807,14 +1240,24 @@ def main(argv=None) -> int:
     np.random.seed(cfg.seed)
     device = resolve_device()
 
-    manifest, render_t = render_phase(cfg)
-    print(f"[RTI2][R] manifest={manifest} elapsed={render_t:.2f}s")
+    render_out = render_phase(cfg)
+    manifest = render_out.manifest
+    render_t = render_out.elapsed_seconds
+    print(f"[RTI2][R] manifest={manifest} elapsed={render_t:.2f}s "
+          f"data_source={cfg.data_source}")
 
-    ckpt, history, train_t, n_params = train_phase(cfg, manifest, device)
+    ckpt, history, train_t, n_params = train_phase(
+        cfg, manifest, device,
+        frames=render_out.frames, actions=render_out.actions,
+    )
+    lora_stats = _encoder_lora_stats(cfg)
     print(f"[RTI2][T] ckpt={ckpt} elapsed={train_t:.2f}s "
           f"final_total={history[-1]['total_loss']:+.4f} encoder_params={n_params:,}")
 
-    inf = inference_phase(cfg, ckpt, device)
+    inf = inference_phase(
+        cfg, ckpt, device,
+        frames=render_out.frames, actions=render_out.actions,
+    )
     print(f"[RTI2][I] pixel_cos={inf['recon_cosine']:+.4f} "
           f"latent_cos={inf['latent_cosine']:+.4f} elapsed={inf['elapsed_seconds']:.2f}s")
 
@@ -849,6 +1292,14 @@ def main(argv=None) -> int:
             "num_train_per_iter": args.num_train_per_iter,
             "env_type": cfg.env_type,
             "franka_task_name": cfg.franka_task_name,
+            # W2.16+: which data source fed the train phase.
+            "data_source": cfg.data_source,
+            "camera_id": cfg.camera_id,
+            # W2.17+: which policy encoder and how many latent-rollout steps.
+            "policy_encoder": cfg.policy_encoder,
+            "rollout_horizon": cfg.rollout_horizon,
+            # W2.18+: which encoder stack the orchestrator wired up.
+            "encoder_kind": cfg.encoder_kind,
         },
         "render": {
             "elapsed_seconds": round(render_t, 3),
@@ -864,6 +1315,12 @@ def main(argv=None) -> int:
             "final_recon_loss": round(history[-1]["recon_loss"], 4),
             "final_act_align": round(history[-1]["act_align"], 4),
             "n_encoder_params": n_params, "n_train_steps": len(history),
+            # W2.18+: LoRA subset stats when the HF encoder is selected.
+            # Captured by ``_encoder_lora_stats`` (instantiates a fresh
+            # shim -- stats are deterministic from the kwargs); zero on
+            # the tiny path so the field is always present.
+            "hf_lora_trainable_params": lora_stats["trainable"],
+            "hf_lora_total_params": lora_stats["total"],
         },
         "inference": {
             "elapsed_seconds": round(inf["elapsed_seconds"], 3),
@@ -886,6 +1343,21 @@ def main(argv=None) -> int:
                 f"env_type={cfg.env_type!r}; obs_dim={cfg.obs_dim} (ee_pos 3 + target_pos 3 for franka_kitchen); "
                 f"action_dim={cfg.action_dim} (9-DoF for franka_kitchen)."
             ) if cfg.env_type == "franka_kitchen" else f"env_type={cfg.env_type!r}.",
+            (
+                f"data_source={cfg.data_source!r} "
+                f"({'real FrankaKitchen RGB + aligned action transitions via dm_control.physics.render' if cfg.data_source == 'franka_kitchen' else 'procedural cv2 .mp4s (v2.x contract)'}) "
+                f"camera_id={cfg.camera_id!r}."
+            ),
+            (
+                f"policy_encoder={cfg.policy_encoder!r} "
+                f"({'frozen TinyVJEPA2Encoder over RGB; latent rollout flows through encoder+predictor' if cfg.policy_encoder == 'tiny_vjepa2' else 'flat-obs MLP actor (v2.x contract)'}) "
+                f"rollout_horizon={cfg.rollout_horizon}."
+            ),
+            (
+                f"encoder_kind={cfg.encoder_kind!r} "
+                f"({'random-init HF VJEPA2Model (hidden_size=64) + LoRA via worldfoundry_train.model.hf_vjepa_shim; proves the encoder seam without downloading 1.2B weights' if cfg.encoder_kind == 'hf_vjepa2' else '24k-param TinyVJEPA2Encoder stack (v2.x contract)'}) "
+                f"({'W2.19+: compatible with --policy-encoder tiny_vjepa2 (RLinf-shape planner path)' if cfg.encoder_kind == 'hf_vjepa2' else ''})."
+            ),
         ],
     }
     (cfg.out_dir / "render_train_rl.json").write_text(json.dumps(summary, indent=2))

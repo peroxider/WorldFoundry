@@ -1004,3 +1004,142 @@ def test_orchestrator_runs_with_franka_kitchen_env(tmp_path: Path) -> None:
     assert "_MockCPUEnv" not in notes, (
         f"notes must NOT mention _MockCPUEnv when env_type=franka_kitchen; got: {notes[:300]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# W2.18: HF VJEPA2Model encoder seam (subprocess)
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_hf_encoder_smoke_runs_end_to_end(tmp_path: Path) -> None:
+    """The ``--encoder hf_vjepa2`` path closes the loop with HF VJEPA2Model.
+
+    Verifies the seam: ``_build_stack`` swaps ``TinyVJEPA2Encoder`` for a
+    randomly-initialised HF ``VJEPA2Model`` + LoRA via
+    :mod:`worldfoundry_train.model.hf_vjepa_shim`, the rest of the
+    orchestrator is unchanged, and the summary JSON reports
+    ``encoder_kind == "hf_vjepa2"`` with LoRA subset stats. Gated on
+    ``transformers>=5.1.0`` -- if not installed, skip (don't fail).
+    """
+    pytest.importorskip("transformers")
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "4",
+            "--ppo-env-steps", "4", "--num-outer-iters", "1",
+            "--num-train-per-iter", "2", "--num-ppo-epochs", "1",
+            "--encoder", "hf_vjepa2",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    summary = json.loads((tmp_path / "render_train_rl.json").read_text())
+    cfg = summary["config_serializable"]
+    train = summary["train"]
+
+    # The encoder kind made it into the summary.
+    assert cfg["encoder_kind"] == "hf_vjepa2"
+    # Force policy-encoder override took effect.
+    assert cfg["policy_encoder"] == "state_mlp"
+    # Train phase ran the requested 4 steps (n_train_steps reflects the
+    # JEPA-loop count, not optimizer steps).
+    assert train["n_train_steps"] == 4
+    # LoRA subset stats captured by the shim.
+    assert train["hf_lora_trainable_params"] > 0
+    assert train["hf_lora_total_params"] > train["hf_lora_trainable_params"]
+    # Final loss is finite (HF encoder's random init still produces a
+    # well-defined loss surface).
+    assert np.isfinite(train["final_total_loss"])
+    # Outer loop ran the requested 1 iter.
+    assert summary["outer_loop"]["n_iters"] == 1
+    assert len(summary["outer_loop"]["per_iter"]) == 1
+    # Notes block mentions the shim path.
+    notes = " ".join(summary["notes"])
+    assert "hf_vjepa2" in notes or "hf_vjepa_shim" in notes, (
+        f"notes must mention the HF encoder path; got: {notes[:300]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# W2.19: HF encoder + LatentRolloutPlanner seam (subprocess)
+# ---------------------------------------------------------------------------
+
+
+def test_orchestrator_hf_encoder_with_planner_smoke_runs_end_to_end(
+    tmp_path: Path,
+) -> None:
+    """``--encoder hf_vjepa2 --policy-encoder tiny_vjepa2`` closes the
+    RLinf-shape loop with HF VJEPA2Model over the LatentRolloutPlanner.
+
+    W2.18 proved the encoder swap (but forced ``--policy-encoder
+    state_mlp``); W2.19 closes the planner seam by duck-typing
+    :class:`LatentRolloutPlanner` against
+    :class:`worldfoundry_train.model.hf_vjepa_shim.HfVJEPA2EncoderShim`
+    and giving :class:`VisionPolicy` an HF-backed ``from_hf_image_obs``
+    factory. This test runs the full v2.2 loop with both switches
+    flipped and asserts the image-policy path is active (HF encoder
+    over RGB -> mean-pool -> tiny policy/value head), not the
+    legacy state MLP.
+
+    Gated on ``transformers>=5.1.0`` -- if not installed, skip
+    (don't fail). Matches the W2.18 subprocess test contract.
+    """
+    pytest.importorskip("transformers")
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+            "--height", "32", "--width", "32", "--num-steps", "4",
+            "--ppo-env-steps", "4", "--num-outer-iters", "1",
+            "--num-train-per-iter", "2", "--num-ppo-epochs", "1",
+            "--encoder", "hf_vjepa2",
+            "--policy-encoder", "tiny_vjepa2",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    summary = json.loads((tmp_path / "render_train_rl.json").read_text())
+    cfg = summary["config_serializable"]
+    train = summary["train"]
+    pol = summary["policy_bootstrap"]
+
+    # Encoder + policy encoders both made it into the summary.
+    assert cfg["encoder_kind"] == "hf_vjepa2"
+    # W2.19 invariant: --policy-encoder tiny_vjepa2 stays on the
+    # planner path (no longer forced to state_mlp by the encoder
+    # cross-validation removed in W2.19).
+    assert cfg["policy_encoder"] == "tiny_vjepa2", (
+        f"policy_encoder must remain 'tiny_vjepa2' to exercise the "
+        f"LatentRolloutPlanner seam; got {cfg['policy_encoder']!r}"
+    )
+    # Train phase ran the requested 4 steps (n_train_steps reflects
+    # the JEPA-loop count, not optimizer steps).
+    assert train["n_train_steps"] == 4
+    # LoRA subset stats captured by the shim.
+    assert train["hf_lora_trainable_params"] > 0
+    assert train["hf_lora_total_params"] > train["hf_lora_trainable_params"]
+    # Final loss is finite (HF encoder's random init + planner still
+    # produces a well-defined loss surface).
+    assert np.isfinite(train["final_total_loss"])
+    # Image-policy path is active: n_policy_params must reflect the
+    # HF-backed TinyVJEPA2Encoder via VisionPolicy.from_hf_image_obs
+    # (≫10M) rather than a tiny state MLP (~2-3k params).
+    assert pol["n_policy_params"] > 10_000_000, (
+        f"n_policy_params must reflect the HF-backed image-policy path "
+        f"(vision backbone + policy head); got {pol['n_policy_params']}"
+    )
+    # Outer loop ran the requested 1 iter.
+    assert summary["outer_loop"]["n_iters"] == 1
+    assert len(summary["outer_loop"]["per_iter"]) == 1
+    # Notes block mentions both the HF encoder AND the planner path.
+    notes = " ".join(summary["notes"])
+    assert "hf_vjepa2" in notes, (
+        f"notes must mention the HF encoder path; got: {notes[:300]}"
+    )
+    assert "tiny_vjepa2" in notes, (
+        f"notes must mention the planner encoder path "
+        f"(policy_encoder=tiny_vjepa2); got: {notes[:300]}"
+    )

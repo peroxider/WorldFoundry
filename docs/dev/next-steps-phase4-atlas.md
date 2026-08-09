@@ -800,4 +800,122 @@ move to the bottom of the queue.
   606 passed / 1 skipped，无回归。剩余的 Atlas 上机步骤
   （`scripts/w20_atlas_smoke.sh` 5/100 step smoke +
   `bench_results/atlas_baseline/single_card.json`）等硬件窗口。
+- **W2.16 — FrankaKitchen RGB + action transitions wired into the
+  world-model train phase**: `worldfoundry_rl/env_franka_kitchen.py`
+  gains `last_frame()` + `render_failures` (render seam off
+  `physics.render(...)`), `worldfoundry_rl/data/franka_video_collector.py`
+  drives the env for `num_clips * frames_per_clip` steps and writes the
+  Vjepa2Dataset manifest + aligned `(frames, actions)` arrays,
+  `worldfoundry_rl/data/franka_dataset.py` ships
+  `FrankaTransitionDataset`, and `scripts/render_train_rl_cpu.py` adds
+  `--data-source {synthetic, franka_kitchen}` (cross-validated against
+  `--env`). 3 new tests in `worldfoundry_rl/tests/test_franka_video_collector.py`
+  (dm_control gated). Default path (`--data-source=synthetic`) keeps
+  the v2.x byte-level behavior.
+- **W2.17 — Action-conditioned multi-step latent rollout replaces the
+  v2.x zero-pixels placeholder**: `worldfoundry_train/model/latent_rollout.py`
+  adds `LatentRolloutPlanner` (encoder + target + predictor + decoder,
+  with `reset_context / predict_step / predict_sequence` and the
+  `mask_all_tokens` helper), `worldfoundry_rl/vision_policy.py` gains
+  `VisionPolicy.from_image_obs` (frozen `TinyVJEPA2Encoder` + mean-pool
+  adapter), and `scripts/render_train_rl_cpu.py` adds
+  `--policy-encoder {state_mlp, tiny_vjepa2}` +
+  `--rollout-horizon N` (default `1` keeps v2.x). 4 new tests in
+  `worldfoundry_train/tests/test_latent_rollout.py` (horizon shape +
+  action-conditioning L2 > 1e-3 + grad flows through `_action_proj` +
+  mask helper). Smoke (`--policy-encoder tiny_vjepa2 --rollout-horizon 2`)
+  ends with finite `reward_post_update`; baseline
+  (`--policy-encoder state_mlp`) is byte-equivalent to v2.15. Sets the
+  seam for swapping the encoder to the official V-JEPA 2 1.2B
+  checkpoint (out of scope this session).
+- **W2.18 — HF `VJEPA2Model` + LoRA CPU smoke (closes the
+  standing goal)**: third `--encoder {tiny, hf_vjepa2}` option wired
+  into `scripts/render_train_rl_cpu.py`. New
+  `worldfoundry_train/model/hf_vjepa_shim.py` ships
+  `HfVJEPA2EncoderShim` / `HfJEPAPredictorShim` / `HfPixelDecoderShim`
+  mirroring the `TinyVJEPA2Encoder` surface (LoRA via
+  `worldfoundry_train.model.lora_wrapper.build_lora_model`,
+  `freeze_encoder()`, `lora_stats()`, `deep_copy_base()`,
+  `signature()` for checkpoint round-trip). Random-init factory
+  (`hidden_size=64`, `num_hidden_layers=2`, `tubelet_size=1`) — no
+  HF Hub call. `worldfoundry_train/ema_compat.py:load_tiny_checkpoint`
+  branches on `encoder_kind == "hf_vjepa2"` to rebuild via the shim
+  factory and reload state with `strict=False` (LoRA-wrapped
+  `VJEPA2Model` state includes HF-internal predictor submodule
+  keys). `_encoder_lora_stats` helper surfaces `hf_lora_trainable_params`
+  in the summary; tiny path reports zero. 5 new unit tests in
+  `worldfoundry_train/tests/test_hf_vjepa_shim.py` (config
+  round-trip, forward shape matches tiny encoder, LoRA subset
+  positive-and-small, predictor ignores `action`, signature
+  round-trip rebuilds identical param count) + 1 subprocess test in
+  `worldfoundry_train/tests/test_render_train_rl_cpu.py`
+  (gated on `transformers>=5.1.0`). Subprocess smoke
+  (`--encoder hf_vjepa2 --num-clips 2 --num-steps 4 --num-outer-iters 1`)
+  ends with `rc=0`, `encoder_kind == "hf_vjepa2"`, finite
+  `train.final_total_loss`, `hf_lora_trainable_params = 189,440` vs
+  `n_encoder_params = 21,649,664` (LoRA subset ~0.87%, G4 invariant).
+  Default tiny path byte-compat with W2.17 baseline
+  (`n_encoder_params=24,416`). The seam proves out on CPU; real
+  1.2B end-to-end is Atlas-side.
+- **W2.19 — Extend the W2.18 HF encoder seam to the
+  `LatentRolloutPlanner` + `VisionPolicy`** (closing the full
+  RLinf-shape recurrent latent-rollout loop with an HF VJEPA2Model
+  over RGB). W2.18 forced `--policy-encoder state_mlp` for the
+  HF smoke; W2.19 removes that cross-validation and
+  duck-types `LatentRolloutPlanner` against the shim. Edits:
+  `worldfoundry_train/model/latent_rollout.py` — loosen type
+  annotations on `__init__` (`encoder/target_encoder/predictor/
+  decoder: nn.Module`) and gate the action-dim wiring check via
+  `getattr(predictor, "action_dim", None)` so the W2.18 HF
+  predictor shim (which accepts-and-ignores `action`) drops in.
+  `worldfoundry_train/model/hf_vjepa_shim.py` — add
+  `self.encoder_config = encoder_config` alias on
+  `HfPixelDecoderShim.__init__` so `decoder.encoder_config.
+  image_size` resolves. `worldfoundry_rl/vision_policy.py` —
+  add `VisionPolicy.from_hf_image_obs(...)` mirroring
+  `from_image_obs` over the LoRA-wrapped HF encoder (mean-pool
+  `(B, T*Hg*Wg, embed_dim) -> (B, embed_dim)`). `scripts/render_
+  train_rl_cpu.py` — branch `policy_bootstrap_phase` image-policy
+  construction on `cfg.encoder_kind` and branch the target-encoder
+  rebuild (deep-copy base + freeze for HF; the existing
+  `load_state_dict` for tiny). 1 new subprocess test in
+  `worldfoundry_train/tests/test_render_train_rl_cpu.py`:
+  `test_orchestrator_hf_encoder_with_planner_smoke_runs_end_to_end`
+  (gated on `transformers>=5.1.0`). Subprocess smoke
+  (`--encoder hf_vjepa2 --policy-encoder tiny_vjepa2 --num-clips 2
+  --num-steps 4 --num-outer-iters 1`) ends with `rc=0`,
+  `encoder_kind == "hf_vjepa2"`, `policy_encoder == "tiny_vjepa2"`
+  (planner path active), finite `train.final_total_loss = 28.3448`,
+  `hf_lora_trainable_params = 189,440`,
+  `n_policy_params = 21,649,993` (HF encoder over RGB + tiny
+  policy/value head — proves the image-policy path is wired, not
+  the legacy `state_mlp`). Full suite: **447/447 worldfoundry_train
+  + 121/121 worldfoundry_rl** green; ruff clean on every file I
+  touched.
+- **W2.20 — Multi-iter real-env proof of the W2.19 seam**: ran
+  `--encoder hf_vjepa2 --policy-encoder tiny_vjepa2 --env
+  franka_kitchen --data-source franka_kitchen --num-outer-iters 3
+  --num-train-per-iter 4 --num-ppo-epochs 2 --ppo-env-steps 16
+  --num-clips 3 --num-steps 6 --seed 42` end-to-end on a real
+  dm_control 9-DoF manipulation env (no schema changes; just the
+  smoke args). `mean_wm_total_loss` decreases monotonically across
+  iters (26.1452 → 24.2227 → 21.1527) — the loop's most reliable
+  learning signal — and within-iter PPO loss drops in every iter
+  (5.0089→4.9969, 3.0487→3.0405, 72.4426→72.2255). `reward_trajectory
+  = [0, 0, 0]` because `lift_brick_features` needs > 16 random env
+  steps to touch the brick — same baseline behavior as the
+  seed=42 single-iter W2.16 tiny smoke (see
+  `docs/dev/cpu-rti-quickstart.md` §"`reward_trend_delta` is a
+  diagnostic, not a pass/fail gate"). Artifacts saved under
+  `bench_results/w2_20_hf_planner_franka_iter/`. Closes the
+  standing-goal "realistic multi-iter" gap on the HF+planner seam.
+- **W2.20 multi-seed sweep** — extending the W2.20 single-iter
+  proof to seeds 7, 99, 123 alongside seed=42 (4/4 smokes rc=0).
+  All four seeds show monotone `mean_wm_total_loss` decrease
+  across 3 outer iters (Δ iter-0 → iter-2 in [4.66, 5.44], mean
+  ≈ 5.10 — seed stable). Multi-seed table persisted under
+  `bench_results/w2_20_hf_planner_franka_multi_seed/summary.md`;
+  per-seed smoke artifacts under
+  `bench_results/w2_20_hf_planner_franka_seed{7,99,123}/`. Closes
+  the standing-goal "multi-seed stable" gap on the W2.19 seam.
 - Phase-3 final HEAD: `c9e7197` (W32)

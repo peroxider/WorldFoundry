@@ -122,6 +122,200 @@ class VisionPolicy(nn.Module):
             **kwargs,
         )
 
+    @classmethod
+    def from_image_obs(
+        cls,
+        image_size: int,
+        action_dim: int,
+        *,
+        patch_size: int = 8,
+        embed_dim: int = 96,
+        depth: int = 2,
+        num_heads: int = 3,
+        in_channels: int = 3,
+        freeze_encoder: bool = True,
+        **kwargs,
+    ) -> "VisionPolicy":
+        """Build a VisionPolicy backed by :class:`TinyVJEPA2Encoder`.
+
+        Used by the W2.17 multi-step latent rollout path: the actor
+        receives ``(B, T, 3, H, W)`` pixel batches, the encoder maps
+        them to ``(B, T*Hg*Wg, embed_dim)``, and we pool to
+        ``(B, embed_dim)`` by mean-pooling the token sequence so the
+        policy head sees a single feature vector per batch element.
+
+        Args:
+            image_size: spatial side length (H == W).
+            patch_size: encoder patch size; must divide ``image_size``.
+            embed_dim: encoder width; equals ``feature_dim``.
+            depth/num_heads: encoder depth / attention heads.
+            in_channels: number of input channels (default 3 RGB).
+            freeze_encoder: when ``True`` (default), the encoder
+                parameters have ``requires_grad=False`` so the policy
+                update does not perturb the world model. Set to
+                ``False`` for end-to-end fine-tuning runs.
+            **kwargs: forwarded to :class:`VisionPolicy` (log_std
+                bounds, etc.).
+        """
+        # Local import keeps the state-only factory import-light.
+        from worldfoundry_train.model.tiny_jepa import (
+            TinyEncoderConfig,
+            TinyVJEPA2Encoder,
+        )
+
+        if image_size < 8 or patch_size < 1:
+            raise ValueError(
+                f"image_size={image_size} and patch_size={patch_size} "
+                f"must be >= 8 and >= 1 respectively"
+            )
+        if image_size % patch_size != 0:
+            raise ValueError(
+                f"image_size={image_size} must be divisible by "
+                f"patch_size={patch_size}"
+            )
+
+        config = TinyEncoderConfig(
+            image_size=int(image_size),
+            patch_size=int(patch_size),
+            in_channels=int(in_channels),
+            embed_dim=int(embed_dim),
+            depth=int(depth),
+            num_heads=int(num_heads),
+        )
+        encoder = TinyVJEPA2Encoder(config)
+        if freeze_encoder:
+            for p in encoder.parameters():
+                p.requires_grad_(False)
+
+        # Wrap encoder so its ``(B, T*Hg*Wg, embed_dim)`` output collapses
+        # to ``(B, embed_dim)`` via mean pooling over the token sequence.
+        class _Pool(nn.Module):
+            def __init__(self, backbone: nn.Module) -> None:
+                super().__init__()
+                self.backbone = backbone
+
+            def forward(self, obs: Tensor) -> Tensor:
+                # ``obs`` may be (B, T, 3, H, W) or (B, 3, H, W); we
+                # always treat it as (B, T, 3, H, W) by adding a leading
+                # time dim if needed.
+                if obs.dim() == 4:
+                    obs = obs.unsqueeze(1)
+                out = self.backbone(obs).last_hidden_state
+                # (B, T*Hg*Wg, embed_dim) -> (B, embed_dim)
+                return out.mean(dim=1)
+
+        pooled = _Pool(encoder)
+        return cls(
+            encoder=pooled,
+            feature_dim=int(embed_dim),
+            action_dim=int(action_dim),
+            **kwargs,
+        )
+
+    @classmethod
+    def from_hf_image_obs(
+        cls,
+        image_size: int,
+        action_dim: int,
+        *,
+        patch_size: int = 8,
+        embed_dim: int = 64,
+        depth: int = 2,
+        num_heads: int = 2,
+        in_channels: int = 3,
+        tubelet_size: int = 1,
+        frames_per_clip: int = 4,
+        lora_r: int = 4,
+        lora_alpha: int = 8,
+        lora_dropout: float = 0.0,
+        freeze_encoder: bool = True,
+        **kwargs,
+    ) -> "VisionPolicy":
+        """Build a VisionPolicy backed by HF VJEPA2Model + LoRA via shim.
+
+        Mirror of :meth:`from_image_obs` for the W2.18+ HF encoder
+        path: the actor ingests ``(B, T, 3, H, W)`` pixel batches,
+        the LoRA-wrapped :class:`HfVJEPA2EncoderShim` maps them to
+        ``(B, T*Hg*Wg, embed_dim)``, and we mean-pool to
+        ``(B, embed_dim)`` for the policy head. Defaults are tuned
+        for the CPU smoke (matches the orchestrator's
+        ``_build_stack`` HF branch).
+
+        Args:
+            image_size: spatial side length (H == W).
+            patch_size: encoder patch size; must divide ``image_size``.
+            embed_dim: HF ``hidden_size``; equals ``feature_dim``.
+            depth/num_heads: HF ``num_hidden_layers`` /
+                ``num_attention_heads``.
+            in_channels: number of input channels (default 3 RGB).
+            tubelet_size: HF temporal patch size. ``1`` matches the
+                tiny encoder's token count (``T*Hg*Wg``).
+            frames_per_clip: HF ``frames_per_clip``; the encoder
+                expects ``(B, T, 3, H, W)`` with ``T`` matching this.
+            lora_r/lora_alpha/lora_dropout: LoRA wrap parameters
+                forwarded to
+                :meth:`HfVJEPA2EncoderShim.from_random_init`.
+            freeze_encoder: when ``True`` (default), the encoder
+                parameters have ``requires_grad=False`` so the policy
+                update does not perturb the world model.
+            **kwargs: forwarded to :class:`VisionPolicy` (log_std
+                bounds, etc.).
+        """
+        from worldfoundry_train.model.hf_vjepa_shim import HfVJEPA2EncoderShim
+
+        if image_size < 8 or patch_size < 1:
+            raise ValueError(
+                f"image_size={image_size} and patch_size={patch_size} "
+                f"must be >= 8 and >= 1 respectively"
+            )
+        if image_size % patch_size != 0:
+            raise ValueError(
+                f"image_size={image_size} must be divisible by "
+                f"patch_size={patch_size}"
+            )
+
+        encoder = HfVJEPA2EncoderShim.from_random_init(
+            image_size=int(image_size),
+            patch_size=int(patch_size),
+            in_channels=int(in_channels),
+            hidden_size=int(embed_dim),
+            num_hidden_layers=int(depth),
+            num_attention_heads=int(num_heads),
+            tubelet_size=int(tubelet_size),
+            frames_per_clip=int(frames_per_clip),
+            lora_r=int(lora_r),
+            lora_alpha=int(lora_alpha),
+            lora_dropout=float(lora_dropout),
+        )
+        if freeze_encoder:
+            encoder.freeze_encoder()
+
+        # Wrap encoder so its ``(B, T*Hg*Wg, embed_dim)`` output collapses
+        # to ``(B, embed_dim)`` via mean pooling over the token sequence.
+        # Identical pooling pattern to ``from_image_obs``.
+        class _Pool(nn.Module):
+            def __init__(self, backbone: nn.Module) -> None:
+                super().__init__()
+                self.backbone = backbone
+
+            def forward(self, obs: Tensor) -> Tensor:
+                # ``obs`` may be (B, T, 3, H, W) or (B, 3, H, W); we
+                # always treat it as (B, T, 3, H, W) by adding a leading
+                # time dim if needed.
+                if obs.dim() == 4:
+                    obs = obs.unsqueeze(1)
+                out = self.backbone(obs).last_hidden_state
+                # (B, T*Hg*Wg, embed_dim) -> (B, embed_dim)
+                return out.mean(dim=1)
+
+        pooled = _Pool(encoder)
+        return cls(
+            encoder=pooled,
+            feature_dim=int(embed_dim),
+            action_dim=int(action_dim),
+            **kwargs,
+        )
+
     # ------------------------------------------------------------------
     # forward / distribution / sample / evaluate
     # ------------------------------------------------------------------

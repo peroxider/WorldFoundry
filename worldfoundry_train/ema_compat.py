@@ -143,6 +143,97 @@ def load_tiny_checkpoint(
             raise KeyError(f"tiny checkpoint {path} missing key: {key}")
 
     cfg_dict = dict(payload["encoder_config"])
+    # W2.18+: the HF encoder path writes a ``encoder_kind == "hf_vjepa2"``
+    # marker into ``encoder_config.signature()``. Branch here so the
+    # LoRA-wrapped HF state can be rebuilt via the shim factory. Tiny
+    # checkpoints (and any pre-W2.18 checkpoint that omits the marker)
+    # keep the v2.x tiny path.
+    if cfg_dict.get("encoder_kind") == "hf_vjepa2":
+        from worldfoundry_train.model.hf_vjepa_shim import (
+            HfJEPAPredictorShim,
+            HfPixelDecoderShim,
+            HfVJEPA2EncoderShim,
+        )
+        # Reconstruct the random-init factory kwargs from the saved
+        # signature. Defaults match the train-phase defaults
+        # (``scripts/render_train_rl_cpu.py:_build_stack`` HF branch).
+        hf_kwargs = {
+            "image_size": int(cfg_dict["image_size"]),
+            "patch_size": int(cfg_dict["patch_size"]),
+            "in_channels": int(cfg_dict["in_channels"]),
+            "hidden_size": int(cfg_dict["hidden_size"]),
+            "num_hidden_layers": int(cfg_dict["depth"]),
+            "num_attention_heads": int(cfg_dict["num_attention_heads"]),
+            "tubelet_size": int(cfg_dict["tubelet_size"]),
+            "frames_per_clip": int(cfg_dict["frames_per_clip"]),
+            "lora_r": int(cfg_dict.get("lora_r", 4)),
+            "lora_alpha": int(cfg_dict.get("lora_alpha", 8)),
+            "lora_dropout": float(cfg_dict.get("lora_dropout", 0.0)),
+        }
+        online = HfVJEPA2EncoderShim.from_random_init(**hf_kwargs)
+        # The LoRA-wrapped VJEPA2Model state_dict includes the HF
+        # model's internal predictor submodule (12 transformer layers
+        # with their own LoRA adapters); these keys don't match a fresh
+        # instance, so the encoder load uses ``strict=False`` and the
+        # unmatched keys are dropped. Predictor + decoder are local
+        # modules and load strictly.
+        missing_unexpected = online.load_state_dict(
+            payload["encoder_state"], strict=False,
+        )
+        # Sanity-check the G4 invariant: we should have loaded at least
+        # the LoRA adapters from the saved state. "missing" must be
+        # empty (LoRA adapters were initialised in the factory and are
+        # therefore present in both saved + fresh instances).
+        # The "unexpected" check is intentionally relaxed: VJEPA2Model
+        # with ``skip_predictor=True`` may or may not expose its
+        # internal predictor submodule's parameters in
+        # ``state_dict()`` (depends on HF's lazy-init policy), so we
+        # can't guarantee any specific "unexpected" keys.
+        if missing_unexpected.missing_keys:
+            raise RuntimeError(
+                f"HF encoder state load had unexpected missing keys: "
+                f"{missing_unexpected.missing_keys[:5]}..."
+            )
+        # Predictor: re-instantiate via the shim with the same grid
+        # geometry the train phase used. ``grid_size`` is derived from
+        # ``image_size // patch_size`` (square assumption matches the
+        # orchestrator's HF branch).
+        Hg = int(cfg_dict["image_size"]) // int(cfg_dict["patch_size"])
+        Wg = Hg
+        N = int(cfg_dict["frames_per_clip"]) * Hg * Wg
+        predictor = HfJEPAPredictorShim(
+            num_patches=N,
+            grid_size=(int(cfg_dict["frames_per_clip"]), Hg, Wg),
+            encoder_dim=int(cfg_dict["embed_dim"]),
+            predictor_dim=64, depth=2, num_heads=2,
+        )
+        predictor.load_state_dict(payload["predictor_state"])
+        decoder = HfPixelDecoderShim(online.config)
+        decoder.load_state_dict(payload["decoder_state"])
+
+        online = online.to(device)
+        predictor = predictor.to(device)
+        decoder = decoder.to(device)
+
+        bundle = {
+            "encoder": online,
+            "predictor": predictor,
+            "decoder": decoder,
+            "step": int(payload.get("step", 0)),
+            "encoder_config": cfg_dict,
+        }
+
+        if "target_state" in payload:
+            target = HfVJEPA2EncoderShim.from_random_init(**hf_kwargs)
+            target.load_state_dict(payload["target_state"], strict=False)
+            target = target.to(device)
+            target.eval()
+            for p in target.parameters():
+                p.requires_grad_(False)
+            bundle["target"] = target
+
+        return bundle
+
     cfg = TinyEncoderConfig(**{k: cfg_dict[k] for k in (
         "image_size", "patch_size", "in_channels", "embed_dim",
         "depth", "num_heads", "mlp_ratio",

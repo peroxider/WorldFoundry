@@ -15,7 +15,7 @@ pattern with a tiny (24k-param) stack:
 | Phase | What runs | Output |
 |---|---|---|
 | **Render** | cv2 → real `.mp4` clips + CSV manifest | `videos/clip_*.mp4`, `manifest.csv` |
-| **Train** | TinyViT encoder + action-conditioned predictor + pixel decoder | `tiny_jepa_v2.pt` (real checkpoint) |
+| **Train** | TinyViT encoder + action-conditioned predictor + pixel decoder (or HF `VJEPA2Model` + LoRA via `--encoder hf_vjepa2`) | `tiny_jepa_v2.pt` (real checkpoint) |
 | **Inference** | pixel + latent cosine probes, action-conditioned fill + decode | `recon_cosine`, `latent_cosine` |
 | **Policy** | rollout (grad enabled through predictor) + multi-epoch PPO update | `mean_reward_pre/post`, `policy_loss_initial/final` |
 | **Outer loop** | world-model ↔ PPO alternation, RLinf-style | `reward_trajectory`, `per_iter` |
@@ -242,7 +242,15 @@ Highlights:
 
 - **Not a faithful V-JEPA 2 1.2B reproduction.** The tiny stack is
   interface-compatible (same forward signature, same mask semantics)
-  but the encoder is 24k params, not 1.2B.
+  but the encoder is 24k params, not 1.2B. The W2.18 `--encoder
+  hf_vjepa2` smoke uses a randomly-initialised HF config
+  (`hidden_size=64`, `num_hidden_layers=2`) to prove the encoder
+  seam end-to-end on CPU — no HF Hub call. W2.19 extends the seam
+  to the `LatentRolloutPlanner` and `VisionPolicy`, so
+  `--encoder hf_vjepa2 --policy-encoder tiny_vjepa2` runs the
+  full RLinf-shape recurrent latent-rollout path with an HF
+  VJEPA2Model over RGB. Real 1.2 B weights live on Atlas and are
+  out of scope for this box.
 - **Mock env by default.** `--env=mock` (the v2.x default) is an
   in-process random agent whose reward is `-||state||² - 0.1*||action||²`.
   State dimension is `--obs-dim` (default 8). Opt-in to a real
@@ -250,12 +258,11 @@ Highlights:
   see `worldfoundry_rl/env_franka_kitchen.py` for the dm_control.
   manipulation backend (Kinova Jaco arm, `lift_brick_features`
   task by default; 9-dim action, 6-dim flat obs, real task reward).
-  The world model is **still** trained on synthetic cv2 video, not
-  on FrankaKitchen pixel observations — so the imagined latents
-  in the policy phase are a structured noise prior mixed 50/50
-  with real FrankaKitchen state, not a faithful FrankaKitchen
-  world model. Wiring the render phase to FrankaKitchen pixel
-  obs is a separate v2.16+ item.
+  Default `--data-source=synthetic` still feeds the world-model train
+  phase procedural cv2 .mp4s; pass `--data-source=franka_kitchen` to
+  drive the same env through `collect_franka_video_clips` and train
+  on the resulting real RGB + aligned action transitions
+  (W2.16, cross-validates against `--env=franka_kitchen`).
 - **Not multi-process.** `actor_pool.py` / `learner_pool.py` /
   Ray / async rollouts are explicitly out of scope (cluster segment
   of W37). This is single-process, single-thread.
@@ -282,6 +289,17 @@ Highlights:
 | `--seed` | 42 | base RNG seed |
 | `--env` | `mock` | `mock` (in-process random agent at ~3.5 s smoke) or `franka_kitchen` (real MuJoCo 9-DoF manipulation via dm_control.manipulation; smoke ~5-10 s) |
 | `--franka-task-name` | `lift_brick_features` | dm_control.manipulation task when `--env=franka_kitchen`. Other options: `reach_site_features`, `place_brick_features`, `stack_2_bricks_features` |
+| `--data-source` | `synthetic` | W2.16+: source of clips for the train phase. `synthetic` keeps the v2.x procedural cv2 .mp4s; `franka_kitchen` drives `--env=franka_kitchen` through `collect_franka_video_clips` and trains on real RGB + aligned actions. |
+| `--policy-encoder` | `state_mlp` | W2.17+: actor encoder. `state_mlp` keeps the v2.x flat-obs MLP; `tiny_vjepa2` swaps in a frozen `TinyVJEPA2Encoder` so the actor ingests RGB and the latent rollout flows through the encoder + predictor. |
+| `--rollout-horizon` | `1` | W2.17+: number of latent-rollout steps the `LatentRolloutPlanner` chains between env steps. `1` matches the v2.x single-pass behavior; `>=2` walks the predictor recurrently. |
+| `--render-height` / `--render-width` | `32` / `32` | dm_control render resolution forwarded to `FrankaKitchenEnv` when `--data-source=franka_kitchen`. |
+| `--camera-id` | `0` | dm_control camera id forwarded to `FrankaKitchenEnv` render. |
+| `--data-source` | `synthetic` | W2.16+: source of clips for the train phase. `synthetic` keeps the v2.x procedural cv2 .mp4s; `franka_kitchen` drives `--env=franka_kitchen` through `collect_franka_video_clips` and trains on real RGB + aligned actions. |
+| `--policy-encoder` | `state_mlp` | W2.17+: actor encoder. `state_mlp` keeps the v2.x flat-obs MLP; `tiny_vjepa2` swaps in a frozen `TinyVJEPA2Encoder` so the actor ingests RGB and the latent rollout flows through the encoder + predictor. |
+| `--rollout-horizon` | `1` | W2.17+: number of latent-rollout steps the `LatentRolloutPlanner` chains between env steps. `1` matches the v2.x single-pass behavior; `>=2` walks the predictor recurrently. |
+| `--render-height` / `--render-width` | `32` / `32` | dm_control render resolution forwarded to `FrankaKitchenEnv` when `--data-source=franka_kitchen`. |
+| `--camera-id` | `0` | dm_control camera id forwarded to `FrankaKitchenEnv` render. |
+| `--encoder` | `tiny` | W2.18+: encoder kind. `tiny` keeps the v2.x 24k-param `TinyVJEPA2Encoder` stack (default); `hf_vjepa2` swaps in a randomly-initialised HF `VJEPA2Model` + LoRA via `worldfoundry_train.model.hf_vjepa_shim` to prove the encoder seam without downloading 1.2 B weights. W2.19+ removes the W2.18 `--policy-encoder state_mlp` cross-validation, so `--encoder hf_vjepa2 --policy-encoder tiny_vjepa2` runs the full RLinf-shape `LatentRolloutPlanner` seam end-to-end. |
 
 ## See also
 
