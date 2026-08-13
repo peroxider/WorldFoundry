@@ -6,12 +6,18 @@ without modifying any existing test. Phase-1 contract preserved
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
 import pytest
 
-from worldfoundry_train.train import parse_args, run_fsdp_training
+from worldfoundry_train.train import (
+    _apply_backend_device,
+    _report_backends,
+    parse_args,
+    run_fsdp_training,
+)
 
 
 def test_cli_help_lists_parallel_and_steps():
@@ -112,3 +118,40 @@ def test_parse_args_defaults_checkpoint_flags_to_none():
     assert args.checkpoint_dir is None
     assert args.resume_from is None
     assert args.save_every_n is None
+
+
+# --- backends: map wiring (W multi-axis pluggable) ---
+
+def test_apply_backend_device_pins_cpu(monkeypatch):
+    monkeypatch.delenv("WORLDFORGE_DEVICE", raising=False)
+    _apply_backend_device({"backends": {"device": "cpu"}})
+    assert os.environ.get("WORLDFORGE_DEVICE") == "cpu"
+
+
+def test_apply_backend_device_pins_npu(monkeypatch):
+    monkeypatch.delenv("WORLDFORGE_DEVICE", raising=False)
+    _apply_backend_device({"backends": {"device": "npu"}})
+    assert os.environ.get("WORLDFORGE_DEVICE") == "npu"
+
+
+def test_apply_backend_device_auto_leaves_env_untouched(monkeypatch):
+    monkeypatch.setenv("WORLDFORGE_DEVICE", "npu")
+    _apply_backend_device({"backends": {"device": "auto"}})
+    assert os.environ.get("WORLDFORGE_DEVICE") == "npu"
+
+
+def test_apply_backend_device_missing_block_leaves_env(monkeypatch):
+    monkeypatch.delenv("WORLDFORGE_DEVICE", raising=False)
+    _apply_backend_device({"training": {}})
+    assert os.environ.get("WORLDFORGE_DEVICE") is None
+
+
+def test_report_backends_validates_map(capsys):
+    _report_backends({"backends": {"device": "cpu", "sim_env": "mock"}})
+    out = capsys.readouterr().out
+    assert "device" in out and "cpu" in out and "sim_env" in out
+
+
+def test_report_backends_rejects_unknown_name():
+    with pytest.raises(KeyError):
+        _report_backends({"backends": {"device": "tpu"}})

@@ -229,6 +229,13 @@ class VisionPolicy(nn.Module):
         lora_alpha: int = 8,
         lora_dropout: float = 0.0,
         freeze_encoder: bool = True,
+        # W2.22+: real-weights routing. When ``pretrained_repo_id`` is
+        # set the factory calls ``HfVJEPA2EncoderShim.from_pretrained``
+        # (loads HF VJEPA2Model from Hub / local path) instead of
+        # ``from_random_init``. ``None`` (default) preserves the
+        # W2.18/19 random-init behaviour.
+        pretrained_repo_id: str | None = None,
+        pretrained_revision: str | None = None,
         **kwargs,
     ) -> "VisionPolicy":
         """Build a VisionPolicy backed by HF VJEPA2Model + LoRA via shim.
@@ -275,6 +282,20 @@ class VisionPolicy(nn.Module):
             )
 
         encoder = HfVJEPA2EncoderShim.from_random_init(
+            image_size=int(image_size),
+            patch_size=int(patch_size),
+            in_channels=int(in_channels),
+            hidden_size=int(embed_dim),
+            num_hidden_layers=int(depth),
+            num_attention_heads=int(num_heads),
+            tubelet_size=int(tubelet_size),
+            frames_per_clip=int(frames_per_clip),
+            lora_r=int(lora_r),
+            lora_alpha=int(lora_alpha),
+            lora_dropout=float(lora_dropout),
+        ) if not pretrained_repo_id else HfVJEPA2EncoderShim.from_pretrained(
+            pretrained_repo_id=str(pretrained_repo_id),
+            revision=pretrained_revision,
             image_size=int(image_size),
             patch_size=int(patch_size),
             in_channels=int(in_channels),

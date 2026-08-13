@@ -1,0 +1,16 @@
+{
+  "label": "W2.22 real-1.2B ViT-L forward pass on Atlas NPU",
+  "mode": "npu",
+  "encoder_kind": "hf_vjepa2",
+  "pretrained_repo_id": "/data/hf_cache/models--facebook--vjepa2-vitl-fpc64-256/snapshots/b3c1679b7c34d3255ef3547f27c7b226aefab26f",
+  "load_seconds": 2.75,
+  "n_encoder_params": 328088448,
+  "hf_lora_trainable_params": 2117120,
+  "hf_lora_total_params": 328088448,
+  "encoder_output_shape": [
+    1,
+    8,
+    1024
+  ],
+  "npu_peak_memory_gb": 1.255
+}

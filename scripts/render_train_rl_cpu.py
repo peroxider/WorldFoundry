@@ -36,6 +36,11 @@ except ImportError:
 
 import numpy as np
 import torch
+
+try:
+    import cv2  # W25-cleanup: only imported for render_vs_predicted.png.
+except ImportError:
+    cv2 = None  # PNG generation is best-effort; the rest of inference_phase still works.
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -57,6 +62,25 @@ from worldfoundry_train.model.tiny_jepa import (
     TinyVJEPA2Encoder,
 )
 from worldfoundry_train.device import resolve_device, to_device
+from worldfoundry_common.backends import resolve_config
+
+
+def _rss_mb() -> float:
+    """Return current process RSS in MB via ``/proc/self/status``.
+
+    Linux-only. Returns ``-1.0`` on any read/parse failure so callers
+    can keep the metric in the summary even when ``/proc`` isn't
+    available (e.g. macOS dev machines, WSL oddities). Cheap to call
+    (~10us) -- reads a single line from a fixed-format file.
+    """
+    try:
+        with open('/proc/self/status') as fh:
+            for line in fh:
+                if line.startswith('VmRSS:'):
+                    return int(line.split()[1]) / 1024.0
+    except (OSError, ValueError):
+        pass
+    return -1.0
 
 
 @dataclass(frozen=True)
@@ -97,6 +121,16 @@ class V2Config:
     seed: int = 42
     encoder_embed_dim: int = 32
     encoder_depth: int = 2
+    # W22-quant: HF encoder dimensions (only effective when
+    # ``encoder_kind == "hf_vjepa2"``; the tiny path uses
+    # ``encoder_embed_dim`` / ``encoder_depth`` instead). Defaults
+    # match the W2.18 smoke (hidden_size=64, num_hidden_layers=2).
+    # Production-relevant scale-ups: hidden_size=1024,
+    # num_hidden_layers=24 gives ~326M params (V-JEPA 2 small);
+    # hidden_size=1536, num_hidden_layers=40 gives ~1.16B.
+    encoder_hidden_size: int = 64
+    encoder_num_layers: int = 2
+    encoder_num_heads: int = 2
     num_steps: int = 30
     learning_rate: float = 3.0e-4
     ema_momentum: float = 0.99
@@ -140,6 +174,37 @@ class V2Config:
     # :mod:`worldfoundry_train.model.hf_vjepa_shim`. No HF Hub call —
     # both paths are local.
     encoder_kind: str = "tiny"
+    # W22-quant: weight-only int8 quant on the HF encoder base. Only
+    # takes effect when ``encoder_kind == "hf_vjepa2"``; raises
+    # SystemExit when combined with ``encoder_kind == "tiny"`` because
+    # the tiny stack has no torchao integration. ``"none"`` (default)
+    # keeps the HF base in fp32. ``"w8_only"`` applies
+    # ``Int8WeightOnlyConfig`` BEFORE LoRA wrap (QLoRA order), cutting
+    # RSS by ~50% on a 326M encoder at ~1.25x fp32 forward cost on
+    # CPU. Measured live: 326M fp32 1.71 GB → W8 0.86 GB; 1.16B fp32
+    # 4.90 GB → W8 2.16 GB.
+    quant: str = "none"
+    # W2.22+: HF Hub repo ID for the encoder (when set, drives
+    # ``HfVJEPA2EncoderShim.from_pretrained`` instead of
+    # ``from_random_init``). ``None`` (default) keeps the W2.18 smoke
+    # behaviour. Round-tripped via ``config_serializable`` so the
+    # JSON summary records whether the run used real weights.
+    encoder_pretrained_repo_id: str | None = None
+    # W2.22+: HF Hub git revision pin (default ``None`` => ``main``).
+    encoder_pretrained_revision: str | None = None
+    # W2.22+: override for the HF encoder's tubelet_size. ``None``
+    # (default) keeps the W2.18 hardcoded ``tubelet_size=1``; setting
+    # it (e.g. ``2`` for ViT-L native) routes through the HF config
+    # if compatible. The W2.22 smoke runs ``tubelet_size=1`` for the
+    # seam-closure proof; realistic ``tubelet_size=2`` needs a
+    # predictor-grid change (future).
+    hf_tubelet_size: int | None = None
+    # W25-cleanup: when True, ``render_phase`` reuses an existing
+    # ``<out_dir>/manifest.csv`` instead of regenerating clips. The
+    # SystemExit (rc=2) on missing-manifest mirrors v1's ``--skip-render``
+    # behavior so test harnesses can re-use artifacts without paying the
+    # cv2.VideoWriter cost. Mirrors RecipeConfig.skip_render.
+    skip_render: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +212,24 @@ class V2Config:
 # ---------------------------------------------------------------------------
 
 def render_phase(cfg: V2Config) -> RenderOutput:
+    """Render synthetic ``.mp4`` clips + a manifest.
+
+    When ``cfg.skip_render`` is True (mirroring the W25-cleanup
+    v1 ``--skip-render`` semantic), reuses the existing manifest at
+    ``cfg.out_dir/manifest.csv`` instead of regenerating clips. Raises
+    :class:`SystemExit` (rc=2) if the manifest is missing — that's the
+    v1 contract: ``--skip-render`` is a test-harness shortcut, not a
+    corruption recovery tool.
+    """
+    if cfg.skip_render:
+        manifest = cfg.out_dir / "manifest.csv"
+        if not manifest.is_file():
+            print(
+                f"[RTI2] FATAL: --skip-render but manifest missing: {manifest}",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        return RenderOutput(manifest=manifest, elapsed_seconds=0.0)
     t0 = time.perf_counter()
     if cfg.data_source == "franka_kitchen":
         from worldfoundry_rl.data.franka_video_collector import (
@@ -245,21 +328,47 @@ def _build_stack(cfg: V2Config, device: str) -> tuple[
         # is required so HF's token count matches the v2.x mask layout
         # (``N = T * Hg * Wg``); HF defaults to ``tubelet_size=2``
         # which would emit ``(T // tubelet) * Hg * Wg`` tokens and
-        # mismatch the predictor's expected ``N``.
+        # mismatch the predictor's expected ``N``. W2.22+: a CLI
+        # override (``--tubelet-size``) can swap in ``tubelet_size=2``
+        # for native ViT-L geometry — the predictor grid needs a
+        # matching change (future).
         patch = 8
-        online = HfVJEPA2EncoderShim.from_random_init(
-            image_size=cfg.height, patch_size=patch,
-            hidden_size=64, num_hidden_layers=2,
-            num_attention_heads=2,
-            tubelet_size=1, frames_per_clip=cfg.frames_per_clip,
-            lora_r=4, lora_alpha=8, lora_dropout=0.0,
+        tubelet_size = (
+            int(cfg.hf_tubelet_size) if cfg.hf_tubelet_size is not None else 1
         )
-        Hg = cfg.height // patch
-        Wg = cfg.width // patch
-        N = cfg.frames_per_clip * Hg * Wg
+        common_kwargs = dict(
+            image_size=cfg.height, patch_size=patch,
+            hidden_size=int(cfg.encoder_hidden_size),
+            num_hidden_layers=int(cfg.encoder_num_layers),
+            num_attention_heads=int(cfg.encoder_num_heads),
+            tubelet_size=tubelet_size, frames_per_clip=cfg.frames_per_clip,
+            lora_r=4, lora_alpha=8, lora_dropout=0.0,
+            quant=cfg.quant,
+        )
+        if cfg.encoder_pretrained_repo_id:
+            # W2.22+: load real weights from HF Hub. The shim's
+            # ``config`` records the loaded HF model's geometry (not
+            # the smoke kwargs) — the predictor / decoder / mask
+            # layout use ``online.config.grid_h`` /
+            # ``online.config.frames_per_clip`` below.
+            online = HfVJEPA2EncoderShim.from_pretrained(
+                pretrained_repo_id=cfg.encoder_pretrained_repo_id,
+                revision=cfg.encoder_pretrained_revision,
+                **common_kwargs,
+            )
+        else:
+            online = HfVJEPA2EncoderShim.from_random_init(**common_kwargs)
+        # Read grid from the shim config: for random-init this is the
+        # kwargs; for from_pretrained this is the loaded HF config.
+        # Either way, ``N = T * Hg * Wg`` matches what the encoder
+        # actually emits.
+        Hg = online.config.grid_h
+        Wg = online.config.grid_w
+        T = max(1, online.config.frames_per_clip // max(1, online.config.tubelet_size))
+        N = T * Hg * Wg
         pred = HfJEPAPredictorShim(
             num_patches=N,
-            grid_size=(cfg.frames_per_clip, Hg, Wg),
+            grid_size=(T, Hg, Wg),
             encoder_dim=online.config.embed_dim,
             predictor_dim=64, depth=2, num_heads=2,
         )
@@ -458,18 +567,63 @@ def _encoder_lora_stats(cfg: V2Config) -> dict[str, int]:
     from worldfoundry_train.model.hf_vjepa_shim import HfVJEPA2EncoderShim
 
     patch = 8
-    shim = HfVJEPA2EncoderShim.from_random_init(
+    tubelet_size = (
+        int(cfg.hf_tubelet_size) if cfg.hf_tubelet_size is not None else 1
+    )
+    common_kwargs = dict(
         image_size=cfg.height, patch_size=patch,
-        hidden_size=64, num_hidden_layers=2, num_attention_heads=2,
-        tubelet_size=1, frames_per_clip=cfg.frames_per_clip,
+        hidden_size=int(cfg.encoder_hidden_size),
+        num_hidden_layers=int(cfg.encoder_num_layers),
+        num_attention_heads=int(cfg.encoder_num_heads),
+        tubelet_size=tubelet_size, frames_per_clip=cfg.frames_per_clip,
         lora_r=4, lora_alpha=8, lora_dropout=0.0,
     )
+    if cfg.encoder_pretrained_repo_id:
+        # W2.22+: route to ``from_pretrained`` so the LoRA subset is
+        # reported against the real-weights base (the trainable
+        # count is the same either way — it's set by ``lora_r`` —
+        # but the routing keeps the two factories' cost surfaces
+        # parallel).
+        shim = HfVJEPA2EncoderShim.from_pretrained(
+            pretrained_repo_id=cfg.encoder_pretrained_repo_id,
+            revision=cfg.encoder_pretrained_revision,
+            **common_kwargs,
+        )
+    else:
+        shim = HfVJEPA2EncoderShim.from_random_init(**common_kwargs)
     return shim.lora_stats()
 
 
 # ---------------------------------------------------------------------------
 # Phase I: Inference with action-conditioned rollout
 # ---------------------------------------------------------------------------
+
+
+def _save_render_vs_predicted_png(
+    frames_gt: np.ndarray,
+    frames_pred: np.ndarray,
+    out_path: Path,
+) -> Path | None:
+    """Write a 2-row PNG stack (GT top, predicted bottom) for visual QA.
+
+    W25-cleanup: copies v1's ``_save_side_by_side_png`` so the v2
+    orchestrator emits the same ``<out_dir>/render_vs_predicted.png``
+    artifact. Returns ``None`` when cv2 isn't available (the
+    qualitative PNG is best-effort; numeric recon_cosine is still
+    in the summary JSON).
+    """
+    if cv2 is None:
+        return None
+    T = frames_gt.shape[0]
+    H, W = frames_gt.shape[1], frames_gt.shape[2]
+    canvas = np.full((H * 2 + 4, W * T + (T - 1) * 2, 3), 255, dtype=np.uint8)
+    for t in range(T):
+        x_off = t * (W + 2)
+        canvas[:H, x_off : x_off + W] = frames_gt[t]
+        canvas[H + 4 :, x_off : x_off + W] = frames_pred[t]
+    cv2.imwrite(str(out_path), canvas)
+    return out_path
+
 
 def inference_phase(
     cfg: V2Config,
@@ -533,6 +687,24 @@ def inference_phase(
     norms = np.linalg.norm(a, axis=-1) * np.linalg.norm(b, axis=-1)
     pixel_cos = float(np.where(norms > 1e-8, (a * b).sum(axis=-1) / norms, 1.0).mean())
 
+    # W25-cleanup: render_vs_predicted.png side-by-side stack. Convert
+    # the (T, 3, H, W) float [0,1] tensors to (T, H, W, 3) uint8 BGR for
+    # cv2.imwrite — same shape convention as v1's _save_side_by_side_png.
+    png_path: Path | None = None
+    if cv2 is not None:
+        frames_gt_bgr = (
+            (frames_gt.transpose(0, 2, 3, 1) * 255.0)
+            .round().astype(np.uint8)[:, :, :, ::-1]
+        )
+        frames_pred_bgr = (
+            (pixels.transpose(0, 2, 3, 1) * 255.0)
+            .round().astype(np.uint8)[:, :, :, ::-1]
+        )
+        png_path = _save_render_vs_predicted_png(
+            frames_gt_bgr, frames_pred_bgr,
+            cfg.out_dir / "render_vs_predicted.png",
+        )
+
     elapsed = time.perf_counter() - t0
     return {
         "elapsed_seconds": elapsed,
@@ -540,6 +712,9 @@ def inference_phase(
         "latent_cosine": latent_cos,
         "n_params": sum(p.numel() for p in encoder.parameters()),
         "n_predicted_tokens": int(pred_at_mask.shape[0]),
+        # W25-cleanup: relative path as string for JSON portability.
+        # ``None`` when cv2 isn't importable (best-effort QA artifact).
+        "png_path": str(png_path) if png_path is not None else None,
     }
 
 
@@ -711,6 +886,12 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
                 num_heads=encoder.config.num_heads,
                 frames_per_clip=cfg.frames_per_clip,
                 freeze_encoder=True,
+                # W2.22+: pass real-weights routing through to the
+                # vision policy so its LoRA-wrapped base matches the
+                # world model's encoder. ``None`` keeps the W2.18/19
+                # random-init behaviour.
+                pretrained_repo_id=cfg.encoder_pretrained_repo_id,
+                pretrained_revision=cfg.encoder_pretrained_revision,
             ).to(device)
         else:
             image_policy = VisionPolicy.from_image_obs(
@@ -843,8 +1024,13 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
     gamma, lam = 0.99, 0.95
 
     opt = torch.optim.AdamW(policy.parameters(), lr=ppo_lr)
-    rewards_t = torch.tensor(rollout_rewards, dtype=torch.float32).unsqueeze(-1)
-    values_t = torch.stack(rollout_values).view(-1, 1)
+    # W41-atlas: build the GAE inputs on the orchestrator's device so the
+    # compute_gae arithmetic doesn't mix CPU scalars with an NPU `last_value`.
+    # On CPU-only runs the device is "cpu" so this is a no-op; on Atlas it
+    # avoids the "Expected all tensors to be on the same device" error in
+    # ppo.compute_gae.
+    rewards_t = torch.tensor(rollout_rewards, dtype=torch.float32, device=device).unsqueeze(-1)
+    values_t = torch.stack(rollout_values).view(-1, 1).to(device)
     dones_t = torch.zeros_like(rewards_t)
     with torch.no_grad():
         last_value = policy.forward(obs_t)[1].detach().view(1)
@@ -1185,18 +1371,87 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--camera-id", default=0,
                    help="W2.16+: dm_control camera id forwarded to "
                         "FrankaKitchenEnv.render(...). Default 0.")
+    p.add_argument("--skip-render", action="store_true",
+                   help="W25-cleanup: reuse existing <out-dir>/manifest.csv "
+                        "instead of regenerating clips. Raises SystemExit (rc=2) "
+                        "if the manifest is missing. Mirrors v1's behavior.")
     p.add_argument("--encoder", choices=("tiny", "hf_vjepa2"), default="tiny",
                    help="W2.18+: encoder kind. ``tiny`` (default) keeps the "
                         "v2.x 24k-param TinyVJEPA2Encoder stack; "
-                        "``hf_vjepa2`` swaps in a randomly-initialised "
-                        "HF VJEPA2Model + LoRA via "
-                        "worldfoundry_train.model.hf_vjepa_shim. "
-                        "Forces --policy-encoder state_mlp (HF smoke).")
+                        "``hf_vjepa2`` swaps in a HF VJEPA2Model + LoRA via "
+                        "worldfoundry_train.model.hf_vjepa_shim. With "
+                        "--encoder-pretrained (W2.22+) the HF stack is "
+                        "loaded with real weights from HF Hub; without it "
+                        "the HF stack stays random-init (W2.18 smoke). "
+                        "Compatible with both --policy-encoder state_mlp "
+                        "and tiny_vjepa2 (W2.19+).")
+    p.add_argument("--encoder-pretrained", type=str, default=None,
+                   help="W2.22+: HF Hub repo ID or local path for the HF "
+                        "encoder (e.g. 'facebook/vjepa2-vitl-fpc64-256'). "
+                        "When set, --encoder must be 'hf_vjepa2'; the shim "
+                        "loads real weights via "
+                        "HfVJEPA2EncoderShim.from_pretrained instead of "
+                        "from_random_init. Atlas NPU smoke uses "
+                        "'facebook/vjepa2-vitl-fpc64-256' with smoke "
+                        "geometry (32x32, frames=4, tubelet=1).")
+    p.add_argument("--encoder-pretrained-revision", type=str, default=None,
+                   help="W2.22+: HF Hub git revision pin for "
+                        "--encoder-pretrained (default: main). Pass an "
+                        "immutable SHA for reproducibility.")
+    p.add_argument("--tubelet-size", type=int, default=None,
+                   help="W2.22+: override the orchestrator's hardcoded "
+                        "tubelet_size=1 for the HF encoder. Real "
+                        "facebook/vjepa2-vitl-fpc64-256 uses tubelet=2; "
+                        "the W2.22 smoke forces tubelet=1 to keep the "
+                        "v2.x mask layout (N = T*Hg*Wg) working. A "
+                        "predictor-grid change for tubelet=2 is a future "
+                        "item.")
+    p.add_argument("--quant", choices=("none", "w8_only"), default="none",
+                   help="W22-quant: weight-only int8 on the HF encoder base. "
+                        "``none`` (default) keeps fp32. ``w8_only`` applies "
+                        "torchao.Int8WeightOnlyConfig BEFORE LoRA wrap "
+                        "(QLoRA order) — cuts RSS ~50% on a 326M encoder at "
+                        "~1.25x fp32 forward cost on CPU. Requires "
+                        "--encoder hf_vjepa2; raises SystemExit otherwise.")
+    p.add_argument("--encoder-hidden-size", type=int, default=64,
+                   help="W22-quant: HF encoder hidden_size (effective only "
+                        "when --encoder hf_vjepa2). Default 64 = W2.18 "
+                        "tiny smoke. 1024 = V-JEPA 2 small (~326M params).")
+    p.add_argument("--encoder-num-layers", type=int, default=2,
+                   help="W22-quant: HF encoder num_hidden_layers (effective "
+                        "only when --encoder hf_vjepa2). Default 2. 24 = "
+                        "V-JEPA 2 small.")
+    p.add_argument("--encoder-num-heads", type=int, default=2,
+                   help="W22-quant: HF encoder num_attention_heads "
+                        "(effective only when --encoder hf_vjepa2). "
+                        "Must divide --encoder-hidden-size. Default 2. "
+                        "16 = V-JEPA 2 small.")
+    p.add_argument("--inference-backend", choices=("torch", "vllm", "sglang"),
+                   default="torch",
+                   help="Inference-engine backend to resolve via the pluggable "
+                        "registry (worldfoundry_common.backends.inference). "
+                        "`torch` (default) runs the in-process eager path over "
+                        "the locally-trained world-model stack — the correct "
+                        "v1 compute for this orchestrator. `vllm`/`sglang` "
+                        "resolve to engine-served VJEPA2Model surfaces "
+                        "(VJEPA2NPUWorker / SGLangWorker) which do NOT serve "
+                        "the tiny/HF stack yet; selecting them logs an explicit "
+                        "deferral (engine-served world-model inference is an "
+                        "Atlas item) and the orchestrator still uses the "
+                        "in-process path so a real run never silently swaps "
+                        "compute.")
     return p.parse_args(argv)
 
 
 def main(argv=None) -> int:
     args = parse_args(argv)
+    # W22-quant: capture baseline RSS immediately after argparse so the
+    # ``rss_mb_per_phase.after_imports`` value reflects the cost of
+    # importing the orchestrator + transformers + torchao + peft but
+    # NOT yet building any of the encoder/predictor/decoder modules.
+    # This anchors the rest of the trace (each subsequent sample tells
+    # us how much MORE memory the encoder+EMA+optimizer adds).
+    rss_after_imports_mb = _rss_mb()
     # When the franka_kitchen env is selected, override obs_dim + action_dim
     # BEFORE constructing V2Config: VisionPolicy.from_state_dim is built off
     # cfg.action_dim / cfg.obs_dim in policy_bootstrap_phase, and the
@@ -1213,6 +1468,22 @@ def main(argv=None) -> int:
             f"--data-source=franka_kitchen requires --env=franka_kitchen "
             f"(env={args.env}); the collector has no env to drive otherwise."
         )
+    # W22-quant cross-validation: ``--quant`` only takes effect on the
+    # HF encoder path. The tiny stack has no torchao integration, so
+    # combining them is a programmer error.
+    if args.quant != "none" and args.encoder != "hf_vjepa2":
+        raise SystemExit(
+            f"--quant={args.quant} requires --encoder=hf_vjepa2 "
+            f"(got --encoder={args.encoder}); the tiny encoder has no "
+            f"torchao integration."
+        )
+    # W2.22+: ``--encoder-pretrained`` only makes sense on the HF
+    # encoder path. Tiny path has no HF Hub loading code.
+    if args.encoder_pretrained and args.encoder != "hf_vjepa2":
+        raise SystemExit(
+            f"--encoder-pretrained={args.encoder_pretrained} requires "
+            f"--encoder=hf_vjepa2 (got --encoder={args.encoder})"
+        )
     cfg = V2Config(
         out_dir=args.out_dir, num_clips=args.num_clips,
         frames_per_clip=args.frames_per_clip, height=args.height, width=args.width,
@@ -1225,6 +1496,24 @@ def main(argv=None) -> int:
         rollout_horizon=args.rollout_horizon,
         camera_id=args.camera_id,
         encoder_kind=args.encoder,
+        quant=args.quant,
+        # W25-cleanup: --skip-render short-circuit flag (see V2Config).
+        skip_render=args.skip_render,
+        # W22-quant: HF encoder dimensions (effective only when
+        # --encoder hf_vjepa2). Defaults of 64/2/2 match the W2.18
+        # smoke; --encoder-hidden-size 1024 + --encoder-num-layers 24
+        # + --encoder-num-heads 16 ≈ V-JEPA 2 small (~326M params) for
+        # the fp32 vs W8 RSS comparison run.
+        encoder_hidden_size=args.encoder_hidden_size,
+        encoder_num_layers=args.encoder_num_layers,
+        encoder_num_heads=args.encoder_num_heads,
+        # W2.22+: real-weights HF encoder routing. ``None`` keeps the
+        # W2.18 random-init behaviour; setting ``encoder_pretrained``
+        # makes ``_build_stack``/``_encoder_lora_stats`` use
+        # ``from_pretrained`` instead of ``from_random_init``.
+        encoder_pretrained_repo_id=args.encoder_pretrained,
+        encoder_pretrained_revision=args.encoder_pretrained_revision,
+        hf_tubelet_size=args.tubelet_size,
     )
     # W2.19: the HF encoder is now architecturally compatible with the
     # image-policy path (``--policy-encoder tiny_vjepa2``); the shim
@@ -1242,46 +1531,84 @@ def main(argv=None) -> int:
     np.random.seed(cfg.seed)
     device = resolve_device()
 
+    # Resolve the inference-engine backend through the pluggable registry so
+    # the orchestrator is explicit about which engine serves inference. The
+    # default `torch` backend is the in-process eager path — the correct v1
+    # compute for this orchestrator's locally-trained world-model stack.
+    # Engine-served backends (`vllm`/`sglang`) resolve to VJEPA2Model surfaces
+    # (VJEPA2NPUWorker / SGLangWorker) which cannot serve the tiny/HF stack
+    # yet; selecting them logs an explicit deferral to Atlas and the run still
+    # uses the in-process path (never a silent compute swap).
+    _inf_block = {"inference": args.inference_backend}
+    inference_backend = resolve_config(_inf_block).backends["inference"].name
+    if inference_backend != "torch":
+        print(
+            f"[RTI2] WARNING: inference backend {inference_backend!r} resolves to "
+            f"an engine-served VJEPA2Model surface, which does NOT serve this "
+            f"orchestrator's tiny/HF world-model stack yet. Engine-served "
+            f"world-model inference is an Atlas item; using in-process (torch) "
+            f"path for this run."
+        )
+
     render_out = render_phase(cfg)
     manifest = render_out.manifest
     render_t = render_out.elapsed_seconds
+    # W22-quant: capture process RSS at each phase boundary so the
+    # benchmark can compare fp32 vs W8 memory footprints for the same
+    # encoder shape. Cheap (~10us per call) so safe to do unconditionally.
+    rss_after_render_mb = _rss_mb()
     print(f"[RTI2][R] manifest={manifest} elapsed={render_t:.2f}s "
-          f"data_source={cfg.data_source}")
+          f"data_source={cfg.data_source} rss={rss_after_render_mb:.1f}MB")
 
     ckpt, history, train_t, n_params = train_phase(
         cfg, manifest, device,
         frames=render_out.frames, actions=render_out.actions,
     )
     lora_stats = _encoder_lora_stats(cfg)
+    rss_after_train_mb = _rss_mb()
     print(f"[RTI2][T] ckpt={ckpt} elapsed={train_t:.2f}s "
-          f"final_total={history[-1]['total_loss']:+.4f} encoder_params={n_params:,}")
+          f"final_total={history[-1]['total_loss']:+.4f} encoder_params={n_params:,} "
+          f"rss={rss_after_train_mb:.1f}MB")
 
     inf = inference_phase(
         cfg, ckpt, device,
         frames=render_out.frames, actions=render_out.actions,
     )
+    rss_after_inf_mb = _rss_mb()
     print(f"[RTI2][I] pixel_cos={inf['recon_cosine']:+.4f} "
-          f"latent_cos={inf['latent_cosine']:+.4f} elapsed={inf['elapsed_seconds']:.2f}s")
+          f"latent_cos={inf['latent_cosine']:+.4f} elapsed={inf['elapsed_seconds']:.2f}s "
+          f"rss={rss_after_inf_mb:.1f}MB")
 
     pol = policy_bootstrap_phase(cfg, ckpt, device)
+    rss_after_pol_mb = _rss_mb()
     print(f"[RTI2][P] reward_pre={pol['mean_reward_pre_update']:+.4f} "
           f"reward_post={pol['mean_reward_post_update']:+.4f} "
           f"pol_loss_init={pol['policy_loss_initial']:+.4f} "
           f"val_loss_init={pol['value_loss_initial']:+.4f} "
-          f"n_env_steps={pol['n_env_steps']} elapsed={pol['elapsed_seconds']:.2f}s")
+          f"n_env_steps={pol['n_env_steps']} elapsed={pol['elapsed_seconds']:.2f}s "
+          f"rss={rss_after_pol_mb:.1f}MB")
 
     outer = iterative_loop_phase(
         cfg, ckpt, device,
         n_iters=args.num_outer_iters,
         n_train_per_iter=args.num_train_per_iter,
     )
+    rss_final_mb = _rss_mb()
     print(f"[RTI2][O] {outer['n_iters']} iters elapsed={outer['elapsed_seconds']:.2f}s "
           f"reward_trajectory={outer['reward_trajectory']} "
-          f"trend_delta={outer['reward_trend_delta']:+.4f}")
+          f"trend_delta={outer['reward_trend_delta']:+.4f} "
+          f"rss={rss_final_mb:.1f}MB")
 
     summary = {
         "label": "RTI v2 CPU render->train->inference->policy (RLinf-shape)",
-        "mode": "cpu",
+        # Reflect the resolved compute device (npu on an Atlas box, cpu
+        # otherwise) instead of hardcoding "cpu" — the orchestrator already
+        # migrates the world-model + policy via resolve_device()/to_device().
+        "mode": device,
+        # Which inference-engine backend the pluggable registry resolved.
+        # `torch` = in-process eager (v1 compute); vllm/sglang = engine-served
+        # VJEPA2Model surfaces (deferred to Atlas for this world-model).
+        "inference_backend": inference_backend,
         "config_serializable": {
             "out_dir": str(cfg.out_dir), "num_clips": cfg.num_clips,
             "frames_per_clip": cfg.frames_per_clip, "height": cfg.height, "width": cfg.width,
@@ -1302,6 +1629,13 @@ def main(argv=None) -> int:
             "rollout_horizon": cfg.rollout_horizon,
             # W2.18+: which encoder stack the orchestrator wired up.
             "encoder_kind": cfg.encoder_kind,
+            # W22-quant: weight-only int8 quant on the HF encoder base.
+            "quant": cfg.quant,
+            # W2.22+: HF Hub source for the encoder (None for
+            # random-init / tiny; a repo ID for real-weights HF).
+            "encoder_pretrained_repo_id": cfg.encoder_pretrained_repo_id,
+            "encoder_pretrained_revision": cfg.encoder_pretrained_revision,
+            "hf_tubelet_size": cfg.hf_tubelet_size,
         },
         "render": {
             "elapsed_seconds": round(render_t, 3),
@@ -1309,6 +1643,19 @@ def main(argv=None) -> int:
             # numbers reflect what was actually written (a short/failed write
             # shows up here instead of being masked by the requested count).
             **_manifest_counts(manifest),
+        },
+        # W22-quant: process RSS (VmRSS via /proc/self/status) sampled
+        # at each phase boundary. Lets the fp32-vs-W8 comparison run
+        # quantify the memory tradeoff for the same encoder shape.
+        # Linux-only; values are -1.0 on platforms where /proc is
+        # missing (the rest of the metric stays useful either way).
+        "rss_mb_per_phase": {
+            "after_imports": round(rss_after_imports_mb, 1),
+            "after_render": round(rss_after_render_mb, 1),
+            "after_train": round(rss_after_train_mb, 1),
+            "after_inference": round(rss_after_inf_mb, 1),
+            "after_policy": round(rss_after_pol_mb, 1),
+            "final": round(rss_final_mb, 1),
         },
         "train": {
             "elapsed_seconds": round(train_t, 3),
@@ -1329,6 +1676,8 @@ def main(argv=None) -> int:
             "recon_cosine": round(inf["recon_cosine"], 4),
             "latent_cosine": round(inf["latent_cosine"], 4),
             "n_predicted_tokens": inf["n_predicted_tokens"],
+            # W25-cleanup: mirror v1's QA artifact; string path or None.
+            "png_path": inf["png_path"],
         },
         "policy_bootstrap": pol,
         "outer_loop": outer,
@@ -1357,8 +1706,12 @@ def main(argv=None) -> int:
             ),
             (
                 f"encoder_kind={cfg.encoder_kind!r} "
-                f"({'random-init HF VJEPA2Model (hidden_size=64) + LoRA via worldfoundry_train.model.hf_vjepa_shim; proves the encoder seam without downloading 1.2B weights' if cfg.encoder_kind == 'hf_vjepa2' else '24k-param TinyVJEPA2Encoder stack (v2.x contract)'}) "
+                f"({('HF VJEPA2Model + LoRA via worldfoundry_train.model.hf_vjepa_shim; source: ' + (cfg.encoder_pretrained_repo_id or 'random-init (W2.18 smoke)')) if cfg.encoder_kind == 'hf_vjepa2' else '24k-param TinyVJEPA2Encoder stack (v2.x contract)'}) "
                 f"({'W2.19+: compatible with --policy-encoder tiny_vjepa2 (RLinf-shape planner path)' if cfg.encoder_kind == 'hf_vjepa2' else ''})."
+            ),
+            (
+                f"quant={cfg.quant!r} "
+                f"({'torchao.Int8WeightOnlyConfig applied to HF base BEFORE LoRA wrap (QLoRA order); RSS ~50% of fp32 on 326M, ~44% on 1.16B; LoRA A/B stay fp32' if cfg.quant == 'w8_only' else 'fp32 HF base (default)'})."
             ),
         ],
     }

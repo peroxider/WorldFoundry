@@ -35,6 +35,16 @@ class TinyEMAUpdater:
     No fp32 master copies (single dtype, single device, single rank).
     Call :meth:`update` once per optimizer step with the freshly-updated
     online module and the EMA target module.
+
+    W22-quant: when ``target`` carries torchao-quantized parameters
+    (e.g. ``Int8WeightOnlyConfig`` on the HF encoder base), the
+    in-place fp32 lerp ``t_p.mul_(m).add_(o_p, alpha=1-m)`` raises
+    ``NotImplementedError`` because ``AffineQuantizedTensor`` does
+    not implement ``aten.mul_`` / ``aten.add_``. In that case we
+    dequantize target params to fp32, lerp, then requantize the
+    target module via ``torchao.quantization.quantize_`` so target
+    stays in the same storage format as online. Online's params are
+    never modified -- we only read a fp32 snapshot of them.
     """
 
     def __init__(self, *, momentum: float = 0.99) -> None:
@@ -44,11 +54,87 @@ class TinyEMAUpdater:
 
     @torch.no_grad()
     def update(self, target: nn.Module, online: nn.Module) -> None:
-        for t_p, o_p in zip(target.parameters(), online.parameters()):
-            t_p.mul_(self.momentum).add_(o_p.detach(), alpha=1.0 - self.momentum)
-        # Buffer copy (none on the tiny encoder, but keep the contract).
+        # torchao is an OPTIONAL quantization feature: the default
+        # ``quant="none"`` fp32 path must work without it installed. Only
+        # probe the AQT type when torchao is present; when it isn't, no
+        # module can carry AffineQuantizedTensor params, so we take the
+        # fp32 path directly.
+        try:
+            from torchao.dtypes import AffineQuantizedTensor
+        except ImportError:
+            AffineQuantizedTensor = None
+
+        def _is_aqt(p: torch.Tensor) -> bool:
+            return (
+                AffineQuantizedTensor is not None
+                and isinstance(p, AffineQuantizedTensor)
+            )
+
+        if not any(_is_aqt(p) for p in target.parameters()):
+            # Original fp32 path: in-place lerp works.
+            for t_p, o_p in zip(target.parameters(), online.parameters()):
+                t_p.mul_(self.momentum).add_(
+                    o_p.detach(), alpha=1.0 - self.momentum
+                )
+            for t_b, o_b in zip(target.buffers(), online.buffers()):
+                t_b.copy_(o_b.detach())
+            return
+
+        # W8 path: dequantize target -> fp32 lerp -> requantize target.
+        from torchao.quantization import quantize_, Int8WeightOnlyConfig
+
+        # Step 1: collect the modules that originally carried AQT
+        # weights. These are the modules we'll requantize after the
+        # fp32 lerp. We must NOT requantize peft's lora_A / lora_B
+        # sub-modules (they're nn.Linear modules too, but the LoRA
+        # optimizer needs them as fp32 trainable params).
+        aqt_modules: list[nn.Module] = []
+        for module in target.modules():
+            if not isinstance(module, nn.Linear):
+                continue
+            weight = getattr(module, "weight", None)
+            if _is_aqt(weight):
+                aqt_modules.append(module)
+
+        # Snapshot online's params as fp32. ``o_p.detach()`` keeps the
+        # AffineQuantizedTensor identity; ``dequantize()`` returns a
+        # fresh fp32 tensor (clone internally).
+        o_fp32 = []
+        for o_p in online.parameters():
+            o = o_p.detach()
+            o_fp32.append(o.dequantize() if _is_aqt(o) else o.float())
+
+        # Dequantize target's AQT params in place. ``t_p.data =
+        # t_p.dequantize()`` is intercepted by the AQT wrapper's
+        # ``__setattr__`` and leaves the storage as AQT; only the
+        # ``_parameters`` slot replacement changes the observed type.
+        # Overwrite (NOT ``del`` + ``=``): Python's dict re-insert
+        # moves the key to the end of the insertion order, which
+        # would desync the EMA's ``zip(target, online)`` alignment
+        # since peft's LoraLayer stores ``base_layer.weight`` before
+        # ``bias`` and the EMA assumes same-shape alignment.
+        for module in target.modules():
+            for param_name, param in list(module._parameters.items()):
+                if _is_aqt(param):
+                    module._parameters[param_name] = nn.Parameter(
+                        param.dequantize(),
+                        requires_grad=param.requires_grad,
+                    )
+
+        # fp32 lerp on target.
+        for t_p, o in zip(target.parameters(), o_fp32):
+            t_p.mul_(self.momentum).add_(o, alpha=1.0 - self.momentum)
         for t_b, o_b in zip(target.buffers(), online.buffers()):
             t_b.copy_(o_b.detach())
+
+        # Step 2: requantize only the AQT modules we collected in
+        # step 1. ``quantize_(module, ...)`` walks ``module``'s
+        # ``nn.Linear`` children only -- since each module here is a
+        # single ``nn.Linear`` (the inner ``base_layer`` of peft's
+        # LoraLayer), it requantizes just that one module's weight
+        # without touching the parent's lora_A / lora_B adapters.
+        for module in aqt_modules:
+            quantize_(module, Int8WeightOnlyConfig())
 
 
 def _atomic_save(payload: dict[str, Any], path: Path) -> None:
@@ -169,8 +255,27 @@ def load_tiny_checkpoint(
             "lora_r": int(cfg_dict.get("lora_r", 4)),
             "lora_alpha": int(cfg_dict.get("lora_alpha", 8)),
             "lora_dropout": float(cfg_dict.get("lora_dropout", 0.0)),
+            # W22-quant round-trip. Older checkpoints (W2.18 era) omit
+            # this key; ``get(..., "none")`` keeps them reload-able as
+            # fp32 (callers that load a W8-saved checkpoint without
+            # ``quant`` in the signature will get a metadata-mismatch
+            # error from the subsequent ``load_state_dict`` and can
+            # re-run the orchestrator to write a fresh signature).
+            "quant": str(cfg_dict.get("quant", "none")),
         }
-        online = HfVJEPA2EncoderShim.from_random_init(**hf_kwargs)
+        # W2.22+: route to ``from_pretrained`` when the checkpoint
+        # carries a real-weights source. Loading a W2.18 random-init
+        # checkpoint (no ``pretrained_repo_id``) keeps the
+        # ``from_random_init`` path verbatim — backward compatible.
+        pretrained_repo_id = cfg_dict.get("pretrained_repo_id")
+        if pretrained_repo_id:
+            online = HfVJEPA2EncoderShim.from_pretrained(
+                pretrained_repo_id=str(pretrained_repo_id),
+                revision=cfg_dict.get("pretrained_revision"),
+                **hf_kwargs,
+            )
+        else:
+            online = HfVJEPA2EncoderShim.from_random_init(**hf_kwargs)
         # The LoRA-wrapped VJEPA2Model state_dict includes the HF
         # model's internal predictor submodule (12 transformer layers
         # with their own LoRA adapters); these keys don't match a fresh
@@ -224,13 +329,36 @@ def load_tiny_checkpoint(
         }
 
         if "target_state" in payload:
-            target = HfVJEPA2EncoderShim.from_random_init(**hf_kwargs)
+            # W2.22+: mirror the online-side dispatch so the EMA
+            # target is built from the real-weights source when the
+            # checkpoint carries one. Without this, the EMA target
+            # would be a fresh random-init shim whose
+            # ``load_state_dict(strict=False)`` would copy the
+            # checkpoint's fp32 weights into random-init slots
+            # anyway — works numerically but defeats the point of
+            # preserving real weights across reloads.
+            if pretrained_repo_id:
+                target = HfVJEPA2EncoderShim.from_pretrained(
+                    pretrained_repo_id=str(pretrained_repo_id),
+                    revision=cfg_dict.get("pretrained_revision"),
+                    **hf_kwargs,
+                )
+            else:
+                target = HfVJEPA2EncoderShim.from_random_init(**hf_kwargs)
             target.load_state_dict(payload["target_state"], strict=False)
             target = target.to(device)
             target.eval()
             for p in target.parameters():
                 p.requires_grad_(False)
             bundle["target"] = target
+
+        # W22-quant: the train_phase EMA does
+        # ``target = target_state`` (snapshotted W8). After reload the
+        # ``target_state`` checkpoint tensors are AQT; the fresh
+        # ``target`` built by ``from_random_init`` is W8 too (via
+        # ``quant=...``), but ``load_state_dict(strict=False)`` already
+        # copied the saved AQT storage into the new module's
+        # ``_parameters``. No requantize needed.
 
         return bundle
 

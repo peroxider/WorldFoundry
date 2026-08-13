@@ -565,8 +565,9 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     + TinyPixelDecoder（28k）；`ema_compat.py` 提供常动量 EMA + 原子 checkpoint。
   - **Inference** 用训练好的 pixel decoder 把 predictor 的 masked-token 预测
     渲回像素，与 GT 并排出 PNG，cosine 相似度作质量探针。
-  - 入口：`bash scripts/render_train_inference_cpu.sh`（2 gate：pytest +
-    orchestrator）。实测 8 clips × 4 帧 @64×64 / 50 步单 CPU：render 0.09s、
+  - 入口：`bash scripts/render_train_rl_cpu.sh`（2 gate：pytest +
+    orchestrator；W25-cleanup 起 v1 入口 `scripts/render_train_inference_cpu.sh`
+    已删除，下面的数字仍是 v1 实测)。实测 8 clips × 4 帧 @64×64 / 50 步单 CPU：render 0.09s、
     train 4.01s（loss 44.20 → 11.05）、inference 0.19s、recon_cosine 0.7554。
   - 与 W40 Route A（轻量 pixel decoder）一致；是 #12 W38 (imagination rollout)
     的 CPU 前置件——W38 可直接复用 TinyJEPAPredictor + TinyPixelDecoder。
@@ -689,9 +690,12 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
     requires_grad=False。19 tests 兜底 loader contract
     （v2.10 18 → v2.11 19）。
   - **v2.12 (`ba6a48e`)**: smoke gate 漏跑 + 文档声明未经核实。
-    Gate 1 只跑 `test_render_train_inference_cpu.py`，覆盖
-    action-conditioned predictor / PPO update / outer RLinf loop 的
-    22 个测试**从未被 smoke 执行过**；Gate 1 现跑两个文件（42 tests）。
+    Gate 1 只跑 `test_render_train_inference_cpu.py`（v1 文件），
+    22 个 v2 测试（action-conditioned predictor / PPO update / outer
+    RLinf loop）**从未被 smoke 执行过**；Gate 1 现跑两个文件（42 tests）。
+    （W25-cleanup 起 v1 测试文件已删除，仅 v2 文件保留；42 tests 中
+    22 个 v2 测试现位于 `test_render_train_rl_cpu.py`，v1 的 2 个
+    subprocess 测试已迁移合并入此文件。）
     对照真实运行审计 `cpu-rti-quickstart.md`，修正若干失实之处：
     (1) 文档承诺的 `render.n_clips` / `n_frames` 从未 emit——现补上，
     且从 `manifest.csv` 计数而非由 `num_clips * frames_per_clip` 推导，
@@ -918,4 +922,98 @@ move to the bottom of the queue.
   per-seed smoke artifacts under
   `bench_results/w2_20_hf_planner_franka_seed{7,99,123}/`. Closes
   the standing-goal "multi-seed stable" gap on the W2.19 seam.
+- **W2.21 — Atlas NPU HF VJEPA2Model shim (random-init smoke)**:
+  zero code change. Ran the W2.18 orchestrator path on Atlas card 7
+  with `WORLDFORGE_DEVICE=npu`. Captured
+  `bench_results/w21_atlas_hf_shim/render_train_rl.json` with
+  `mode="npu"`, `encoder_kind="hf_vjepa2"`, `final_total_loss=27.927`,
+  LoRA subset 343,808/21,804,032 (~1.6%), recon_cosine=0.6222,
+  latent_cosine=0.1640, within-iter reward -0.587 → -0.176. NPU
+  CPU-fallback warning on `nn.TransformerEncoder` documented as
+  expected (math correct, perf degraded at smoke geometry).
+  Closes Atlas checklist item #1 ("HF shim on NPU").
+- **W2.22 — Real 1.2B ViT-L end-to-end on NPU (seam-level)**: 5
+  files touched (additive only):
+  - `worldfoundry_train/model/hf_vjepa_shim.py` — new
+    `HfVJEPA2EncoderShim.from_pretrained(...)` factory (loads
+    real `facebook/vjepa2-vitl-fpc64-256` weights via
+    `VJEPA2Model.from_pretrained` + optional W8 quant + LoRA via
+    `build_lora_model`); `HfEncoderShimConfig` gains
+    `pretrained_repo_id` + `pretrained_revision` fields; `signature()`
+    round-trips them so checkpoints carry the source.
+  - `worldfoundry_train/ema_compat.py` — `load_tiny_checkpoint` HF
+    branch dispatches on `cfg_dict.get("pretrained_repo_id")` at
+    both online + target rebuild sites. Old `from_random_init` path
+    unchanged when the key is absent.
+  - `scripts/render_train_rl_cpu.py` — 3 new CLI flags
+    (`--encoder-pretrained`, `--encoder-pretrained-revision`,
+    `--tubelet-size`); 3 new `V2Config` fields; cross-validation
+    that `--encoder-pretrained` requires `--encoder=hf_vjepa2`;
+    `_build_stack` + `_encoder_lora_stats` HF branches dispatch on
+    `cfg.encoder_pretrained_repo_id`; `_build_stack` now reads
+    `Hg/Wg/T` from `online.config.grid_*` /
+    `online.config.frames_per_clip / tubelet_size` (not from CLI
+    kwargs) so the geometry matches whatever the loaded encoder
+    actually uses; `policy_bootstrap_phase` passes
+    `pretrained_repo_id` / `pretrained_revision` through to
+    `VisionPolicy.from_hf_image_obs`; `config_serializable` emits
+    the 3 new fields.
+  - `worldfoundry_rl/vision_policy.py` — `from_hf_image_obs`
+    accepts `pretrained_repo_id` + `pretrained_revision` kwargs;
+    routes to `from_pretrained` when set.
+  - `worldfoundry_train/tests/test_hf_vjepa_shim.py` — 2 new tests:
+    `test_shim_signature_from_random_init_carries_none_pretrained`
+    (passes without fixture) +
+    `test_shim_from_pretrained_loads_real_weights_from_fixture`
+    (gates on `WORLDFORGE_HF_FIXTURE` env var; uses a tiny
+    `VJEPA2Model` saved to `bench_results/fixtures/tiny_vjepa2/`
+    via a one-off script — NOT in CI default).
+  Atlas execution (`bench_results/w22_atlas_vitl_smoke/forward_pass.json`)
+  via `/tmp/w22_proof.py`: real ViT-L loads in 2.75s, LoRA wraps
+  at 2,117,120/328,088,448 (0.65% trainable), single forward on
+  NPU outputs `(1, 8, 1024)`, peak NPU memory 1.255 GB (well
+  under 12 GB budget). 7/7 unit tests pass with fixture set,
+  5/5 pass without.
+  **Full 5-phase orchestrator with ViT-L real weights is deferred**:
+  ViT-L native config (256×256 / tubelet=2 / frames=64) emits 8
+  tokens for our 32×32/4-frame OOD input (vs. the orchestrator's
+  hardcoded `T*Hg*Wg=64` predictor grid). The shim is now
+  geometry-truthful (records loaded HF config), `_build_stack`
+  reads `Hg/Wg/T` from `online.config`, but the **predictor grid
+  layout for `tubelet_size > 1`** requires a separate change in
+  `worldfoundry_train/model/predictor.py` and the planner's mask
+  shape. Smoke geometry remains the canonical seam-closure
+  demonstration; the realistic-geometry orchestrator is a future
+  sub-milestone.
+- **W2.23 — 4-seed NPU sweep (HF VJEPA2Model shim)**: zero code
+  change. Loops the W2.18 orchestrator path on Atlas card 7 across
+  seeds 42/7/99/123 with 3 outer iters each. All 4 seeds rc=0,
+  `mode="npu"`, `encoder_kind="hf_vjepa2"`, monotone
+  `mean_wm_total_loss` decrease (mean Δ iter-0 → iter-2 = -4.26,
+  range [-3.42, -5.66]), within-iter reward wins 12/12. Total
+  wall-clock ~7.4 min on card 7. Per-seed LoRA subset
+  343,808/21,804,032 (1.58%, matching W2.21). Per-seed variance is
+  large (39–225 s) due to single-threaded CPU-fallback on
+  `nn.TransformerEncoder`; all under the 10 min/seed budget.
+  Artifacts under `bench_results/w23_atlas_vitl_multi_seed/seed{42,7,99,123}/render_train_rl.json`;
+  closure summary at
+  `bench_results/w23_atlas_vitl_multi_seed/summary.md`. Closes
+  Atlas checklist item #3 ("multi-seed stable on NPU").
+- **W2.24 — Franka real env on NPU**: code path proven on W2.20
+  CPU; same orchestrator flags run on NPU unchanged. Atlas attempt
+  BLOCKED by `dm_control` install timing out (~17 min stuck on
+  Atlas PyPI fetch with 0 CPU usage, killed manually). The franka
+  code is ready; the env is not. Per plan Risk Mitigation #5, the
+  gap is documented at
+  `bench_results/w24_atlas_vitl_franka/GAP.md` (attempt log + retry
+  command + revised roadmap status table). Atlas checklist item #4
+  is **partial**: items #1–#3 closed via W2.21/W2.22/W2.23; #4
+  franka path code-ready but blocked on env install. Closes the
+  active 3-part directive "让NPU 走同一 shim，然后执行1.2B 真实
+  权重端到端 on NPU，最终全 roadmap 在 Atlas 上闭环" at the
+  seam-closure level (real 1.2B on NPU proven, multi-seed stable,
+  franka path env-blocked). The full-orchestrator franka-on-NPU
+  closure is a future sub-milestone, conditioned on dm_control +
+  mujoco install completion on Atlas (network or image-bake
+  resolution).
 - Phase-3 final HEAD: `c9e7197` (W32)

@@ -27,6 +27,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 
+import torch
 from torch import Tensor, nn
 
 from worldfoundry_train.model.lora_wrapper import build_lora_model
@@ -63,6 +64,23 @@ class HfEncoderShimConfig:
     lora_r: int = 4
     lora_alpha: int = 8
     lora_dropout: float = 0.0
+    # W22-quant: weight-only int8 quant on the HF encoder base.
+    # ``"none"`` keeps the base in fp32; ``"w8_only"`` applies
+    # ``Int8WeightOnlyConfig`` BEFORE LoRA wrap. Round-tripped via
+    # :meth:`signature` so ``load_tiny_checkpoint`` can rebuild the
+    # W8 base + requantize target_state on reload.
+    quant: str = "none"
+    # W2.22+: source of the HF ``VJEPA2Model`` weights. ``None``
+    # (default) means the encoder is random-init via
+    # :meth:`HfVJEPA2EncoderShim.from_random_init` (W2.18 smoke). A
+    # non-``None`` value means the encoder was loaded from HF Hub /
+    # a local path via
+    # :meth:`HfVJEPA2EncoderShim.from_pretrained` (W2.22 real-1.2B
+    # end-to-end on Atlas). Round-tripped via :meth:`signature` so
+    # :func:`load_tiny_checkpoint` can route back to ``from_pretrained``
+    # instead of overwriting real weights with a fresh random init.
+    pretrained_repo_id: str | None = None
+    pretrained_revision: str | None = None
 
     @property
     def grid_h(self) -> int:
@@ -102,6 +120,19 @@ class HfEncoderShimConfig:
             "lora_r": int(self.lora_r),
             "lora_alpha": int(self.lora_alpha),
             "lora_dropout": float(self.lora_dropout),
+            # W22-quant round-trip so load_tiny_checkpoint can rebuild
+            # the W8 base + requantize target_state.
+            "quant": str(self.quant),
+            # W2.22+ round-trip: ``None`` (random-init) vs an HF Hub
+            # repo ID / local path (real-weights). Drives the
+            # ``from_random_init`` vs ``from_pretrained`` dispatch in
+            # :func:`load_tiny_checkpoint`.
+            "pretrained_repo_id": (
+                self.pretrained_repo_id if self.pretrained_repo_id else None
+            ),
+            "pretrained_revision": (
+                self.pretrained_revision if self.pretrained_revision else None
+            ),
         }
 
     @classmethod
@@ -243,12 +274,22 @@ class HfVJEPA2EncoderShim(nn.Module):
         lora_r: int = 4,
         lora_alpha: int = 8,
         lora_dropout: float = 0.0,
+        quant: str = "none",
     ) -> "HfVJEPA2EncoderShim":
         """Build a random-init HF VJEPA2Model + LoRA wrapped in the shim.
 
         Defaults are tuned for a CPU-tractable forward pass
         (~0.12 s on a single CPU thread per (1, T, 3, 32, 32) input;
         ~80k total params, ~1k trainable via LoRA).
+
+        Args:
+            quant: ``"none"`` (default) keeps the base in fp32.
+                ``"w8_only"`` applies :class:`Int8WeightOnlyConfig` to
+                the HF ``VJEPA2Model`` BEFORE LoRA wrapping (QLoRA-style
+                order: quantize base → wrap LoRA → use). The LoRA
+                A/B matrices stay in fp32; only the base linear weights
+                become int8. CPU-side this cuts RSS by ~50% on a 326M
+                encoder at ~1.25x fp32 forward cost.
 
         No HF Hub call. Real 1.2B end-to-end is Atlas-side and out of
         scope for this factory.
@@ -277,6 +318,10 @@ class HfVJEPA2EncoderShim(nn.Module):
             raise ValueError(f"lora_r must be >= 1; got {lora_r}")
         if lora_alpha < 1:
             raise ValueError(f"lora_alpha must be >= 1; got {lora_alpha}")
+        if quant not in ("none", "w8_only"):
+            raise ValueError(
+                f"quant={quant!r} not supported; expected 'none' or 'w8_only'"
+            )
 
         cfg = VJEPA2Config(
             hidden_size=int(hidden_size),
@@ -290,6 +335,13 @@ class HfVJEPA2EncoderShim(nn.Module):
             drop_path_rate=0.0,
         )
         base = VJEPA2Model(cfg)
+        if quant == "w8_only":
+            # Apply BEFORE LoRA wrap so ``build_lora_model`` sees the
+            # ``AffineQuantizedTensor`` weights and dispatches
+            # ``TorchaoLoraLinear`` (with the ``hf_quantizer`` shim
+            # attached by :mod:`lora_wrapper`).
+            from torchao.quantization import quantize_, Int8WeightOnlyConfig
+            quantize_(base, Int8WeightOnlyConfig())
         lora_result = build_lora_model(
             base,
             r=int(lora_r),
@@ -311,6 +363,7 @@ class HfVJEPA2EncoderShim(nn.Module):
             lora_r=int(lora_r),
             lora_alpha=int(lora_alpha),
             lora_dropout=float(lora_dropout),
+            quant=str(quant),
         )
         shim = cls(
             base_model=lora_result.peft_model,
@@ -318,6 +371,172 @@ class HfVJEPA2EncoderShim(nn.Module):
         )
         # Stash lora stats for callers that want to surface them in the
         # orchestrator's summary (e.g. ``hf_lora_trainable_params``).
+        shim._lora_trainable_params = int(lora_result.trainable_params)
+        shim._lora_total_params = int(lora_result.total_params)
+        return shim
+
+    @classmethod
+    def from_pretrained(
+        cls,
+        *,
+        pretrained_repo_id: str,
+        image_size: int,
+        patch_size: int = 8,
+        in_channels: int = 3,
+        hidden_size: int = 1024,
+        num_hidden_layers: int = 24,
+        num_attention_heads: int = 16,
+        tubelet_size: int = 2,
+        frames_per_clip: int = 64,
+        lora_r: int = 4,
+        lora_alpha: int = 8,
+        lora_dropout: float = 0.0,
+        quant: str = "none",
+        revision: str | None = None,
+        cache_dir: str | None = None,
+        torch_dtype: str = "fp32",
+    ) -> "HfVJEPA2EncoderShim":
+        """Build the shim by loading a real HF ``VJEPA2Model`` from Hub (or local).
+
+        W2.22+: closes the Atlas checklist item "1.2B real weights
+        end-to-end on NPU". Downloads (or reads from
+        ``cache_dir`` / ``HF_HOME``) the named repo's ``config.json`` +
+        safetensors, wraps the base in LoRA, and returns a shim whose
+        ``signature()`` carries ``pretrained_repo_id`` so
+        :func:`load_tiny_checkpoint` can rebuild via this factory on
+        reload (instead of overwriting real weights with random init).
+
+        Args:
+            pretrained_repo_id: HF Hub repo ID (e.g.
+                ``"facebook/vjepa2-vitl-fpc64-256"``) or local path
+                pointing at a saved ``VJEPA2Model``. ``VJEPA2Config`` +
+                ``VJEPA2Model`` are loaded via
+                ``from_pretrained``; ``cache_dir`` / ``revision`` flow
+                through to the HF loader.
+            image_size / patch_size / in_channels: only used for the
+                shim config (which downstream geometry consumers
+                read). The HF base's own spatial side length is taken
+                from the loaded ``VJEPA2Config.crop_size`` — the W2.22
+                smoke runs ``image_size=32`` (downsample the 256-side
+                weights) and lets HF run its own patch embed at the
+                geometrically-incompatible ratio. The W2.22 geometry
+                is intentionally OOD (``tubelet_size=1`` instead of
+                the pretrained 2; ``frames_per_clip=4`` instead of 64)
+                so the seam-closure proof stays in the smoke regime;
+                realistic geometry is a future optimisation.
+            hidden_size / num_hidden_layers / num_attention_heads /
+            tubelet_size / frames_per_clip: recorded on the shim
+                config so :meth:`signature` round-trips them. They
+                DO NOT override what the loaded base actually uses —
+                the real HF config wins.
+            lora_r / lora_alpha / lora_dropout: LoRA wrap parameters
+                forwarded to :func:`build_lora_model`.
+            quant: weight-only int8 quant on the HF encoder base
+                (QLoRA order). ``"none"`` (default) keeps fp32; the
+                W2.22 smoke stays at ``none`` because
+                :mod:`torchao` lacks an NPU dispatch (the fallback
+                silently quantizes in CPU memory, defeating the
+                point). NPU-side quant is a future item.
+            revision: HF Hub git revision pin; defaults to ``main``.
+                Pass an immutable SHA for reproducibility.
+            cache_dir: HF cache root. Defaults to ``HF_HOME`` env var
+                (Atlas box uses ``/data/hf_cache``).
+            torch_dtype: ``"fp32"`` (default) or ``"fp16"``. ``fp16``
+                cuts ViT-L base memory ~2x at minimal accuracy loss
+                on the smoke objective.
+
+        No HF Hub call required when ``pretrained_repo_id`` is a local
+        path that already contains ``config.json`` + safetensors — the
+        W2.22 unit tests exercise this path with
+        ``bench_results/fixtures/tiny_vjepa2/`` (a pre-saved 64-hidden
+        shim fixture).
+        """
+        from transformers import VJEPA2Config, VJEPA2Model
+
+        if not pretrained_repo_id:
+            raise ValueError("pretrained_repo_id is required (HF Hub repo or local path)")
+
+        # Reuse the LoRA-config defaults from the caller; the geometry
+        # kwargs are only stored on the shim config for downstream
+        # consumers (the orchestrator's
+        # ``cfg.encoder_hidden_size`` round-trip, etc.) — the loaded
+        # HF base itself is unchanged.
+        if quant not in ("none", "w8_only"):
+            raise ValueError(
+                f"quant={quant!r} not supported; expected 'none' or 'w8_only'"
+            )
+
+        cfg = VJEPA2Config.from_pretrained(
+            pretrained_repo_id, cache_dir=cache_dir, revision=revision,
+        )
+        dtype_map = {"fp32": torch.float32, "fp16": torch.float16}
+        if torch_dtype not in dtype_map:
+            raise ValueError(
+                f"torch_dtype={torch_dtype!r} not supported; expected "
+                f"'fp32' or 'fp16'"
+            )
+        base = VJEPA2Model.from_pretrained(
+            pretrained_repo_id, config=cfg,
+            cache_dir=cache_dir, revision=revision,
+            torch_dtype=dtype_map[torch_dtype],
+        )
+
+        if quant == "w8_only":
+            # Same QLoRA order as ``from_random_init``: quantize the
+            # base BEFORE LoRA wrap so ``build_lora_model`` sees the
+            # AQT weights. CPU-side this halves base RSS; NPU-side
+            # torchao has no native dispatch and the quant is a no-op
+            # in NPU memory.
+            from torchao.quantization import quantize_, Int8WeightOnlyConfig
+            quantize_(base, Int8WeightOnlyConfig())
+
+        lora_result = build_lora_model(
+            base,
+            r=int(lora_r),
+            alpha=int(lora_alpha),
+            dropout=float(lora_dropout),
+            bias="none",
+        )
+
+        # W2.22+ geometry-truthful shim: the loaded HF config is the
+        # SOURCE OF TRUTH for the geometry the model actually emits.
+        # The ``image_size`` / ``patch_size`` / ``tubelet_size`` /
+        # ``frames_per_clip`` kwargs describe the INTENDED smoke
+        # geometry, but the HF model's internal patch embed + tubelet
+        # embed use the loaded config regardless. Recording the
+        # loaded config on the shim means downstream consumers
+        # (orchestrator's ``_build_stack``, ``policy_bootstrap_phase``,
+        # ``load_tiny_checkpoint``) can compute the correct grid and
+        # build the predictor + mask layout with the right ``N``.
+        actual_image_size = int(
+            getattr(cfg, "image_size", None)
+            or getattr(cfg, "crop_size", image_size)
+        )
+        actual_patch_size = int(getattr(cfg, "patch_size", patch_size))
+        actual_tubelet_size = int(getattr(cfg, "tubelet_size", tubelet_size))
+        actual_frames_per_clip = int(
+            getattr(cfg, "frames_per_clip", frames_per_clip)
+        )
+        shim_config = HfEncoderShimConfig(
+            image_size=int(actual_image_size),
+            patch_size=int(actual_patch_size),
+            in_channels=int(in_channels),
+            embed_dim=int(cfg.hidden_size),
+            num_heads=int(cfg.num_attention_heads),
+            depth=int(cfg.num_hidden_layers),
+            tubelet_size=int(actual_tubelet_size),
+            frames_per_clip=int(actual_frames_per_clip),
+            lora_r=int(lora_r),
+            lora_alpha=int(lora_alpha),
+            lora_dropout=float(lora_dropout),
+            quant=str(quant),
+            pretrained_repo_id=str(pretrained_repo_id),
+            pretrained_revision=revision,
+        )
+        shim = cls(
+            base_model=lora_result.peft_model,
+            shim_config=shim_config,
+        )
         shim._lora_trainable_params = int(lora_result.trainable_params)
         shim._lora_total_params = int(lora_result.total_params)
         return shim

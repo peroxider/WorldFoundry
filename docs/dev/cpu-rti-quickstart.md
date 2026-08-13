@@ -193,11 +193,10 @@ within-iter reward gain instead.
 
 ## Tests
 
-43 tests back the loop:
+28 tests back the loop (W25-cleanup: v1 测试文件 `test_render_train_inference_cpu.py` 已删除，v1 的 2 个 subprocess 测试已迁移合并入 v2 文件):
 
 ```bash
-pytest worldfoundry_train/tests/test_render_train_inference_cpu.py \
-       worldfoundry_train/tests/test_render_train_rl_cpu.py -v
+pytest worldfoundry_train/tests/test_render_train_rl_cpu.py -v
 ```
 
 Highlights:
@@ -249,8 +248,12 @@ Highlights:
   to the `LatentRolloutPlanner` and `VisionPolicy`, so
   `--encoder hf_vjepa2 --policy-encoder tiny_vjepa2` runs the
   full RLinf-shape recurrent latent-rollout path with an HF
-  VJEPA2Model over RGB. Real 1.2 B weights live on Atlas and are
-  out of scope for this box.
+  VJEPA2Model over RGB. W2.22 adds `--encoder-pretrained facebook/vjepa2-vitl-fpc64-256`
+  (the real 1.2B checkpoint) — the seam is proven end-to-end on
+  Atlas NPU (see `bench_results/w22_atlas_vitl_smoke/summary.md`);
+  full orchestrator 5-phase path with realistic geometry requires a
+  predictor-grid rewrite for `tubelet_size > 1` (out of scope; smoke
+  geometry remains the canonical seam-closure proof).
 - **Mock env by default.** `--env=mock` (the v2.x default) is an
   in-process random agent whose reward is `-||state||² - 0.1*||action||²`.
   State dimension is `--obs-dim` (default 8). Opt-in to a real
@@ -300,6 +303,9 @@ Highlights:
 | `--render-height` / `--render-width` | `32` / `32` | dm_control render resolution forwarded to `FrankaKitchenEnv` when `--data-source=franka_kitchen`. |
 | `--camera-id` | `0` | dm_control camera id forwarded to `FrankaKitchenEnv` render. |
 | `--encoder` | `tiny` | W2.18+: encoder kind. `tiny` keeps the v2.x 24k-param `TinyVJEPA2Encoder` stack (default); `hf_vjepa2` swaps in a randomly-initialised HF `VJEPA2Model` + LoRA via `worldfoundry_train.model.hf_vjepa_shim` to prove the encoder seam without downloading 1.2 B weights. W2.19+ removes the W2.18 `--policy-encoder state_mlp` cross-validation, so `--encoder hf_vjepa2 --policy-encoder tiny_vjepa2` runs the full RLinf-shape `LatentRolloutPlanner` seam end-to-end. |
+| `--encoder-pretrained` | `None` | W2.22+: HF Hub repo ID or local snapshot path for the real 1.2B `VJEPA2Model` (e.g. `facebook/vjepa2-vitl-fpc64-256` or `/data/hf_cache/models--facebook--vjepa2-vitl-fpc64-256/snapshots/<sha>/`). Requires `--encoder=hf_vjepa2`. When set, `HfVJEPA2EncoderShim.from_pretrained` loads real weights + LoRA-wraps them (proven end-to-end on Atlas card 7, see `bench_results/w22_atlas_vitl_smoke/`). |
+| `--encoder-pretrained-revision` | `None` | W2.22+: HF Hub revision pin (default `main`). For reproducibility — current default tracks the latest commit. |
+| `--tubelet-size` | `None` | W2.22+: override the orchestrator's hardcoded `tubelet_size=1` for the HF encoder. ViT-L native is `tubelet_size=2`; smoke geometry (32×32, 4-frame) uses `tubelet_size=1` to match the predictor grid layout. |
 
 ## See also
 

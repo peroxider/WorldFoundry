@@ -232,3 +232,106 @@ def test_shim_signature_round_trips_hf_specific_fields():
     assert n_orig == n_rebuilt, (
         f"signature round-trip drifted: orig={n_orig} rebuilt={n_rebuilt}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Test 6: random-init shim's signature carries ``pretrained_repo_id=None``
+# ---------------------------------------------------------------------------
+
+def test_shim_signature_from_random_init_carries_none_pretrained():
+    """``from_random_init()`` returns a shim whose signature reports
+    ``pretrained_repo_id=None`` and ``pretrained_revision=None``.
+
+    Regression guard for W2.22: W2.18-era random-init checkpoints stay
+    backward compatible with the new dispatch in
+    ``load_tiny_checkpoint`` (when the field is missing / ``None`` the
+    random-init path is taken).
+    """
+    pytest.importorskip("transformers")
+    from worldfoundry_train.model.hf_vjepa_shim import HfVJEPA2EncoderShim
+
+    shim = HfVJEPA2EncoderShim.from_random_init(
+        image_size=32, patch_size=8, in_channels=3,
+        hidden_size=64, num_hidden_layers=2, num_attention_heads=2,
+        tubelet_size=1, frames_per_clip=4,
+    )
+    sig = shim.config.signature()
+    assert sig["pretrained_repo_id"] is None
+    assert sig["pretrained_revision"] is None
+
+
+# ---------------------------------------------------------------------------
+# Test 7: ``from_pretrained`` with local fixture loads real weights
+# ---------------------------------------------------------------------------
+
+def test_shim_from_pretrained_loads_real_weights_from_fixture():
+    """``from_pretrained(<local fixture path>)`` loads a real saved
+    VJEPA2Model and produces outputs that differ from
+    ``from_random_init`` with the same geometry.
+
+    The fixture is a tiny HF VJEPA2Model saved via
+    ``VJEPA2Model.save_pretrained`` to
+    ``bench_results/fixtures/tiny_vjepa2/`` (created once via a one-off
+    script — NOT regenerated every CI run). When
+    ``WORLDFORGE_HF_FIXTURE`` env var is unset (default), this test
+    skips cleanly so local CI doesn't pay the 80 MB fixture cost.
+
+    The discrimination check (``|out_pre - out_rand| > 0.1``) proves
+    that real weights were loaded instead of fresh random init.
+    """
+    pytest.importorskip("transformers")
+    import os
+    from pathlib import Path
+
+    from worldfoundry_train.model.hf_vjepa_shim import HfVJEPA2EncoderShim
+
+    fix_root = os.environ.get("WORLDFORGE_HF_FIXTURE")
+    if not fix_root:
+        pytest.skip(
+            "WORLDFORGE_HF_FIXTURE env var not set; from_pretrained "
+            "test requires the tiny_vjepa2 fixture (~85 MB saved "
+            "VJEPA2Model at bench_results/fixtures/tiny_vjepa2/)."
+        )
+    fix_path = Path(fix_root)
+    if not fix_path.is_dir():
+        pytest.skip(f"WORLDFORGE_HF_FIXTURE points at non-dir: {fix_path}")
+    if not (fix_path / "config.json").is_file():
+        pytest.skip(f"Fixture missing config.json: {fix_path}")
+
+    common_kwargs = dict(
+        image_size=32, patch_size=8, in_channels=3,
+        hidden_size=64, num_hidden_layers=2, num_attention_heads=2,
+        tubelet_size=1, frames_per_clip=4,
+        lora_r=4, lora_alpha=8, lora_dropout=0.0,
+    )
+    pretrained = HfVJEPA2EncoderShim.from_pretrained(
+        pretrained_repo_id=str(fix_path),
+        **common_kwargs,
+    )
+    random_init = HfVJEPA2EncoderShim.from_random_init(**common_kwargs)
+
+    # Both shim expose the same forward surface and accept the same
+    # input shape; the LoRA-wrapped ``VJEPA2Model`` is the differentiator.
+    assert pretrained.config.pretrained_repo_id == str(fix_path)
+    sig = pretrained.config.signature()
+    assert sig["pretrained_repo_id"] == str(fix_path)
+    assert sig["pretrained_revision"] is None  # no revision pin for the fixture
+
+    # Use a non-zero input so the patch embed doesn't collapse to its
+    # bias (zeros-input produces constant token sequences, which all
+    # normalise to the same LayerNorm output regardless of base
+    # weights). The test cares about the BASE weights, not the input.
+    x = torch.randn(1, 1, 3, 32, 32)
+    with torch.no_grad():
+        out_pre = pretrained(pixel_values_videos=x).last_hidden_state
+        out_rand = random_init(pixel_values_videos=x).last_hidden_state
+
+    # Real weights != random init: difference is large in absolute terms.
+    diff = (out_pre - out_rand).abs().mean().item()
+    assert diff > 0.1, (
+        f"from_pretrained output matches random-init too closely "
+        f"(mean |out_pre - out_rand| = {diff:.4f} < 0.1) -- weights "
+        f"may not have loaded from the fixture."
+    )
+    # Sanity: both outputs are the same shape (smoke stays apples-to-apples).
+    assert out_pre.shape == out_rand.shape

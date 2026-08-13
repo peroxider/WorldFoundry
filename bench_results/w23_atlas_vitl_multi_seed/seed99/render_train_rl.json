@@ -1,0 +1,140 @@
+{
+  "label": "RTI v2 CPU render->train->inference->policy (RLinf-shape)",
+  "mode": "npu",
+  "inference_backend": "torch",
+  "config_serializable": {
+    "out_dir": "bench_results/w23_atlas_vitl_multi_seed/seed99",
+    "num_clips": 3,
+    "frames_per_clip": 4,
+    "height": 32,
+    "width": 32,
+    "seed": 99,
+    "num_steps": 6,
+    "learning_rate": 0.0003,
+    "mask_ratio": 0.5,
+    "action_dim": 4,
+    "obs_dim": 8,
+    "ppo_env_steps": 16,
+    "num_ppo_epochs": 2,
+    "num_outer_iters": 3,
+    "num_train_per_iter": 4,
+    "env_type": "mock",
+    "franka_task_name": "lift_brick_features",
+    "data_source": "synthetic",
+    "camera_id": 0,
+    "policy_encoder": "state_mlp",
+    "rollout_horizon": 1,
+    "encoder_kind": "hf_vjepa2",
+    "quant": "none",
+    "encoder_pretrained_repo_id": null,
+    "encoder_pretrained_revision": null,
+    "hf_tubelet_size": null
+  },
+  "render": {
+    "elapsed_seconds": 0.006,
+    "n_clips": 3,
+    "n_frames": 12
+  },
+  "rss_mb_per_phase": {
+    "after_imports": 1012.0,
+    "after_render": 1017.4,
+    "after_train": 2260.9,
+    "after_inference": 2132.3,
+    "after_policy": 2276.2,
+    "final": 2552.2
+  },
+  "train": {
+    "elapsed_seconds": 6.659,
+    "final_total_loss": 26.401,
+    "final_jepa_loss": 26.0024,
+    "final_recon_loss": 0.3986,
+    "final_act_align": 0.0,
+    "n_encoder_params": 21804032,
+    "n_train_steps": 6,
+    "hf_lora_trainable_params": 343808,
+    "hf_lora_total_params": 21804032
+  },
+  "inference": {
+    "elapsed_seconds": 2.603,
+    "recon_cosine": 0.6527,
+    "latent_cosine": 0.389,
+    "n_predicted_tokens": 32,
+    "png_path": "bench_results/w23_atlas_vitl_multi_seed/seed99/render_vs_predicted.png"
+  },
+  "policy_bootstrap": {
+    "elapsed_seconds": 2.9591262119356543,
+    "n_env_steps": 16,
+    "mean_reward_pre_update": -0.8499572131782771,
+    "mean_reward_post_update": -0.16267122904805545,
+    "reward_stdev_pre_update": 0.509113113167159,
+    "policy_loss_initial": 1.5508596897125244,
+    "value_loss_initial": 48.49275207519531,
+    "policy_loss_final": 1.5470846891403198,
+    "value_loss_final": 48.33983612060547,
+    "min_reward": -1.7360820531845094,
+    "max_reward": -0.24604971408843995,
+    "n_policy_params": 1513,
+    "n_ppo_epochs": 2
+  },
+  "outer_loop": {
+    "elapsed_seconds": 14.87351961096283,
+    "n_iters": 3,
+    "n_train_per_iter": 4,
+    "per_iter": [
+      {
+        "iter": 0,
+        "mean_wm_total_loss": 25.5732,
+        "final_wm_total_loss": 24.5804,
+        "reward_pre_update": -0.9815,
+        "reward_post_update": -0.142,
+        "policy_loss_initial": 5.1453,
+        "policy_loss_final": 5.126,
+        "value_loss_initial": 62.7604,
+        "value_loss_final": 62.568,
+        "n_ppo_epochs": 2
+      },
+      {
+        "iter": 1,
+        "mean_wm_total_loss": 23.7397,
+        "final_wm_total_loss": 24.5038,
+        "reward_pre_update": -1.3288,
+        "reward_post_update": -0.1361,
+        "policy_loss_initial": 2.317,
+        "policy_loss_final": 2.3093,
+        "value_loss_initial": 109.5883,
+        "value_loss_final": 109.3576,
+        "n_ppo_epochs": 2
+      },
+      {
+        "iter": 2,
+        "mean_wm_total_loss": 22.154,
+        "final_wm_total_loss": 18.7607,
+        "reward_pre_update": -1.4558,
+        "reward_post_update": -0.1535,
+        "policy_loss_initial": 3.622,
+        "policy_loss_final": 3.6014,
+        "value_loss_initial": 149.1711,
+        "value_loss_final": 148.869,
+        "n_ppo_epochs": 2
+      }
+    ],
+    "reward_trajectory": [
+      -0.142,
+      -0.1361,
+      -0.1535
+    ],
+    "reward_trend_delta": -0.0115
+  },
+  "notes": [
+    "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
+    "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
+    "Env for policy phase: in-process random agent (_MockCPUEnv); no mujoco/dm_control dep \u2014 matches v1 CPU-only promise.",
+    "PPO IS trained here (default 4 epochs per outer iter) \u2014 reward_pre -> reward_post proves policy learned from world-model imagination.",
+    "v2.2 outer iterative loop: world-model train <-> PPO update repeated N times (RLinf's defining pattern). reward_trend_delta quantifies whether reward is trending up across iters.",
+    "env_type='mock'.",
+    "data_source='synthetic' (procedural cv2 .mp4s (v2.x contract)) camera_id=0.",
+    "policy_encoder='state_mlp' (flat-obs MLP actor (v2.x contract)) rollout_horizon=1.",
+    "encoder_kind='hf_vjepa2' (HF VJEPA2Model + LoRA via worldfoundry_train.model.hf_vjepa_shim; source: random-init (W2.18 smoke)) (W2.19+: compatible with --policy-encoder tiny_vjepa2 (RLinf-shape planner path)).",
+    "quant='none' (fp32 HF base (default))."
+  ]
+}
