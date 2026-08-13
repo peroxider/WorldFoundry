@@ -28,6 +28,12 @@ from worldfoundry_train.model.tiny_jepa import (
     TinyActionConditionedPredictor, TinyEncoderConfig,
     TinyPixelDecoder, TinyVJEPA2Encoder,
 )
+# W25-cleanup: migrated from test_render_train_inference_cpu.py to
+# exercise the v2 path (the v1 entry is being removed in W25 (e)).
+from worldfoundry_train.data.synthetic_manifest import (
+    SyntheticManifestSpec,
+    build_synthetic_manifest,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -1143,3 +1149,93 @@ def test_orchestrator_hf_encoder_with_planner_smoke_runs_end_to_end(
         f"notes must mention the planner encoder path "
         f"(policy_encoder=tiny_vjepa2); got: {notes[:300]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# W25-cleanup: v1-compat tests migrated from test_render_train_inference_cpu.py.
+# These exercise the same end-to-end + --skip-render behaviour the v1 entry
+# used to cover, but through the v2 orchestrator (scripts/render_train_rl_cpu.py).
+# ---------------------------------------------------------------------------
+
+
+def test_v2_renders_png_artifact_as_v1_did(tmp_path: Path) -> None:
+    """W25-cleanup: v1's `render_vs_predicted.png` artifact is now emitted by v2.
+
+    The v1 orchestrator saved a side-by-side GT-vs-predicted PNG at
+    ``<out-dir>/render_vs_predicted.png`` after inference; W25 (b) moved
+    that emission into the v2 orchestrator's ``inference_phase``. This
+    test is the v2-runs-the-v1-png-emission contract.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--out-dir", str(tmp_path),
+            "--num-clips", "2",
+            "--frames-per-clip", "4",
+            "--height", "32", "--width", "32",
+            "--num-steps", "4",
+            "--ppo-env-steps", "4",
+            "--num-outer-iters", "1",
+            "--num-train-per-iter", "2",
+            "--num-ppo-epochs", "1",
+            "--seed", "42",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
+    )
+    assert proc.returncode == 0, proc.stderr[-3000:]
+
+    summary = json.loads((tmp_path / "render_train_rl.json").read_text())
+    assert summary["mode"] == "cpu"
+    assert summary["train"]["n_train_steps"] == 4
+    assert summary["train"]["n_encoder_params"] > 0
+    assert np.isfinite(summary["train"]["final_total_loss"])
+    assert -1.0 <= summary["inference"]["recon_cosine"] <= 1.0
+    assert summary["inference"]["n_predicted_tokens"] > 0
+    for phase in ("render", "train", "inference"):
+        assert summary[phase]["elapsed_seconds"] >= 0.0
+
+    # W25 (b): the inference summary now carries a string png_path
+    # when cv2 is available (skipped silently if cv2 is missing).
+    assert summary["inference"]["png_path"], (
+        f"inference phase must record the rendered GT-vs-predicted PNG "
+        f"path; got {summary['inference']['png_path']!r}"
+    )
+    assert (tmp_path / "render_vs_predicted.png").is_file()
+
+    # v2 uses tiny_jepa_v2.pt (the v1 ckpt name is being retired in W25 (e)).
+    assert (tmp_path / "manifest.csv").is_file()
+    assert (tmp_path / "tiny_jepa_v2.pt").is_file()
+    assert len(list((tmp_path / "videos").glob("clip_*.mp4"))) == 2
+
+
+def test_v2_skip_render_reuses_existing_manifest_as_v1_did(tmp_path: Path) -> None:
+    """W25-cleanup: v1's --skip-render short-circuit now lives on v2.
+
+    The v1 orchestrator reused a pre-existing ``<out-dir>/manifest.csv``
+    to skip the cv2.VideoWriter cost when only train/inference needed
+    to run. W25 (a) added the same flag to v2. This test pins the
+    contract on the new path.
+    """
+    build_synthetic_manifest(SyntheticManifestSpec(
+        out_dir=tmp_path, num_clips=2, frames_per_clip=4, height=32, width=32, seed=42,
+    ))
+    argv = [
+        sys.executable, str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+        "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
+        "--height", "32", "--width", "32", "--num-steps", "2",
+        "--ppo-env-steps", "2", "--num-outer-iters", "1",
+        "--num-train-per-iter", "1", "--num-ppo-epochs", "1",
+        "--skip-render",
+    ]
+    proc = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
+    assert proc.returncode == 0, proc.stderr[-3000:]
+    summary = json.loads((tmp_path / "render_train_rl.json").read_text())
+    # Early-return path sets render.elapsed_seconds to 0.0.
+    assert summary["render"]["elapsed_seconds"] == 0.0
+
+    # Missing manifest + --skip-render is a config error (rc=2), not a crash.
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    argv[argv.index("--out-dir") + 1] = str(empty)
+    proc2 = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
+    assert proc2.returncode == 2

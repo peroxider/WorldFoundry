@@ -137,6 +137,14 @@ class VJEPA2NPUWorker(_resolve_base_class()):
         self.model = VJEPA2Model.from_pretrained(
             str(self.model_path), torch_dtype=self.dtype,
         ).eval()
+        # The HF model is loaded on CPU by default. On Atlas it MUST live on
+        # the NPU, otherwise the forward in encode()/predict() fails with a
+        # device mismatch (CPU params vs NPU input). torch_npu's canonical
+        # pattern is load-on-CPU-then `.to("npu")`.
+        if _npu_ops() is not None:
+            import torch
+            dev = f"npu:{torch.npu.current_device()}"
+            self.model = self.model.to(dev)
         if _resolve_base_class().__name__ != "_StubNPUWorker":
             super().load_model(*args, **kwargs)  # type: ignore[misc]
 

@@ -1,19 +1,25 @@
-"""Video source abstraction with DVPP (hardware) and decord (software) backends.
+"""Video source abstraction with DVPP (hardware) and software (decord / PyAV) backends.
 
 Per spec §3.1:
 - Primary: Ascend DVPP (CANN hardware decoder)
-- Fallback: decord (CPU)
+- Fallback: decord (CPU), then PyAV (CPU)
 
-Per spec §4.7, a single-batch DVPP decode failure falls back to decord. That
-fallback lives at the *decode* layer, not at construction: when DVPP is
-available and requested, ``build_video_source`` returns a
-``FallbackVideoSource`` wrapping a DVPP primary and a decord fallback. Its
-``read_all()`` tries DVPP first and, on ``NotImplementedError`` /
-``RuntimeError``, emits a ``logging`` WARNING naming the failure and the file,
-then decodes with decord. Any other exception propagates.
+Per spec §4.7, a single-batch DVPP decode failure falls back to the software
+backend. That fallback lives at the *decode* layer, not at construction:
+when DVPP is available and requested, ``build_video_source`` returns a
+``FallbackVideoSource`` wrapping a DVPP primary and a software fallback.
+Its ``read_all()`` tries DVPP first and, on ``NotImplementedError`` /
+``RuntimeError``, emits a ``logging`` WARNING naming the failure and the
+file, then decodes with the software backend. Any other exception propagates.
 
 Phase-1: ``_dvpp_available()`` always returns False and ``DVPPVideoSource``
 is a stub; the real acl_dvpp decoder arrives in Phase-2 W11.
+
+W41-atlas: decord has no aarch64 wheels on PyPI (verified 2026-08-12 — only
+``manylinux2010_x86_64`` and ``win_amd64`` tags exist). On Atlas / aarch64,
+``build_video_source`` falls back to ``AvVideoSource`` (PyAV) so the same
+code path works on x86_64 with decord and on aarch64 with PyAV. On x86_64,
+decord still wins because it is faster and is what the existing tests run on.
 """
 from __future__ import annotations
 
@@ -61,6 +67,30 @@ class DecordVideoSource(VideoSource):
         reader = decord.VideoReader(str(self.path))
         frames = reader.get_batch(range(len(reader))).asnumpy()
         return frames  # (T, H, W, 3) uint8
+
+
+class AvVideoSource(VideoSource):
+    """Software video decoder using PyAV (CPU).
+
+    W41-atlas fallback: decord has no aarch64 wheels on PyPI, so on Atlas /
+    aarch64 the project falls back to PyAV. Both decoders return the same
+    ``(T, H, W, 3)`` uint8 ndarray contract.
+    """
+
+    def __init__(self, path: PathLike) -> None:
+        self.path = Path(path)
+        if not self.path.exists():
+            raise FileNotFoundError(f"Video not found: {self.path}")
+
+    def read_all(self) -> np.ndarray:
+        import av  # local import: optional dep
+        frames: list[np.ndarray] = []
+        with av.open(str(self.path)) as container:
+            for frame in container.decode(video=0):
+                frames.append(frame.to_ndarray(format="rgb24"))
+        if not frames:
+            raise RuntimeError(f"PyAV decoded 0 frames from {self.path}")
+        return np.stack(frames, axis=0)  # (T, H, W, 3) uint8
 
 
 class DVPPVideoSource(VideoSource):
@@ -118,11 +148,28 @@ class FallbackVideoSource(VideoSource):
             return self.fallback.read_all()
 
 
+def _decord_available() -> bool:
+    """Probe for decord availability. Returns False when the package or a
+    matching wheel is not installed (e.g. on aarch64 / Atlas)."""
+    try:
+        import decord  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def build_video_source(path: PathLike, prefer_dvpp: bool = True) -> VideoSource:
-    """Build a video source, preferring DVPP if available and requested."""
+    """Build a video source, preferring DVPP if available and requested.
+
+    Software backend priority: decord (when installed, faster on x86_64) →
+    PyAV (universal, including aarch64 where decord has no wheel).
+    """
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Video not found: {p}")
+    software: VideoSource = (
+        DecordVideoSource(p) if _decord_available() else AvVideoSource(p)
+    )
     if prefer_dvpp and _dvpp_available():
-        return FallbackVideoSource(DVPPVideoSource(p), DecordVideoSource(p))
-    return DecordVideoSource(p)
+        return FallbackVideoSource(DVPPVideoSource(p), software)
+    return software

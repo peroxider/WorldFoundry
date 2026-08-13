@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import os
 
 from worldfoundry_common.exceptions import VersionMismatchError
 
@@ -96,8 +97,54 @@ def init_distributed(backend: str = "hccl") -> None:
         dist.init_process_group(backend=backend)
     else:
         logger.warning(
-            "NPU not available; substituting requested backend %r with %r for torch.distributed init.",
+            "NPU not available; substituting requested backend %r with %r for torch.distributed.init.",
             backend,
             "gloo",
         )
         dist.init_process_group(backend="gloo")
+
+
+# --------------------------------------------------------------------------- #
+# NPU runtime env (baseline: verl + vllm-ascend on torch_npu 2.9.0)
+# --------------------------------------------------------------------------- #
+DEFAULT_NPU_ENV: dict[str, str] = {
+    # Visible NPU devices (CUDA_VISIBLE_DEVICES' NPU equivalent).
+    "ASCEND_RT_VISIBLE_DEVICES": "0,1,2,3,4,5,6,7",
+    # HCCL port ranges — required for multi-process / multi-card NPU collectives
+    # (verl + Ray on a single card runs several processes that need distinct ports).
+    "HCCL_HOST_SOCKET_PORT_RANGE": "60000-60050",
+    "HCCL_NPU_SOCKET_PORT_RANGE": "61000-61050",
+    # Ray does not understand ASCEND_RT_VISIBLE_DEVICES by default; this flag
+    # stops Ray from trying to manage the NPU device visibility (verl/SGLang docs).
+    "RAY_EXPERIMENTAL_NOSET_ASCEND_RT_VISIBLE_DEVICES": "1",
+    # torch_npu memory-allocation tuning (SGLang/verl NPU docs).
+    "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
+}
+
+
+def npu_env_vars(visible_devices: str | None = None) -> dict[str, str]:
+    """Return the NPU runtime env vars the baseline requires.
+
+    Values are computed from ``os.environ`` when already set (caller wins),
+    else the documented defaults from the verl / vllm-ascend / sglang-ascend
+    community guides. ``visible_devices`` overrides
+    ``ASCEND_RT_VISIBLE_DEVICES`` for a specific device set.
+    """
+    env: dict[str, str] = dict(DEFAULT_NPU_ENV)
+    if visible_devices is not None:
+        env["ASCEND_RT_VISIBLE_DEVICES"] = visible_devices
+    # Preserve any already-exported values (explicit user config wins).
+    for key in env:
+        if key in os.environ:
+            env[key] = os.environ[key]
+    return env
+
+
+def setup_npu_env(visible_devices: str | None = None) -> None:
+    """Apply the baseline NPU runtime env vars to the current process.
+
+    Idempotent; existing ``os.environ`` values are preserved. Call this before
+    spawning Ray / initializing torch.distributed on an NPU host.
+    """
+    for key, value in npu_env_vars(visible_devices=visible_devices).items():
+        os.environ.setdefault(key, value)

@@ -29,7 +29,7 @@ train = ["deepspeed>=0.15"]
 inf = ["vllm==0.18.0", "vllm-ascend==0.18.0"]
 rl = ["verl==0.5.0"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
-quant = ["msmodelslim==26.1.0"]
+quant = ["msmodelslim==26.1.0", "torchao"]
 # opencv-python backs worldfoundry_train/data/synthetic_video.py, whose
 # `import cv2` is top-level and unguarded — without it the CPU RTI loop
 # (docs/dev/cpu-rti-quickstart.md) dies at import, before phase 1. It was

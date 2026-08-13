@@ -76,6 +76,10 @@ class FrankaKitchenEnv:
         task_name: str = DEFAULT_TASK,
         *,
         seed: int | None = None,
+        render_height: int = 32,
+        render_width: int = 32,
+        camera_id: int | str = 0,
+        enable_render: bool = True,
     ) -> None:
         # Deferred import: dm_control pulls in mujoco + gl context + native
         # bindings. We only pay that cost when an actual env instance is
@@ -107,6 +111,23 @@ class FrankaKitchenEnv:
                 f"Available tasks: {available}"
             ) from exc
 
+        # W2.16: render seam — capture the latest RGB frame so the
+        # world-model train phase can train on the same observation
+        # stream that the policy rollout sees. Defaults match the
+        # orchestrator's default encoder image_size so the on-disk mp4s
+        # line up with `Vjepa2Dataset`'s manifest schema out of the box.
+        if render_height < 8 or render_width < 8:
+            raise ValueError(
+                f"render_height/render_width must be >= 8; got "
+                f"{render_height}x{render_width}"
+            )
+        self.render_height = int(render_height)
+        self.render_width = int(render_width)
+        self.camera_id = camera_id
+        self.enable_render = bool(enable_render)
+        self._last_frame: np.ndarray | None = None
+        self._render_failures: int = 0
+
         # Observation / action spaces — declare them as plain attributes so
         # the :class:`worldfoundry_rl.env_pool.Env` Protocol's duck-typed
         # attribute check passes. We use simple named tuples instead of
@@ -134,6 +155,7 @@ class FrankaKitchenEnv:
                 self._env.task.random.seed(int(effective_seed))
             except Exception:
                 pass
+        self._capture_frame(timestep)
         obs = self._extract_obs(timestep)
         info: dict = {}
         return obs, info
@@ -149,6 +171,7 @@ class FrankaKitchenEnv:
         # dm_control.manipulation action_spec dtype is float64; cast.
         action_arr = action_arr.astype(np.float64)
         timestep = self._env.step(action_arr)
+        self._capture_frame(timestep)
         obs = self._extract_obs(timestep)
         # dm_control returns the per-step reward (not 0 on terminal) so
         # PPO can learn from terminal-step bonuses. Convert to plain float.
@@ -170,6 +193,63 @@ class FrankaKitchenEnv:
             del self._env
         except Exception:
             pass
+
+    # ---- W2.16: RGB frame seam -----------------------------------------
+
+    def last_frame(self) -> np.ndarray:
+        """Return the latest rendered RGB frame as a deep-copied ``(H, W, 3) uint8``.
+
+        Must be called after ``reset()`` (or any ``step()``); raises
+        ``RuntimeError`` otherwise so callers don't silently train on a
+        zero buffer. Render failures (no GL context, missing EGL) fall
+        back to an all-zero frame and increment ``_render_failures`` —
+        the env never crashes the policy phase on a render hiccup.
+        """
+        if self._last_frame is None:
+            raise RuntimeError(
+                "FrankaKitchenEnv.last_frame called before reset(); "
+                "call reset() at least once to capture an initial frame"
+            )
+        return self._last_frame.copy()
+
+    @property
+    def render_failures(self) -> int:
+        """Cumulative count of ``physics.render(...)`` failures since construction."""
+        return int(self._render_failures)
+
+    def _capture_frame(self, timestep: Any) -> None:
+        """Render and stash the latest frame for :meth:`last_frame`.
+
+        Swallows all exceptions so a missing GL stack (e.g. headless CI
+        without EGL) never poisons the orchestrator's training loop —
+        downstream consumers see a zero frame and can log/track the
+        failure count via :attr:`render_failures`.
+        """
+        if not self.enable_render:
+            return
+        import logging
+        import numpy as np
+        try:
+            pixels = self._env.physics.render(
+                height=self.render_height,
+                width=self.render_width,
+                camera_id=self.camera_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — render is best-effort
+            self._render_failures += 1
+            if self._render_failures == 1:
+                logging.getLogger(__name__).warning(
+                    "FrankaKitchenEnv render failed (%r); subsequent "
+                    "last_frame() will return zero buffer",
+                    exc,
+                )
+            self._last_frame = np.zeros(
+                (self.render_height, self.render_width, 3), dtype=np.uint8,
+            )
+            return
+        # dm_control returns (H, W, 3) uint8 already; copy so downstream
+        # mutation (cv2.VideoWriter, etc.) doesn't poison the buffer.
+        self._last_frame = np.asarray(pixels, dtype=np.uint8).copy()
 
     def _extract_obs(self, timestep: Any) -> dict:
         """Pull (ee_pos, target_pos, task_success) from a dm_control timestep."""

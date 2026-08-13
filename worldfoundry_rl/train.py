@@ -34,9 +34,25 @@ import yaml
 
 from worldfoundry_train.checkpoint import save_checkpoint
 from worldfoundry_train.device import resolve_device, to_device
+from worldfoundry_common.backends import resolve_config
+from worldfoundry_common.backends.sim_env import resolve_env_spec
 
 
-__all__ = ["main", "parse_args", "build_pool", "build_policy"]
+__all__ = ["main", "parse_args", "build_pool", "build_policy", "_resolve_device"]
+
+
+def _resolve_device(cfg: dict) -> str:
+    """Resolve the device string from the YAML ``backends:`` map.
+
+    If the config carries a ``backends.device`` entry (``"cpu"`` / ``"npu"`` /
+    ``"auto"``), it wins; otherwise fall back to the W20 auto seam
+    (:func:`worldfoundry_train.device.resolve_device`, which honors
+    ``WORLDFORGE_DEVICE`` + NPU auto-detection).
+    """
+    block = cfg.get("backends")
+    if isinstance(block, dict) and block.get("device"):
+        return resolve_config(block).device()
+    return resolve_device()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -102,10 +118,16 @@ def build_pool(cfg: dict) -> tuple[Any, int, int]:
 
     Returns ``(pool, obs_dim, action_dim)``. ``obs_dim`` is the flattened
     width of a single env observation (sum of all per-key arrays' sizes).
+    If ``env.type`` is absent, the ``backends.sim_env`` alias (e.g.
+    ``"mock"`` / ``"mujoco"``) is used instead.
     """
-    env_type = cfg.get("env", {}).get("type")
-    if not env_type:
+    raw_env_type = cfg.get("env", {}).get("type")
+    if not raw_env_type:
+        block = cfg.get("backends")
+        raw_env_type = block.get("sim_env") if isinstance(block, dict) else None
+    if not raw_env_type:
         raise ValueError("config missing required `env.type`")
+    env_type = resolve_env_spec(raw_env_type)
     env_cls = _import_class(env_type)
     env_kwargs = dict(cfg.get("env", {}).get("kwargs", {}))
     num_envs = int(cfg.get("env", {}).get("num_envs", 1))
@@ -180,8 +202,8 @@ def main(argv: list[str] | None = None) -> int:
 
     log_every_n = int(cfg.get("training", {}).get("log_every_n", 1))
 
-    # W20 seam.
-    device = resolve_device()
+    # Device seam: honor the `backends:` map first, else the W20 auto seam.
+    device = _resolve_device(cfg)
 
     pool, obs_dim, action_dim = build_pool(cfg)
     try:

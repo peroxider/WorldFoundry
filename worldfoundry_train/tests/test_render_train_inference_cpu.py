@@ -1,13 +1,17 @@
-"""RTI v1 tests: synthetic render -> tiny JEPA train -> pixel inference (CPU).
+"""RTI v1 module tests: synthetic render -> tiny JEPA train -> pixel inference (CPU).
 
-Covers the five modules that make the CPU render->train->inference loop
+Covers the four modules that make the CPU render->train->inference loop
 work without the HF V-JEPA 2 1.2B download:
 
 - ``worldfoundry_train.data.synthetic_video``    (Render)
 - ``worldfoundry_train.data.synthetic_manifest`` (Render)
 - ``worldfoundry_train.model.tiny_jepa``         (Train / Inference)
 - ``worldfoundry_train.ema_compat``              (Train)
-- ``scripts/render_train_inference_cpu.py``      (orchestrator, subprocess)
+
+W25-cleanup: the v1 subprocess tests that used to invoke
+``scripts/render_train_inference_cpu.py`` were migrated to
+``worldfoundry_train/tests/test_render_train_rl_cpu.py``. The v1
+orchestrator script itself was deleted in W25 (e).
 
 Everything here is CPU-only and sized so the whole file runs in well
 under a minute (32x32 clips, depth-2 encoders, <=6 optimizer steps).
@@ -15,9 +19,6 @@ under a minute (32x32 clips, depth-2 encoders, <=6 optimizer steps).
 from __future__ import annotations
 
 import csv
-import json
-import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -44,8 +45,6 @@ from worldfoundry_train.model.tiny_jepa import (
     TinyPixelDecoder,
     TinyVJEPA2Encoder,
 )
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Small enough to keep every test sub-second on one CPU thread.
 TINY_CFG = TinyEncoderConfig(image_size=32, patch_size=8, embed_dim=32, depth=2, num_heads=2)
@@ -298,60 +297,10 @@ def test_tiny_checkpoint_load_raises_on_incomplete_payload(tmp_path: Path) -> No
         load_tiny_checkpoint(path)
 
 
-# ---------------------------------------------------------------------------
-# Orchestrator (end-to-end, subprocess)
-# ---------------------------------------------------------------------------
-
-
-def test_orchestrator_runs_end_to_end(tmp_path: Path) -> None:
-    """Render -> Train -> Inference must complete and emit a valid summary."""
-    proc = subprocess.run(
-        [
-            sys.executable, str(REPO_ROOT / "scripts" / "render_train_inference_cpu.py"),
-            "--out-dir", str(tmp_path),
-            "--num-clips", "2",
-            "--frames-per-clip", "4",
-            "--height", "32", "--width", "32",
-            "--num-steps", "4",
-            "--seed", "42",
-        ],
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=600,
-    )
-    assert proc.returncode == 0, proc.stderr[-3000:]
-
-    summary = json.loads((tmp_path / "render_train_inference.json").read_text())
-    assert summary["mode"] == "cpu"
-    assert summary["train"]["n_train_steps"] == 4
-    assert summary["train"]["n_encoder_params"] > 0
-    assert np.isfinite(summary["train"]["final_total_loss"])
-    assert -1.0 <= summary["inference"]["recon_cosine"] <= 1.0
-    assert summary["inference"]["n_predicted_tokens"] > 0
-    for phase in ("render", "train", "inference"):
-        assert summary[phase]["elapsed_seconds"] >= 0.0
-
-    assert (tmp_path / "manifest.csv").is_file()
-    assert (tmp_path / "tiny_jepa.pt").is_file()
-    assert (tmp_path / "render_vs_predicted.png").is_file()
-    assert len(list((tmp_path / "videos").glob("clip_*.mp4"))) == 2
-
-
-def test_orchestrator_skip_render_reuses_existing_manifest(tmp_path: Path) -> None:
-    build_synthetic_manifest(SyntheticManifestSpec(
-        out_dir=tmp_path, num_clips=2, frames_per_clip=4, height=32, width=32, seed=42,
-    ))
-    argv = [
-        sys.executable, str(REPO_ROOT / "scripts" / "render_train_inference_cpu.py"),
-        "--out-dir", str(tmp_path), "--num-clips", "2", "--frames-per-clip", "4",
-        "--height", "32", "--width", "32", "--num-steps", "2", "--skip-render",
-    ]
-    proc = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
-    assert proc.returncode == 0, proc.stderr[-3000:]
-    summary = json.loads((tmp_path / "render_train_inference.json").read_text())
-    assert summary["render"]["elapsed_seconds"] == 0.0
-
-    # Missing manifest + --skip-render is a config error (rc=2), not a crash.
-    empty = tmp_path / "empty"
-    empty.mkdir()
-    argv[argv.index("--out-dir") + 1] = str(empty)
-    proc2 = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
-    assert proc2.returncode == 2
+# W25-cleanup: v1 subprocess tests (``test_orchestrator_runs_end_to_end``,
+# ``test_orchestrator_skip_render_reuses_existing_manifest``) have been
+# migrated to ``worldfoundry_train/tests/test_render_train_rl_cpu.py``
+# (``test_v2_renders_png_artifact_as_v1_did`` and
+# ``test_v2_skip_render_reuses_existing_manifest_as_v1_did``).
+# The v1 orchestrator script (``scripts/render_train_inference_cpu.py``)
+# was deleted in W25 (e).

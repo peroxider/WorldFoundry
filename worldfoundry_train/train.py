@@ -6,6 +6,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 from pathlib import Path
 
 import yaml
@@ -81,6 +83,32 @@ def _resolve_mode(args: argparse.Namespace, cfg: dict) -> str:
     return profile
 
 
+def _apply_backend_device(cfg: dict) -> None:
+    """Honor ``backends.device`` (``"cpu"`` / ``"npu"``) by pinning the env.
+
+    The trainer + parallel setup resolve the device via
+    ``WORLDFORGE_DEVICE`` + NPU auto-detection, so pinning that env var here
+    is the single seam that lets a ``backends.device`` entry drive the whole
+    run without threading a device through every signature. ``"auto"`` (or
+    absence) leaves the env var untouched and keeps auto-detection.
+    """
+    block = cfg.get("backends")
+    dev = block.get("device") if isinstance(block, dict) else None
+    if dev in ("cpu", "npu"):
+        os.environ["WORLDFORGE_DEVICE"] = dev
+
+
+def _report_backends(cfg: dict) -> None:
+    """Validate + log the resolved backend stack (honors the ``backends:`` map)."""
+    from worldfoundry_common.backends import resolve_config
+
+    stack = resolve_config(cfg.get("backends"))
+    print(
+        "[TRAIN] backends: "
+        + json.dumps({a: stack.backends[a].name for a in sorted(stack.backends)})
+    )
+
+
 def main() -> int:
     args = parse_args()
     check_versions(strict=args.strict_versions)
@@ -90,6 +118,10 @@ def main() -> int:
 
     from worldfoundry_train.quantize_bridge import maybe_quantize_first
     cfg = maybe_quantize_first(cfg)
+
+    # Wire the `backends:` map: pin device + report the resolved stack.
+    _apply_backend_device(cfg)
+    _report_backends(cfg)
 
     profile = _resolve_parallel(args, cfg)
 
