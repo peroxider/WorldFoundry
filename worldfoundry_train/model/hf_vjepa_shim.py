@@ -413,22 +413,16 @@ class HfVJEPA2EncoderShim(nn.Module):
                 ``VJEPA2Model`` are loaded via
                 ``from_pretrained``; ``cache_dir`` / ``revision`` flow
                 through to the HF loader.
-            image_size / patch_size / in_channels: only used for the
-                shim config (which downstream geometry consumers
-                read). The HF base's own spatial side length is taken
-                from the loaded ``VJEPA2Config.crop_size`` — the W2.22
-                smoke runs ``image_size=32`` (downsample the 256-side
-                weights) and lets HF run its own patch embed at the
-                geometrically-incompatible ratio. The W2.22 geometry
-                is intentionally OOD (``tubelet_size=1`` instead of
-                the pretrained 2; ``frames_per_clip=4`` instead of 64)
-                so the seam-closure proof stays in the smoke regime;
-                realistic geometry is a future optimisation.
-            hidden_size / num_hidden_layers / num_attention_heads /
-            tubelet_size / frames_per_clip: recorded on the shim
-                config so :meth:`signature` round-trips them. They
-                DO NOT override what the loaded base actually uses —
-                the real HF config wins.
+            image_size / frames_per_clip: runtime input geometry stored
+                on the shim config. The loaded base supports OOD input
+                sizes/counts, and downstream predictor/mask construction
+                must match the input actually passed to ``forward``.
+            patch_size / tubelet_size: recorded from the loaded base
+                because its embedding layers determine emitted token
+                geometry. Caller values do not override those layers.
+            hidden_size / num_hidden_layers / num_attention_heads:
+                recorded from the loaded HF config for checkpoint
+                reconstruction; the real HF model remains authoritative.
             lora_r / lora_alpha / lora_dropout: LoRA wrap parameters
                 forwarded to :func:`build_lora_model`.
             quant: weight-only int8 quant on the HF encoder base
@@ -498,34 +492,23 @@ class HfVJEPA2EncoderShim(nn.Module):
             bias="none",
         )
 
-        # W2.22+ geometry-truthful shim: the loaded HF config is the
-        # SOURCE OF TRUTH for the geometry the model actually emits.
-        # The ``image_size`` / ``patch_size`` / ``tubelet_size`` /
-        # ``frames_per_clip`` kwargs describe the INTENDED smoke
-        # geometry, but the HF model's internal patch embed + tubelet
-        # embed use the loaded config regardless. Recording the
-        # loaded config on the shim means downstream consumers
-        # (orchestrator's ``_build_stack``, ``policy_bootstrap_phase``,
-        # ``load_tiny_checkpoint``) can compute the correct grid and
-        # build the predictor + mask layout with the right ``N``.
-        actual_image_size = int(
-            getattr(cfg, "image_size", None)
-            or getattr(cfg, "crop_size", image_size)
-        )
+        # The pretrained base owns the patch/tubelet embedding geometry,
+        # but callers own the runtime clip geometry. VJEPA2Model supports
+        # OOD frame counts and image sizes, so checkpoints must preserve
+        # the requested runtime image/frame values; otherwise an OOD
+        # smoke run reloads a predictor for the checkpoint's native
+        # 64x256x256 grid rather than the actual 4x32x32 input.
         actual_patch_size = int(getattr(cfg, "patch_size", patch_size))
         actual_tubelet_size = int(getattr(cfg, "tubelet_size", tubelet_size))
-        actual_frames_per_clip = int(
-            getattr(cfg, "frames_per_clip", frames_per_clip)
-        )
         shim_config = HfEncoderShimConfig(
-            image_size=int(actual_image_size),
+            image_size=int(image_size),
             patch_size=int(actual_patch_size),
             in_channels=int(in_channels),
             embed_dim=int(cfg.hidden_size),
             num_heads=int(cfg.num_attention_heads),
             depth=int(cfg.num_hidden_layers),
             tubelet_size=int(actual_tubelet_size),
-            frames_per_clip=int(actual_frames_per_clip),
+            frames_per_clip=int(frames_per_clip),
             lora_r=int(lora_r),
             lora_alpha=int(lora_alpha),
             lora_dropout=float(lora_dropout),

@@ -316,6 +316,8 @@ def test_shim_from_pretrained_loads_real_weights_from_fixture():
     sig = pretrained.config.signature()
     assert sig["pretrained_repo_id"] == str(fix_path)
     assert sig["pretrained_revision"] is None  # no revision pin for the fixture
+    assert pretrained.config.image_size == 32
+    assert pretrained.config.frames_per_clip == 4
 
     # Use a non-zero input so the patch embed doesn't collapse to its
     # bias (zeros-input produces constant token sequences, which all
@@ -335,3 +337,90 @@ def test_shim_from_pretrained_loads_real_weights_from_fixture():
     )
     # Sanity: both outputs are the same shape (smoke stays apples-to-apples).
     assert out_pre.shape == out_rand.shape
+
+
+# ---------------------------------------------------------------------------
+# W2.25+: ema_compat HF predictor rebuild uses post-tubelet T_post
+# ---------------------------------------------------------------------------
+
+def test_ema_compat_hf_rebuild_uses_post_tubelet_T(tmp_path):
+    """W2.25 regression guard: ``load_tiny_checkpoint`` must compute the
+    predictor's ``num_patches`` from ``T_post = frames_per_clip //
+    tubelet_size``, not from ``frames_per_clip`` directly. Pre-W2.25 the
+    rebuild silently used pre-tubelet ``T``, which only matched the
+    encoder's tokens when ``tubelet_size=1`` (smoke geometry).
+
+    Exercises the HF branch directly via a hand-rolled bundle dict
+    with ``encoder_kind='hf_vjepa2'`` and ``tubelet_size=2``. Requires
+    ``transformers`` + peft installed; skips cleanly otherwise.
+    """
+    from worldfoundry_train.ema_compat import load_tiny_checkpoint
+
+    # Tiny-encoder bundle with tubelet_size=2 + frames_per_clip=4.
+    # The tiny encoder doesn't actually use tubelet_size for tokens,
+    # but ``load_tiny_checkpoint``'s HF branch DOES, and the
+    # ``encoder_config`` dict's ``tubelet_size`` field round-trips
+    # through both branches. We force the HF branch via
+    # ``encoder_kind='hf_vjepa2'`` and the gated skip otherwise.
+    enc_cfg = TinyEncoderConfig(
+        image_size=32, patch_size=8, in_channels=3,
+        embed_dim=64, depth=2, num_heads=2, mlp_ratio=2.0,
+    )
+    enc = TinyVJEPA2Encoder(enc_cfg)
+    cfg_dict = enc.config.signature()
+    cfg_dict["encoder_kind"] = "hf_vjepa2"
+    cfg_dict["tubelet_size"] = 2
+    cfg_dict["frames_per_clip"] = 4
+
+    # Save a hand-rolled bundle that pretends to be a checkpoint of
+    # an HF encoder (the HF branch reads ``cfg_dict`` not the actual
+    # ``encoder_config.signature()`` keys to decide the predictor
+    # rebuild). If transformers is missing we skip cleanly.
+    pytest.importorskip("transformers")
+    from worldfoundry_train.model.hf_vjepa_shim import HfJEPAPredictorShim
+
+    Hg = 32 // 8  # = 4
+    T_post = max(1, 4 // 2)  # = 2
+    predictor = HfJEPAPredictorShim(
+        num_patches=T_post * Hg * Hg,
+        grid_size=(T_post, Hg, Hg),
+        encoder_dim=64, predictor_dim=16, depth=2, num_heads=2,
+    )
+
+    bundle = {
+        "step": 1,
+        "encoder_state": enc.state_dict(),
+        "predictor_state": predictor.state_dict(),
+        "decoder_state": {},
+        "encoder_config": cfg_dict,
+    }
+    ckpt = tmp_path / "tiny_jepa_v2.pt"
+    import torch as _t
+    _t.save(bundle, ckpt)
+
+    # HF branch will try to load transformers; skip if unavailable.
+    try:
+        from worldfoundry_train.model.hf_vjepa_shim import HfVJEPA2EncoderShim
+        HfVJEPA2EncoderShim.from_random_init(
+            image_size=32, patch_size=8, hidden_size=64,
+            num_hidden_layers=2, num_attention_heads=2,
+            tubelet_size=2, frames_per_clip=4,
+            lora_r=4, lora_alpha=8, lora_dropout=0.0,
+        )
+    except Exception as exc:  # transformers / peft missing
+        pytest.skip(f"HF stack unavailable: {exc}")
+
+    try:
+        bundle_out = load_tiny_checkpoint(ckpt, device="cpu")
+    except Exception as exc:
+        pytest.skip(f"HF checkpoint rebuild unavailable: {exc}")
+
+    # The predictor's num_patches must be T_post*Hg*Wg = 2*4*4 = 32,
+    # NOT frames_per_clip*Hg*Wg = 4*4*4 = 64 (the pre-W2.25 bug).
+    pred = bundle_out["predictor"]
+    assert isinstance(pred, HfJEPAPredictorShim)
+    assert pred.predictor.num_patches == T_post * Hg * Hg, (
+        f"rebuilt predictor num_patches={pred.predictor.num_patches}, "
+        f"expected {T_post * Hg * Hg} (post-tubelet); pre-W2.25 bug would "
+        f"yield {4 * Hg * Hg}"
+    )

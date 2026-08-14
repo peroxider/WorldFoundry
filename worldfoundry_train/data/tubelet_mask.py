@@ -106,3 +106,42 @@ def tubelet_mask(
     # Broadcast each grid cell to a tubelet
     mask = np.kron(grid_mask, np.ones(tubelet_size, dtype=bool))
     return mask
+
+
+def _largest_divisor_le(axis: int, n: int) -> int:
+    """Largest ``k`` in ``[1, n]`` that divides ``axis``; ``1`` always works.
+
+    Used by ``default_mask_tubelet_size`` to keep block sizes grid-compatible
+    (no ``MaskingError``). Walks ``n`` downward; on degenerate inputs
+    (``n <= 0`` or axis==0) returns ``1``.
+    """
+    if n <= 0 or axis <= 0:
+        return 1
+    cap = min(n, axis)
+    for k in range(cap, 0, -1):
+        if axis % k == 0:
+            return k
+    return 1
+
+
+def default_mask_tubelet_size(grid: Tuple[int, int, int]) -> Tuple[int, int, int]:
+    """Auto-scale the mask block size for a post-tubelet ``(T, Hg, Wg)`` grid.
+
+    W2.25+: replaces the orchestrator's hardcoded ``(2, Hg, Wg)`` default
+    that masked entire 2D slices. Each axis is sized at ``axis_size // 4``
+    clamped to ``[1, axis_size]``, then snapped DOWN to the nearest divisor
+    of the axis so the returned tuple is always shape-compatible with the
+    grid (no ``MaskingError``). Yields:
+
+    - smoke ``(4, 4, 4)`` -> ``(1, 1, 1)`` (per-token masking)
+    - ViT-L native ``(32, 16, 16)`` -> ``(8, 4, 4)`` -> 64 blocks total
+    - paper-default ``(4, 14, 14)`` -> ``(1, 2, 2)`` (3 doesn't divide 14)
+
+    Callers may override via ``cfg.mask_tubelet_size`` when a specific
+    block shape is required.
+    """
+    T, Hg, Wg = grid
+    t = _largest_divisor_le(T, max(1, T // 4))
+    h = _largest_divisor_le(Hg, max(1, Hg // 4))
+    w = _largest_divisor_le(Wg, max(1, Wg // 4))
+    return (t, h, w)

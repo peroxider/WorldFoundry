@@ -305,10 +305,17 @@ def load_tiny_checkpoint(
         # orchestrator's HF branch).
         Hg = int(cfg_dict["image_size"]) // int(cfg_dict["patch_size"])
         Wg = Hg
-        N = int(cfg_dict["frames_per_clip"]) * Hg * Wg
+        # W2.25+: use post-tubelet ``T_post`` so the rebuilt predictor's
+        # ``num_patches`` matches the encoder's emitted tokens. Pre-W2.25
+        # the math used pre-tubelet ``frames_per_clip``; that worked only
+        # when ``tubelet_size=1`` (smoke).
+        tubelet_size = int(cfg_dict.get("tubelet_size", 1))
+        frames_per_clip = int(cfg_dict["frames_per_clip"])
+        T_post = max(1, frames_per_clip // max(1, tubelet_size))
+        N = T_post * Hg * Wg
         predictor = HfJEPAPredictorShim(
             num_patches=N,
-            grid_size=(int(cfg_dict["frames_per_clip"]), Hg, Wg),
+            grid_size=(T_post, Hg, Wg),
             encoder_dim=int(cfg_dict["embed_dim"]),
             predictor_dim=64, depth=2, num_heads=2,
         )

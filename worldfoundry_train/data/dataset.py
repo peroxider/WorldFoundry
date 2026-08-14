@@ -35,17 +35,21 @@ class Vjepa2Dataset:
         mask_fn: MaskFn,
         patch_size: int = 14,
         mask_count: int = 1,
+        tubelet_size: int = 1,
     ) -> None:
         if patch_size <= 0:
             raise ValueError(f"patch_size must be > 0; got {patch_size}")
         if mask_count < 1:
             raise ValueError(f"mask_count must be >= 1; got {mask_count}")
+        if tubelet_size < 1:
+            raise ValueError(f"tubelet_size must be >= 1; got {tubelet_size}")
         self.manifest_path = Path(manifest_path)
         if not self.manifest_path.exists():
             raise FileNotFoundError(f"Manifest not found: {self.manifest_path}")
         self.mask_fn = mask_fn
         self.patch_size = patch_size
         self.mask_count = mask_count
+        self.tubelet_size = int(tubelet_size)
         self.entries: list[dict[str, str]] = []
         with self.manifest_path.open() as f:
             reader = csv.DictReader(f)
@@ -80,7 +84,13 @@ class Vjepa2Dataset:
         frames = frames.astype(np.float32) / 255.0
         frames = np.transpose(frames, (0, 3, 1, 2))  # (T, 3, H, W)
         T, _, H, W = frames.shape
-        grid = (T, H // self.patch_size, W // self.patch_size)
+        # W2.25+: align mask grid with the encoder's post-tubelet token grid.
+        # The encoder emits ``(T // tubelet_size, Hg, Wg)`` tokens, so the
+        # bool mask must be over the same grid for ``bool_masked_pos`` to
+        # index ``last_hidden_state`` correctly. With ``tubelet_size=1``
+        # (default) ``T_post == T`` and behavior is byte-identical to today.
+        T_post = max(1, T // self.tubelet_size)
+        grid = (T_post, H // self.patch_size, W // self.patch_size)
         # Seed = idx * K + i so the K masks of one sample differ from each
         # other while staying reproducible across epochs. At K=1 this
         # collapses to `idx`, byte-identical to the pre-W22.8 behaviour that

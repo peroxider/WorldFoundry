@@ -1239,3 +1239,81 @@ def test_v2_skip_render_reuses_existing_manifest_as_v1_did(tmp_path: Path) -> No
     argv[argv.index("--out-dir") + 1] = str(empty)
     proc2 = subprocess.run(argv, cwd=REPO_ROOT, capture_output=True, text=True, timeout=600)
     assert proc2.returncode == 2
+
+# ---------------------------------------------------------------------------
+# W2.25: tubelet-aware reconstruction and mask CLI
+# ---------------------------------------------------------------------------
+
+
+def test_decoder_num_frames_uses_post_tubelet_time() -> None:
+    from scripts.render_train_rl_cpu import V2Config, _decoder_num_frames
+
+    assert _decoder_num_frames(V2Config(out_dir=Path("/tmp"), frames_per_clip=4)) == 4
+    assert _decoder_num_frames(
+        V2Config(
+            out_dir=Path("/tmp"),
+            frames_per_clip=4,
+            encoder_kind="hf_vjepa2",
+            hf_tubelet_size=2,
+        )
+    ) == 2
+
+
+def test_reconstruction_target_preserves_unpooled_frames() -> None:
+    from scripts.render_train_rl_cpu import _reconstruction_target
+
+    frames = torch.arange(24, dtype=torch.float32).reshape(1, 4, 1, 2, 3)
+    assert torch.equal(_reconstruction_target(frames, 4), frames)
+
+
+def test_reconstruction_target_pools_temporal_tubelets() -> None:
+    from scripts.render_train_rl_cpu import _reconstruction_target
+
+    frames = torch.arange(24, dtype=torch.float32).reshape(1, 4, 1, 2, 3)
+    expected = torch.stack((frames[:, :2].mean(dim=1), frames[:, 2:].mean(dim=1)), dim=1)
+    assert torch.equal(_reconstruction_target(frames, 2), expected)
+
+
+def test_reconstruction_target_rejects_non_divisible_frame_count() -> None:
+    from scripts.render_train_rl_cpu import _reconstruction_target
+
+    frames = torch.zeros(1, 4, 3, 2, 2)
+    with pytest.raises(ValueError, match="not divisible"):
+        _reconstruction_target(frames, 3)
+
+
+# ---------------------------------------------------------------------------
+# W2.25: --mask-tubelet-size CLI flag
+# ---------------------------------------------------------------------------
+
+def test_cli_help_includes_mask_tubelet_size() -> None:
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(REPO_ROOT / "scripts" / "render_train_rl_cpu.py"),
+            "--help",
+        ],
+        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0
+    assert "--mask-tubelet-size" in proc.stdout
+
+
+def test_parse_args_accepts_mask_tubelet_size() -> None:
+    from scripts.render_train_rl_cpu import parse_args
+    args = parse_args([
+        "--out-dir", "/tmp/whatever",
+        "--mask-tubelet-size", "2", "4", "4",
+    ])
+    # argparse ``nargs=3`` returns a list; V2Config wiring wraps it
+    # in ``tuple()`` so the dataclass field is hashable. We assert
+    # against the raw list returned by argparse here.
+    assert args.mask_tubelet_size == [2, 4, 4]
+    # Confirm the V2Config field type contract: tuple after wrapping.
+    assert tuple(args.mask_tubelet_size) == (2, 4, 4)
+
+
+def test_parse_args_defaults_mask_tubelet_size_to_none() -> None:
+    from scripts.render_train_rl_cpu import parse_args
+    args = parse_args(["--out-dir", "/tmp/whatever"])
+    assert args.mask_tubelet_size is None

@@ -105,3 +105,43 @@ def test_dataset_raises_for_zero_patch_size(manifest):
             manifest_path=manifest, patch_size=0,
             mask_fn=lambda shape, rng: np.zeros(shape, dtype=bool),
         )
+
+
+def test_dataset_raises_for_zero_tubelet_size(manifest):
+    with pytest.raises(ValueError, match=r"tubelet_size"):
+        Vjepa2Dataset(
+            manifest_path=manifest, tubelet_size=0,
+            mask_fn=lambda shape, rng: np.zeros(shape, dtype=bool),
+        )
+
+
+def test_dataset_mask_with_tubelet_size_2_matches_encoder_tokens(manifest):
+    """W2.25+: tubelet_size=2 halves the time axis so the mask grid
+    matches the encoder's emitted tokens. 20 frames, 64x64, patch=14
+    gives the standard (4, 4) Hg/Wg grid; with tubelet_size=2 the
+    time axis must collapse from 20 to 10."""
+    captured_grid: list[tuple[int, int, int]] = []
+
+    def capture_mask_fn(shape, rng):
+        captured_grid.append(shape)
+        return np.zeros(shape, dtype=bool)
+
+    ds = Vjepa2Dataset(
+        manifest_path=manifest, tubelet_size=2,
+        mask_fn=capture_mask_fn,
+    )
+    item = ds[0]
+    assert item["frames"].shape[0] == 20
+    assert item["mask"].shape == (10, 4, 4)
+    assert captured_grid and captured_grid[0] == (10, 4, 4)
+
+
+def test_dataset_tubelet_size_1_default_unchanged(manifest):
+    """W2.25+: backward compat. Default tubelet_size=1 preserves the
+    pre-W2.25 mask shape byte-identically."""
+    ds = Vjepa2Dataset(
+        manifest_path=manifest,
+        mask_fn=lambda shape, rng: np.ones(shape, dtype=bool),
+    )
+    item = ds[0]
+    assert item["mask"].shape == (20, 4, 4)

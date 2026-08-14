@@ -195,10 +195,18 @@ class V2Config:
     # W2.22+: override for the HF encoder's tubelet_size. ``None``
     # (default) keeps the W2.18 hardcoded ``tubelet_size=1``; setting
     # it (e.g. ``2`` for ViT-L native) routes through the HF config
-    # if compatible. The W2.22 smoke runs ``tubelet_size=1`` for the
-    # seam-closure proof; realistic ``tubelet_size=2`` needs a
-    # predictor-grid change (future).
+    # if compatible. The W2.25 wiring aligns the dataset mask grid
+    # and checkpoint rebuild with the encoder's post-tubelet token
+    # grid so full-orchestrator ViT-L is supported end-to-end.
     hf_tubelet_size: int | None = None
+    # W2.25+: mask block size for the ``tubelet_mask`` random sampler
+    # (separate concept from encoder's ``tubelet_size``). ``None``
+    # (default) auto-scales via
+    # :func:`worldfoundry_train.data.tubelet_mask.default_mask_tubelet_size`
+    # based on the post-tubelet ``(T, Hg, Wg)`` grid. Override via
+    # ``--mask-tubelet-size T H W`` when a specific block shape is
+    # required (e.g. matching paper default ``(2, 14, 14)``).
+    mask_tubelet_size: tuple[int, int, int] | None = None
     # W25-cleanup: when True, ``render_phase`` reuses an existing
     # ``<out_dir>/manifest.csv`` instead of regenerating clips. The
     # SystemExit (rc=2) on missing-manifest mirrors v1's ``--skip-render``
@@ -330,8 +338,11 @@ def _build_stack(cfg: V2Config, device: str) -> tuple[
         # which would emit ``(T // tubelet) * Hg * Wg`` tokens and
         # mismatch the predictor's expected ``N``. W2.22+: a CLI
         # override (``--tubelet-size``) can swap in ``tubelet_size=2``
-        # for native ViT-L geometry — the predictor grid needs a
-        # matching change (future).
+        # for native ViT-L geometry. W2.25 wiring closes the loop:
+        # the dataset mask grid, the checkpoint rebuild, and the
+        # orchestrator's mask default all align with the encoder's
+        # post-tubelet token grid so ``tubelet_size=2`` works
+        # end-to-end on Atlas.
         patch = 8
         tubelet_size = (
             int(cfg.hf_tubelet_size) if cfg.hf_tubelet_size is not None else 1
@@ -393,6 +404,31 @@ def _build_stack(cfg: V2Config, device: str) -> tuple[
     return online, pred, dec, target
 
 
+def _decoder_num_frames(cfg: V2Config) -> int:
+    """Return the temporal token count emitted by the configured encoder."""
+    tubelet_size = (
+        int(cfg.hf_tubelet_size)
+        if cfg.encoder_kind == "hf_vjepa2" and cfg.hf_tubelet_size is not None
+        else 1
+    )
+    return max(1, cfg.frames_per_clip // tubelet_size)
+
+
+def _reconstruction_target(frames: torch.Tensor, num_frames: int) -> torch.Tensor:
+    """Average contiguous input frames to match a temporally pooled decoder."""
+    if frames.shape[1] == num_frames:
+        return frames
+    if frames.shape[1] % num_frames:
+        raise ValueError(
+            f"input frame count {frames.shape[1]} is not divisible by "
+            f"decoder frame count {num_frames}"
+        )
+    tubelet_size = frames.shape[1] // num_frames
+    return frames.reshape(
+        frames.shape[0], num_frames, tubelet_size, *frames.shape[2:]
+    ).mean(dim=2)
+
+
 def _collate(item: dict[str, np.ndarray], action_dim: int) -> dict[str, torch.Tensor]:
     return {
         "pixel_values_videos": torch.from_numpy(item["frames"]).unsqueeze(0),
@@ -452,8 +488,25 @@ def train_phase(
     patch = online.config.patch_size
     Hg, Wg = cfg.height // patch, cfg.width // patch
 
+    # W2.25+: derive encoder's tubelet_size from cfg, then compute the
+    # mask block size (auto-scaled when cfg.mask_tubelet_size is None).
+    # The mask grid passed to the dataset is the post-tubelet grid so
+    # ``bool_masked_pos`` indexes the encoder's tokens correctly.
+    from worldfoundry_train.data.tubelet_mask import default_mask_tubelet_size
+    enc_tubelet_size = (
+        int(cfg.hf_tubelet_size)
+        if (cfg.encoder_kind == "hf_vjepa2" and cfg.hf_tubelet_size is not None)
+        else 1
+    )
+    T_post = max(1, cfg.frames_per_clip // max(1, enc_tubelet_size))
+    mask_block_size = (
+        cfg.mask_tubelet_size
+        if cfg.mask_tubelet_size is not None
+        else default_mask_tubelet_size((T_post, Hg, Wg))
+    )
+
     def mask_fn(grid, rng):
-        return tubelet_mask(grid, tubelet_size=(2, Hg, Wg), mask_ratio=cfg.mask_ratio, rng=rng)
+        return tubelet_mask(grid, tubelet_size=mask_block_size, mask_ratio=cfg.mask_ratio, rng=rng)
 
     if cfg.data_source == "franka_kitchen" and frames is not None and actions is not None:
         from worldfoundry_rl.data.franka_dataset import FrankaTransitionDataset
@@ -461,6 +514,7 @@ def train_phase(
         ds = FrankaTransitionDataset(
             frames=frames, actions=actions,
             frame_size=cfg.height, patch_size=patch, mask_fn=mask_fn,
+            tubelet_size=enc_tubelet_size,
         )
         # Capture cfg.seed (not ``rng`` — it isn't defined yet at this
         # point in the function). The franka collate picks a random
@@ -476,7 +530,8 @@ def train_phase(
             return _collate_franka(item, rng_call, cfg.action_dim)
     else:
         ds = Vjepa2Dataset(
-            manifest_path=manifest, mask_fn=mask_fn, patch_size=patch, mask_count=1,
+            manifest_path=manifest, mask_fn=mask_fn, patch_size=patch,
+            mask_count=1, tubelet_size=enc_tubelet_size,
         )
         def collate_fn(item, _rng=None):
             return _collate(item, cfg.action_dim)
@@ -509,8 +564,11 @@ def train_phase(
         loss_jepa = jepa_loss(pred_at_mask, h_target[mask], loss_type="smooth_l1", beta=1.0)
         full_pred = h_online.clone()
         full_pred[mask] = pred_at_mask
-        recon = dec(full_pred, num_frames=cfg.frames_per_clip)
-        loss_recon = torch.nn.functional.l1_loss(recon, batch["pixel_values_videos"])
+        recon = dec(full_pred, num_frames=_decoder_num_frames(cfg))
+        loss_recon = torch.nn.functional.l1_loss(
+            recon,
+            _reconstruction_target(batch["pixel_values_videos"], recon.shape[1]),
+        )
         # Action-alignment auxiliary: zero-action vs sampled-action
         # prediction should differ — cheapest proof the conditioning is wired.
         pred_zero = pred(h_online, mask, torch.zeros_like(batch["action"]))
@@ -643,8 +701,23 @@ def inference_phase(
     dec.eval()
     patch = encoder.config.patch_size
     Hg, Wg = cfg.height // patch, cfg.width // patch
+    # W2.25+: derive encoder tubelet_size + mask block size from cfg;
+    # see train_phase for the rationale and the same formula.
+    from worldfoundry_train.data.tubelet_mask import default_mask_tubelet_size
+    enc_tubelet_size = (
+        int(cfg.hf_tubelet_size)
+        if (cfg.encoder_kind == "hf_vjepa2" and cfg.hf_tubelet_size is not None)
+        else 1
+    )
+    T_post = max(1, cfg.frames_per_clip // max(1, enc_tubelet_size))
+    mask_block_size = (
+        cfg.mask_tubelet_size
+        if cfg.mask_tubelet_size is not None
+        else default_mask_tubelet_size((T_post, Hg, Wg))
+    )
+
     def mask_fn(grid, rng):
-        return tubelet_mask(grid, tubelet_size=(2, Hg, Wg), mask_ratio=cfg.mask_ratio, rng=rng)
+        return tubelet_mask(grid, tubelet_size=mask_block_size, mask_ratio=cfg.mask_ratio, rng=rng)
     if cfg.data_source == "franka_kitchen" and frames is not None:
         from worldfoundry_rl.data.franka_dataset import FrankaTransitionDataset
 
@@ -653,6 +726,7 @@ def inference_phase(
                 (frames.shape[0], frames.shape[1], cfg.action_dim), dtype=np.float32,
             ),
             frame_size=cfg.height, patch_size=patch, mask_fn=mask_fn,
+            tubelet_size=enc_tubelet_size,
         )
     else:
         manifest = cfg.out_dir / "manifest.csv"
@@ -662,7 +736,10 @@ def inference_phase(
                 frames_per_clip=cfg.frames_per_clip, height=cfg.height, width=cfg.width,
                 seed=cfg.seed,
             ))
-        ds = Vjepa2Dataset(manifest_path=manifest, mask_fn=mask_fn, patch_size=patch, mask_count=1)
+        ds = Vjepa2Dataset(
+            manifest_path=manifest, mask_fn=mask_fn, patch_size=patch,
+            mask_count=1, tubelet_size=enc_tubelet_size,
+        )
     sample = ds[0]
     frames_gt = sample["frames"]
     rng = np.random.default_rng(cfg.seed + 99)
@@ -675,11 +752,13 @@ def inference_phase(
         pred_at_mask = pred(h, mask, action)
         full_pred = h.clone()
         full_pred[mask] = pred_at_mask
-        pixels = dec(full_pred, num_frames=cfg.frames_per_clip)
+        pixels = dec(full_pred, num_frames=_decoder_num_frames(cfg))
+        target_pixels = _reconstruction_target(x, pixels.shape[1])
         latent_cos = float(torch.nn.functional.cosine_similarity(
             pred_at_mask, h[mask], dim=-1,
         ).mean().cpu())
     pixels = pixels.squeeze(0).clamp(0, 1).cpu().numpy()
+    frames_gt = target_pixels.squeeze(0).cpu().numpy()
 
     T = frames_gt.shape[0]
     a = frames_gt.reshape(T, -1)
@@ -944,7 +1023,7 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
 
     patch = encoder.config.patch_size
     Hg, Wg = cfg.height // patch, cfg.width // patch
-    n_tokens = cfg.frames_per_clip * Hg * Wg
+    n_tokens = _decoder_num_frames(cfg) * Hg * Wg
     mask = torch.zeros(1, n_tokens, dtype=torch.bool, device=device)
     mask[0, : n_tokens // 2] = True
 
@@ -1183,8 +1262,11 @@ def _continue_train_world_model(
         loss_jepa = jepa_loss(pred_at_mask, h_target[mask], loss_type="smooth_l1", beta=1.0)
         full_pred = h_online.clone()
         full_pred[mask] = pred_at_mask
-        recon = dec(full_pred, num_frames=cfg.frames_per_clip)
-        loss_recon = torch.nn.functional.l1_loss(recon, batch["pixel_values_videos"])
+        recon = dec(full_pred, num_frames=_decoder_num_frames(cfg))
+        loss_recon = torch.nn.functional.l1_loss(
+            recon,
+            _reconstruction_target(batch["pixel_values_videos"], recon.shape[1]),
+        )
         pred_zero = pred(h_online, mask, torch.zeros_like(batch["action"]))
         loss_act = torch.nn.functional.mse_loss(pred_at_mask, pred_zero.detach())
         loss = loss_jepa + loss_recon + 0.1 * loss_act
@@ -1248,8 +1330,23 @@ def iterative_loop_phase(
     # can keep training without re-rendering.
     patch = encoder.config.patch_size
     Hg, Wg = cfg.height // patch, cfg.width // patch
+    # W2.25+: same encoder tubelet / mask-block derivation as
+    # train_phase and inference_phase (see those for the full comment).
+    from worldfoundry_train.data.tubelet_mask import default_mask_tubelet_size
+    enc_tubelet_size = (
+        int(cfg.hf_tubelet_size)
+        if (cfg.encoder_kind == "hf_vjepa2" and cfg.hf_tubelet_size is not None)
+        else 1
+    )
+    T_post = max(1, cfg.frames_per_clip // max(1, enc_tubelet_size))
+    mask_block_size = (
+        cfg.mask_tubelet_size
+        if cfg.mask_tubelet_size is not None
+        else default_mask_tubelet_size((T_post, Hg, Wg))
+    )
+
     def mask_fn(grid, rng):
-        return tubelet_mask(grid, tubelet_size=(2, Hg, Wg), mask_ratio=cfg.mask_ratio, rng=rng)
+        return tubelet_mask(grid, tubelet_size=mask_block_size, mask_ratio=cfg.mask_ratio, rng=rng)
     manifest_path = cfg.out_dir / "manifest.csv"
     if not manifest_path.is_file():
         manifest_path = build_synthetic_manifest(SyntheticManifestSpec(
@@ -1257,7 +1354,10 @@ def iterative_loop_phase(
             frames_per_clip=cfg.frames_per_clip, height=cfg.height, width=cfg.width,
             seed=cfg.seed,
         ))
-    ds = Vjepa2Dataset(manifest_path=manifest_path, mask_fn=mask_fn, patch_size=patch, mask_count=1)
+    ds = Vjepa2Dataset(
+        manifest_path=manifest_path, mask_fn=mask_fn, patch_size=patch,
+        mask_count=1, tubelet_size=enc_tubelet_size,
+    )
 
     per_iter: list[dict[str, Any]] = []
     for it in range(n_iters):
@@ -1402,16 +1502,24 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="W2.22+: override the orchestrator's hardcoded "
                         "tubelet_size=1 for the HF encoder. Real "
                         "facebook/vjepa2-vitl-fpc64-256 uses tubelet=2; "
-                        "the W2.22 smoke forces tubelet=1 to keep the "
-                        "v2.x mask layout (N = T*Hg*Wg) working. A "
-                        "predictor-grid change for tubelet=2 is a future "
-                        "item.")
+                        "the W2.22 smoke forces tubelet=1 for the "
+                        "seam-closure proof. The W2.25 wiring aligns "
+                        "the dataset mask grid and checkpoint rebuild "
+                        "with the encoder's post-tubelet token grid, so "
+                        "--tubelet-size 2 now works end-to-end.")
+    p.add_argument("--mask-tubelet-size", type=int, nargs=3, default=None,
+                   help="W2.25+: explicit mask block size for tubelet_mask, "
+                        "separate from the encoder's --tubelet-size. Three "
+                        "space-separated ints T H W. "
+                        "Default None auto-scales via "
+                        "default_mask_tubelet_size based on the post-tubelet "
+                        "token grid.")
     p.add_argument("--quant", choices=("none", "w8_only"), default="none",
                    help="W22-quant: weight-only int8 on the HF encoder base. "
                         "``none`` (default) keeps fp32. ``w8_only`` applies "
                         "torchao.Int8WeightOnlyConfig BEFORE LoRA wrap "
-                        "(QLoRA order) — cuts RSS ~50% on a 326M encoder at "
-                        "~1.25x fp32 forward cost on CPU. Requires "
+                        "(QLoRA order) - cuts RSS ~50%% on a 326M encoder "
+                        "at ~1.25x fp32 forward cost on CPU. Requires "
                         "--encoder hf_vjepa2; raises SystemExit otherwise.")
     p.add_argument("--encoder-hidden-size", type=int, default=64,
                    help="W22-quant: HF encoder hidden_size (effective only "
@@ -1514,6 +1622,9 @@ def main(argv=None) -> int:
         encoder_pretrained_repo_id=args.encoder_pretrained,
         encoder_pretrained_revision=args.encoder_pretrained_revision,
         hf_tubelet_size=args.tubelet_size,
+        mask_tubelet_size=(
+            tuple(args.mask_tubelet_size) if args.mask_tubelet_size else None
+        ),
     )
     # W2.19: the HF encoder is now architecturally compatible with the
     # image-policy path (``--policy-encoder tiny_vjepa2``); the shim
@@ -1636,6 +1747,7 @@ def main(argv=None) -> int:
             "encoder_pretrained_repo_id": cfg.encoder_pretrained_repo_id,
             "encoder_pretrained_revision": cfg.encoder_pretrained_revision,
             "hf_tubelet_size": cfg.hf_tubelet_size,
+            "mask_tubelet_size": cfg.mask_tubelet_size,
         },
         "render": {
             "elapsed_seconds": round(render_t, 3),
