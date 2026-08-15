@@ -310,6 +310,10 @@ Highlights:
 | `--encoder-pretrained` | `None` | W2.22+: HF Hub repo ID or local snapshot path for the real 1.2B `VJEPA2Model` (e.g. `facebook/vjepa2-vitl-fpc64-256` or `/data/hf_cache/models--facebook--vjepa2-vitl-fpc64-256/snapshots/<sha>/`). Requires `--encoder=hf_vjepa2`. When set, `HfVJEPA2EncoderShim.from_pretrained` loads real weights + LoRA-wraps them (proven end-to-end on Atlas card 7, see `bench_results/w22_atlas_vitl_smoke/`). |
 | `--encoder-pretrained-revision` | `None` | W2.22+: HF Hub revision pin (default `main`). For reproducibility — current default tracks the latest commit. |
 | `--tubelet-size` | `None` | W2.22+: override the orchestrator's hardcoded `tubelet_size=1` for the HF encoder. ViT-L native is `tubelet_size=2`; smoke geometry (32×32, 4-frame) uses `tubelet_size=1` to match the predictor grid layout. |
+| `--mask-tubelet-size` | `None` | W2.25+: override the auto-scaled mask block size for the predictor mask grid. `None` auto-scales per `default_mask_tubelet_size` from the post-tubelet `(T, Hg, Wg)` grid; pass 3 ints `T H W` to pin. Separate concept from `--tubelet-size` (mask block size, not encoder tubelet). |
+| `--inference-backend` | `torch` | Pluggable inference-engine backend resolved via `worldfoundry_common.backends.inference`. Choices: `torch` (reference path, shipped), `vllm` and `sglang` (registered, Atlas-only — see README §"Optional runtimes" and roadmap §9.3 P2). |
+| `--rl-backend` | `self_ppo` | Pluggable RL framework. Choices: `self_ppo` (shipped — the v2.x in-process PPO), `verl` fallback (M1-T5, §9.3 P2), `rlinf` + Ray cluster (M1-T3/M1-T4, §9.1–9.3 P1/P2). Today, non-`self_ppo` values fall back to `self_ppo` with a clear log line. |
+| `--frame-gen-backend` | `none` | Pluggable latent→frame diffusion backend. Choices: `none` (shipped — no diffusion stage), `mindie_sd` (M3-T8, §9.4 P3 — replaces the JSON-stub `compile_to_om` with a real `.om` DiT). Today, `mindie_sd` returns the stub `LatentToFramePipeline` (random projection) so the orchestrator's diffusion seam still type-checks. |
 
 ## See also
 
