@@ -1,0 +1,8 @@
+# C-T1: quantization stack.
+# msmodelslim is the W8A8 quantizer for Ascend (W26 path);
+# torchao is the upstream PyTorch quantizer used as fallback.
+
+-r base.txt
+
+msmodelslim==26.1.0
+torchao
