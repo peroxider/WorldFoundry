@@ -245,6 +245,19 @@ def check_c_t1():
                     "accelerate==1.14.0", "triton==3.7.1"):
             assert pin in base_lines, "base.txt missing pin: " + pin
 
+        # Non-base split files MUST chain via ``-r base.txt`` so a downstream
+        # ``pip install -r requirements/rl.txt`` pulls torch/torch_npu pins
+        # automatically. Enforce presence (pip accepts the directive anywhere
+        # in the file, but the convention is to put it at the top).
+        split_files = ["npu.txt", "rl.txt", "inf.txt", "dev.txt", "quant.txt",
+                       "video.txt", "diffusion.txt", "vllm_omni.txt"]
+        for fname in split_files:
+            with open(os.path.join(req_dir, fname)) as sf:
+                content = sf.read()
+            assert "-r base.txt" in content, (
+                fname + " missing ``-r base.txt`` chain"
+            )
+
         # The split must cover all 8 optional extras + README
         expected = {"base.txt", "npu.txt", "rl.txt", "inf.txt", "dev.txt",
                     "quant.txt", "video.txt", "diffusion.txt",
