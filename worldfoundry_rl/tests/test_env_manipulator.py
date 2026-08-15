@@ -15,6 +15,14 @@ from worldfoundry_rl.env_manipulator import ManipulatorEnv
 from worldfoundry_rl.env_pool import Env
 
 
+# C-T9: every test in this module needs the dm_control GL context (the
+# module-scoped ``env`` fixture below triggers GL on first use); gate
+# them all together rather than decorating each test.
+pytestmark = pytest.mark.host_skip(
+    reason="C-T9: dm_control GL context; Atlas only"
+)
+
+
 # All tests share one env to keep mujoco init cost paid only at session start.
 @pytest.fixture(scope="module")
 def env() -> ManipulatorEnv:

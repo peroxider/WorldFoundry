@@ -14,6 +14,7 @@ import pytest
 dm_control = pytest.importorskip("dm_control")
 
 
+@pytest.mark.host_skip(reason="C-T9: dm_control GL context; Atlas only")
 def test_env_franka_kitchen_instantiates_and_resets() -> None:
     """Env can construct; reset returns dict with ee_pos/target_pos/task_success."""
     from worldfoundry_rl.env_franka_kitchen import FrankaKitchenEnv
@@ -39,6 +40,7 @@ def test_env_franka_kitchen_instantiates_and_resets() -> None:
     env.close()
 
 
+@pytest.mark.host_skip(reason="C-T9: dm_control GL context; Atlas only")
 def test_env_franka_kitchen_step_returns_obs_dict() -> None:
     """step(action) returns (obs_dict, reward, term, trunc, info) with correct shapes."""
     from worldfoundry_rl.env_franka_kitchen import FrankaKitchenEnv
@@ -71,6 +73,7 @@ def test_env_franka_kitchen_step_returns_obs_dict() -> None:
     env.close()
 
 
+@pytest.mark.host_skip(reason="C-T9: dm_control GL context; Atlas only")
 def test_franka_kitchen_rejects_wrong_action_shape() -> None:
     """step() raises ValueError when action is not 9-dim (defends the contract)."""
     from worldfoundry_rl.env_franka_kitchen import FrankaKitchenEnv
@@ -84,6 +87,7 @@ def test_franka_kitchen_rejects_wrong_action_shape() -> None:
     env.close()
 
 
+@pytest.mark.host_skip(reason="C-T9: dm_control GL context; Atlas only")
 def test_franka_kitchen_unknown_task_raises_with_actionable_hint() -> None:
     """Unknown task_name raises ValueError listing available dm_control.manipulation tasks."""
     from worldfoundry_rl.env_franka_kitchen import FrankaKitchenEnv

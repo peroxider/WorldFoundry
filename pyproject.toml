@@ -68,3 +68,10 @@ include = ["worldfoundry_*"]
 [tool.pytest.ini_options]
 testpaths = ["worldfoundry_train/tests", "worldfoundry_inf/tests", "worldfoundry_rl/tests"]
 addopts = "-v --tb=short"
+# C-T9: host_skip marker. Tests tagged with this marker require the
+# Atlas NPU container (dm_control EGL/GLFW context, /proc/driver/npu,
+# CANN runtime) and are auto-skipped on a headless host via conftest.py.
+# Atlas detection: ``/proc/driver/npu`` exists OR ``WORLDFOUNDRY_ATLAS=1``.
+markers = [
+    "host_skip: requires Atlas NPU container; auto-skipped on host (C-T9)",
+]

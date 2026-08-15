@@ -17,6 +17,7 @@ import pytest
 dm_control = pytest.importorskip("dm_control")
 
 
+@pytest.mark.host_skip(reason="C-T9: dm_control GL context; Atlas only")
 def test_franka_kitchen_env_exposes_last_frame(tmp_path: Path) -> None:
     """``last_frame()`` returns ``(H, W, 3) uint8`` and updates after step.
 
@@ -57,6 +58,7 @@ def test_franka_kitchen_env_exposes_last_frame(tmp_path: Path) -> None:
     env.close()
 
 
+@pytest.mark.host_skip(reason="C-T9: dm_control GL context; Atlas only")
 def test_collect_franka_video_clips_writes_manifest_and_mp4(tmp_path: Path) -> None:
     """End-to-end: drive Franka, write .mp4s + manifest, return aligned arrays.
 

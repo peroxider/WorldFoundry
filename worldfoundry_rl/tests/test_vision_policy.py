@@ -166,6 +166,7 @@ def test_to_device_seam_no_op_on_cpu():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.host_skip(reason="C-T9: ManipulatorEnv triggers dm_control GL; Atlas only")
 def test_vision_policy_works_with_ppo_trainer():
     """Round-trip with PPO + SyncEnvPool + a real env — proves the
     VisionPolicy surface is PPO-compatible end-to-end on CPU."""
