@@ -250,10 +250,14 @@ Highlights:
   full RLinf-shape recurrent latent-rollout path with an HF
   VJEPA2Model over RGB. W2.22 adds `--encoder-pretrained facebook/vjepa2-vitl-fpc64-256`
   (the real 1.2B checkpoint) — the seam is proven end-to-end on
-  Atlas NPU (see `bench_results/w22_atlas_vitl_smoke/summary.md`);
-  full orchestrator 5-phase path with realistic geometry requires a
-  predictor-grid rewrite for `tubelet_size > 1` (out of scope; smoke
-  geometry remains the canonical seam-closure proof).
+  Atlas NPU (see `bench_results/w22_atlas_vitl_smoke/summary.md`).
+  W2.25 closes the 5-phase orchestrator at the same smoke input geometry
+  with native `tubelet_size=2`: the runtime grid, post-tubelet masks,
+  checkpoint reload, reconstruction target, and policy mask agree on
+  `T_post * Hg * Wg` tokens. The W2.25 Atlas evidence is
+  `bench_results/w25_atlas_vitl_full_final/` on the remote project root.
+  This is still a smoke-scale orchestration proof, not a training-to-
+  convergence recipe at native 64-frame/256px input geometry.
 - **Mock env by default.** `--env=mock` (the v2.x default) is an
   in-process random agent whose reward is `-||state||² - 0.1*||action||²`.
   State dimension is `--obs-dim` (default 8). Opt-in to a real

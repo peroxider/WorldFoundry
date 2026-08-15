@@ -1,0 +1,11 @@
+# C-T1: diffusion stack (M3 latent-to-pixel pipelines).
+# diffusers is the upstream DiT/VAE library; ``accelerate>=1.10`` matches
+# the version pinned in pyproject base.txt (1.14.0). The v2 NPU path
+# (TODO M3-T4) replaces this stub with real MindIE-SD; until then the
+# v1 CPU pixel-decoder (worldfoundry_inf.diffusion.backends.cpu) needs
+# no extra deps.
+
+-r base.txt
+
+diffusers>=0.30
+transformers[sentencepiece]>=4.55

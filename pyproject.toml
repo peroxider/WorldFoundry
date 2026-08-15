@@ -7,12 +7,17 @@ name = "worldfoundry"
 version = "0.1.0"
 description = "Ascend NPU world-model rendering/training/inference framework (JEPA family, simulator RL, simulator + hardware deployment) — orchestrating vllm-ascend, mindspeed, verl/RLinf, msmodelslim"
 requires-python = "==3.11.*"
+# C-T1: lock the version matrix to align with W35.2 ADR
+# (`docs/superpowers/specs/2026-08-06-w35-2-version-matrix-check.md`).
+# torch_npu==2.9.0 + CANN 8.5.1 + vllm-ascend==0.18.0 are the master pins;
+# triton / accelerate / ray track the RLinf v0.3.0 spike pip-freeze.
 dependencies = [
     "torch==2.9.0",
     "torch_npu==2.9.0",
     "transformers==4.55.0",
     "peft==0.18.0",
-    "accelerate==1.10.0",
+    "accelerate==1.14.0",
+    "triton==3.7.1",
     "datasets==3.6.0",
     "pyyaml>=6.0",
     "numpy<2.0",
@@ -27,7 +32,11 @@ dependencies = [
 [project.optional-dependencies]
 train = ["deepspeed>=0.15"]
 inf = ["vllm==0.18.0", "vllm-ascend==0.18.0"]
-rl = ["verl==0.5.0"]
+# C-T1: ray==2.56.1 matches RLinf v0.3.0 spike pip-freeze (W35.2 §2.2).
+# Ray is the common scheduler底座 for both ``verl`` (shipped) and the
+# RLinf path (deferred per W35 ADR §4 / W35.2 §5.2), so it lives here
+# unconditionally.
+rl = ["verl==0.5.0", "ray==2.56.1"]
 dev = ["pytest>=8.0", "pytest-cov>=5.0", "ruff>=0.6"]
 quant = ["msmodelslim==26.1.0", "torchao"]
 # opencv-python backs worldfoundry_train/data/synthetic_video.py, whose
@@ -35,6 +44,17 @@ quant = ["msmodelslim==26.1.0", "torchao"]
 # (docs/dev/cpu-rti-quickstart.md) dies at import, before phase 1. It was
 # previously undeclared and only worked because the box image ships it.
 video = ["av==14.0.0", "decord==0.6.0", "opencv-python>=4.8"]
+# TODO M3-T1: latent → pixel diffusion scaffold. The v1 CPU pixel-decoder
+# stub (worldfoundry_inf.diffusion.backends.cpu) has no external deps, but
+# the v2 NPU diffusion path (TODO M3-T4) will need diffusers + accelerate
+# for the DiT/VAE import + tokenizer pipeline. ``sentencepiece`` is pulled
+# transitively by transformers; we mark it explicitly so the dev image
+# installs cleanly.
+diffusion = ["diffusers>=0.30", "transformers[sentencepiece]>=4.55", "accelerate>=1.10"]
+# TODO M2-T6: vllm-omni end-to-end multimodal — public wheel not yet
+# shipped; tracked under W44+ gate. Listed here so ``pip install
+# -e .[vllm_omni]`` is a no-op until the wheel exists.
+vllm_omni = ["vllm-omni>=0.1"]
 
 [project.entry-points."vllm.platform_plugins"]
 worldfoundry_inf = "worldfoundry_inf._vllm_ascend_plugin:register"

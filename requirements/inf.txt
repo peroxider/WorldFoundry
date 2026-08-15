@@ -1,0 +1,9 @@
+# C-T1: vLLM-Ascend inference stack.
+# vllm-ascend 0.18.0 pins torch_npu==2.9.0 + CANN 8.5.1 (the master matrix);
+# it is the inference backend for M2 (V-JEPA2 serving) and the de-facto
+# runtime for MindIE-SD in the Atlas container.
+
+-r base.txt
+
+vllm==0.18.0
+vllm-ascend==0.18.0

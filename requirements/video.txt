@@ -1,0 +1,11 @@
+# C-T1: video stack.
+# av / decord / opencv-python back the Franka video collector
+# (worldfoundry_rl/data/franka_video_collector.py) and
+# synthetic_video.py. opencv-python must be headless variant for
+# the Atlas container (no X11 / GUI).
+
+-r base.txt
+
+av==14.0.0
+decord==0.6.0
+opencv-python>=4.8

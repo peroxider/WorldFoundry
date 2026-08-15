@@ -18,3 +18,4 @@ output/
 checkpoints/
 om_cache/
 /.idea/
+/bench_results/

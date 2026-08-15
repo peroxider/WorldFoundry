@@ -1,0 +1,10 @@
+# C-T1: RL stack.
+# ``verl`` is the shipped path per W35.2 ADR section 5.2 (RLinf deferred
+# due to torch 2.10 vs torch_npu 2.9 minor-version conflict).
+# ``ray`` is the common scheduler底座 for both verl (shipped) and the
+# future RLinf path; pinned to the RLinf v0.3.0 spike pip-freeze.
+
+-r base.txt
+
+verl==0.5.0
+ray==2.56.1

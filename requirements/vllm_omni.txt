@@ -1,0 +1,8 @@
+# C-T1: vLLM-Omni (M3-T7 / M2-T6 deferred until public wheel).
+# Listed here so ``pip install -r requirements/vllm_omni.txt`` is a
+# no-op until the wheel ships; tracked under P4 in
+# docs/roadmap/2026-08-14-opensource-extensions-loop-todo.md section 9.5.
+
+-r base.txt
+
+# vllm-omni>=0.1   # public wheel not yet released

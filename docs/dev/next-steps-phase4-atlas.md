@@ -1016,4 +1016,21 @@ move to the bottom of the queue.
   closure is a future sub-milestone, conditioned on dm_control +
   mujoco install completion on Atlas (network or image-bake
   resolution).
+- **W2.25 — Full 5-phase real ViT-L orchestrator on NPU**: closes the
+  `tubelet_size > 1` predictor-grid blocker from W2.22 at smoke input
+  geometry. The pretrained base retains its tokenization (`patch=16`,
+  `tubelet=2`), while the shim checkpoint signature records runtime
+  input geometry (`4` frames at `32×32`). Dataset masks, predictor
+  construction/reload, the reconstruction target, and the state-policy
+  imagination mask therefore agree on the emitted post-tubelet grid
+  `(2, 2, 2)` / 8 tokens. Atlas card 7 execution completed all five
+  phases using local real `facebook/vjepa2-vitl-fpc64-256` weights:
+  train 15.744s, inference 5.782s, policy bootstrap 6.421s, one outer
+  iteration 20.065s; `mode="npu"`, 328,088,448 encoder parameters,
+  2,117,120 LoRA-trainable parameters, final RSS 7,132.6 MB. Evidence
+  is at remote
+  `/home/w30066257/WorldFoundry/bench_results/w25_atlas_vitl_full_final/`.
+  This closes full real-weight orchestration at OOD smoke geometry; the
+  independent W2.24 Franka path remains blocked only on dm_control /
+  MuJoCo installation, not predictor-grid wiring.
 - Phase-3 final HEAD: `c9e7197` (W32)

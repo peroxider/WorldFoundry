@@ -1,0 +1,19 @@
+# C-T1: core dependencies -- mirrors pyproject.toml [project] dependencies.
+# Source of truth: docs/superpowers/specs/2026-08-06-w35-2-version-matrix-check.md
+# (W35.2 ADR section 2.2 RLinf v0.3.0 spike pip-freeze alignment).
+
+torch==2.9.0
+torch_npu==2.9.0
+transformers==4.55.0
+peft==0.18.0
+accelerate==1.14.0
+triton==3.7.1
+datasets==3.6.0
+pyyaml>=6.0
+numpy<2.0
+fastapi>=0.115
+uvicorn>=0.32
+pydantic>=2.9
+prometheus-client>=0.21
+opentelemetry-api>=1.27
+opentelemetry-sdk>=1.27

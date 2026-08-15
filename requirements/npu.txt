@@ -1,0 +1,11 @@
+# C-T1: Atlas NPU stack.
+# torch_npu is already pinned in base.txt; this file exists to:
+#   1. document the CANN 8.5.1 constraint that vllm-ascend==0.18.0 requires;
+#   2. give the C-T3 `npu` Dockerfile target a single pip-install handle.
+
+-r base.txt
+
+# CANN 8.5.1 toolkit is provided by the Atlas host driver (see
+# docs/dev/environment.md); it is NOT a pip-installable package.
+# Listed here as a comment so container builders see the constraint.
+# cann-toolkit==8.5.1   # host-provided, see docs/dev/environment.md
