@@ -175,6 +175,37 @@ def main(argv: list[str] | None = None) -> int:
 
     n_pass = sum(results)
     n_total = len(results)
+    verdict_path = out_dir / "goal_verdict.json"
+    # Always write the structured verdict — even on FAIL — so dashboards /
+    # post-mortem tools have something to read. The ``ok`` field is the
+    # machine-parseable summary; the ``clauses`` dict carries the per-clause
+    # fingerprints that the per-axis evidence was drawn from.
+    verdict = {
+        "goal": VERBATIM_GOAL,
+        "ok": n_pass == n_total,
+        "n_pass": n_pass,
+        "n_total": n_total,
+        "exit_code": 0 if n_pass == n_total else 1,
+        "out_dir": str(out_dir),
+        "summary_path": str(out_dir / "render_train_rl.json"),
+        "clauses": {
+            "training": {
+                "ok": _check_training(summary)[0],
+                "detail": _check_training(summary)[1],
+            },
+            "inference": {
+                "ok": _check_inference(summary)[0],
+                "detail": _check_inference(summary)[1],
+            },
+            "diffusion": {
+                "ok": _check_diffusion(summary)[0],
+                "detail": _check_diffusion(summary)[1],
+            },
+        },
+    }
+    verdict_path.write_text(json.dumps(verdict, indent=2, ensure_ascii=False))
+    print(f"[goal] verdict  : {verdict_path}")
+
     if n_pass == n_total:
         print(f"[goal] VERIFIED: {n_pass}/{n_total} clauses satisfied — goal achieved.")
         return 0
