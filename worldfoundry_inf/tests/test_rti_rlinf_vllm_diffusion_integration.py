@@ -167,6 +167,45 @@ def test_rti_orchestrator_resolves_vllm_backend(tmp_path: Path) -> None:
     assert pb.get("rlinf_status") == "completed", pb
 
 
+def test_rti_orchestrator_resolves_vllm_omni_backend(tmp_path: Path) -> None:
+    """``--inference-backend=vllm_omni`` is dispatchable end-to-end through the CLI.
+
+    Unlike ``vllm``/``sglang`` (Atlas-deferred), ``vllm_omni`` resolves to the
+    in-tree ORT stand-in (VLLMOmniPipeline) which is genuinely buildable on
+    host smoke. The orchestrator records the dispatch fingerprint under
+    ``inference_engine_dispatched`` so the inference axis is verifiable
+    end-to-end: training (RLinf) + inference (vllm_omni) + diffusion (ORT)
+    all show up in the JSON summary with their respective engines + providers.
+    """
+    out_dir = tmp_path / "rti_vllm_omni"
+    out_dir.mkdir(parents=True)
+
+    summary, _result = _run_orchestrator(out_dir, inference_backend="vllm_omni")
+
+    # Inference axis resolved to vllm_omni.
+    assert summary["inference_backend"] == "vllm_omni", summary["inference_backend"]
+
+    # Dispatch fingerprint recorded.
+    dispatched = summary.get("inference_engine_dispatched")
+    assert isinstance(dispatched, dict), dispatched
+    assert dispatched["engine"] == "vllm_omni", dispatched
+    assert dispatched["available"] is True, dispatched
+    assert dispatched["dispatch_error"] is None, dispatched
+    # Both halves of the stand-in run through ORT (not PyTorch).
+    assert dispatched["inference_engine"] == "onnxruntime", dispatched
+    assert dispatched["diffusion_engine"] == "onnxruntime", dispatched
+    # Providers were auto-selected; on a CPU-only host the list contains
+    # at least one provider ending in "ExecutionProvider".
+    providers = dispatched["providers_resolved"]
+    assert isinstance(providers, list) and len(providers) >= 1, providers
+    assert all("Provider" in p for p in providers), providers
+
+    # Training axis is independent of the inference axis; RLinf still ran.
+    pb = summary.get("policy_bootstrap", {})
+    assert pb.get("rlinf_framework") == "rlinf", pb
+    assert pb.get("rlinf_status") == "completed", pb
+
+
 # ---------------------------------------------------------------------------
 # Inference axis: vLLM-Omni CPU stand-in
 # ---------------------------------------------------------------------------

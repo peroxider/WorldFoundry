@@ -1561,7 +1561,8 @@ def parse_args(argv=None) -> argparse.Namespace:
                         "(effective only when --encoder hf_vjepa2). "
                         "Must divide --encoder-hidden-size. Default 2. "
                         "16 = V-JEPA 2 small.")
-    p.add_argument("--inference-backend", choices=("torch", "vllm", "sglang"),
+    p.add_argument("--inference-backend",
+                   choices=("torch", "vllm", "sglang", "vllm_omni"),
                    default="torch",
                    help="Inference-engine backend to resolve via the pluggable "
                         "registry (worldfoundry_common.backends.inference). "
@@ -1574,7 +1575,13 @@ def parse_args(argv=None) -> argparse.Namespace:
                         "deferral (engine-served world-model inference is an "
                         "Atlas item) and the orchestrator still uses the "
                         "in-process path so a real run never silently swaps "
-                        "compute.")
+                        "compute. `vllm_omni` resolves to the unified vLLM-Omni "
+                        "stand-in (VLLMOmniPipeline: ORT encoder + ORT "
+                        "diffusion) — dispatchable on host smoke via the "
+                        "onnxruntime wheel and on Atlas via the onnxruntime-"
+                        "ascend wheel; selecting it records the resolved "
+                        "provider summary in the JSON output so the inference "
+                        "axis is verifiable end-to-end through the CLI.")
     p.add_argument("--rl-backend", choices=("self_ppo", "verl", "rlinf"),
                    default="self_ppo",
                    help="M1-T3: pluggable RL framework. ``self_ppo`` (default) "
@@ -1773,7 +1780,62 @@ def main(argv=None) -> int:
     # uses the in-process path (never a silent compute swap).
     _inf_block = {"inference": args.inference_backend}
     inference_backend = resolve_config(_inf_block).backends["inference"].name
-    if inference_backend != "torch":
+    inference_engine_dispatched = None
+    if inference_backend == "vllm_omni":
+        # M2-T6 / M3 followup: vLLM-Omni is dispatchable today via the ORT
+        # stand-in (VLLMOmniPipeline = ORT encoder + ORT diffusion). On host
+        # smoke the helper picks CPUExecutionProvider; on Atlas boxes with
+        # onnxruntime-ascend installed it picks AscendExecutionProvider.
+        # Verify the dispatch and record the provider summary so the
+        # inference axis is verifiable end-to-end through the CLI.
+        try:
+            from worldfoundry_common.backends.inference import make_engine
+
+            pipe = make_engine("vllm_omni")
+            dispatched_summary = (
+                pipe.provider_summary() if hasattr(pipe, "provider_summary") else {}
+            )
+            inference_eng = dispatched_summary.get("inference", {}).get("engine")
+            diffusion_eng = dispatched_summary.get("diffusion", {}).get("engine")
+            providers_resolved = (
+                pipe.inference._resolved_providers
+                if hasattr(pipe, "inference")
+                and hasattr(pipe.inference, "_resolved_providers")
+                else []
+            )
+            inference_engine_dispatched = {
+                "engine": "vllm_omni",
+                "available": True,
+                "providers_resolved": list(providers_resolved),
+                "inference_engine": inference_eng,
+                "diffusion_engine": diffusion_eng,
+                "dispatch_error": None,
+            }
+            print(
+                f"[RTI2] INFO: inference backend 'vllm_omni' dispatched via "
+                f"VLLMOmniPipeline (ORT providers={list(providers_resolved)}, "
+                f"inference_engine={inference_eng}, "
+                f"diffusion_engine={diffusion_eng}). Inference loop still runs "
+                f"in-process because the vLLM-Omni stand-in cannot serve this "
+                f"orchestrator's locally-trained tiny/HF world-model stack yet "
+                f"(engine-served world-model inference is an Atlas item, not "
+                f"a host-smoke item)."
+            )
+        except Exception as exc:
+            inference_engine_dispatched = {
+                "engine": "vllm_omni",
+                "available": False,
+                "providers_resolved": [],
+                "inference_engine": None,
+                "diffusion_engine": None,
+                "dispatch_error": f"{type(exc).__name__}: {exc}",
+            }
+            print(
+                f"[RTI2] WARNING: inference backend 'vllm_omni' could not be "
+                f"dispatched: {type(exc).__name__}: {exc}. Falling back to "
+                f"in-process torch path for this run."
+            )
+    elif inference_backend != "torch":
         print(
             f"[RTI2] WARNING: inference backend {inference_backend!r} resolves to "
             f"an engine-served VJEPA2Model surface, which does NOT serve this "
@@ -1928,6 +1990,12 @@ def main(argv=None) -> int:
         # `torch` = in-process eager (v1 compute); vllm/sglang = engine-served
         # VJEPA2Model surfaces (deferred to Atlas for this world-model).
         "inference_backend": inference_backend,
+        # M2-T6 / M3 followup: when ``--inference-backend=vllm_omni`` is
+        # selected, record the dispatch fingerprint (engine, providers,
+        # inference/diffusion halves) so the inference axis is verifiable
+        # end-to-end through the CLI. ``None`` for ``torch`` / ``vllm`` /
+        # ``sglang`` (Atlas-deferred) selections.
+        "inference_engine_dispatched": inference_engine_dispatched,
         "config_serializable": {
             "out_dir": str(cfg.out_dir), "num_clips": cfg.num_clips,
             "frames_per_clip": cfg.frames_per_clip, "height": cfg.height, "width": cfg.width,
