@@ -161,6 +161,17 @@ def test_rti_orchestrator_resolves_vllm_backend(tmp_path: Path) -> None:
     # Orchestrator resolved the pluggable backend to "vllm" (the alias of
     # vllm_ascend per the registry's canonical naming).
     assert summary["inference_backend"] == "vllm", summary["inference_backend"]
+    # Dispatch fingerprint is recorded for vllm too: on a host smoke box
+    # the vllm-ascend wheel isn't installed so the build raises
+    # ImportError, but the orchestrator surfaces it as a structured
+    # ``available=false, dispatch_error=...`` so a missing wheel is
+    # immediately visible (no silent deferral). On Atlas boxes with the
+    # wheel installed this would be ``available=true`` + ``VJEPA2NPUWorker``.
+    dispatched = summary.get("inference_engine_dispatched")
+    assert isinstance(dispatched, dict), dispatched
+    assert dispatched["engine"] == "vllm", dispatched
+    assert "available" in dispatched, dispatched
+    assert "dispatch_error" in dispatched, dispatched
     # RLinf dispatch still ran (training axis is independent).
     pb = summary.get("policy_bootstrap", {})
     assert pb.get("rlinf_framework") == "rlinf", pb
