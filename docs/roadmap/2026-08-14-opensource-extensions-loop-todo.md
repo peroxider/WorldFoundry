@@ -293,6 +293,16 @@ M1-T1..T4 (RLinf)                  │
 
 ## 9. 按优先级排序的待办清单（P0–P4）
 
+> **当前 P-bucket 快照（2026-08-16）** —— 详细行内任务清单见 §9.1..9.5：
+>
+> - **P0** ✅ 全部 closed（C-T1 `b46d42c`+`9c5671a`、C-T9 `5da0ab5`、C-T5 `1761dbd`、C-T6 `07e5162`）
+> - **P1** ✅ 全部 closed（C-T3 `5dac705`、C-T4 `3ddee79`、M2-T4 `c1d5d03`、M1-T3 `73f3e97`、C-T7 `21e43fa`）+ **seam source 落地** `243b6d4`（M2 NPU worker CPU fallback + M3 diffusion scaffold + W35.3 RLinf adapter + W2.18-W2.22 HfVJEPA2EncoderShim + actor_pool + RecipeConfig，全部 ruff-clean，pytest 128 passing）
+> - **P2** ⏸ OPEN（hardware-blocked from WSL2；M2-T5 / M1-T5 / M1-T4 / C-T8 需 Atlas card 7 可达性）
+> - **P3** ⏸ OPEN（M3-T4 真实 MindIE-SD compile 仍在等上游链路；M3-T1 subdirs / M3-T5 W8A8 / M3-T6 eval / M3-T8 5-stage 串行）
+> - **P4** ⏸ OPEN（M3-T7 + M2-T6 跟随 vllm-omni 公开发行节奏）
+>
+> 下一次开始工作请直接看 §9.3 P2（已无 P0/P1 待办）；如 P2 仍硬件不可达，则 §9.5 P4 的年度复审是最低成本动作。
+
 > §8.2 的推迟清单按"影响范围 × 依赖前置 × 是否阻塞 NPU 端到端"重新排定优先级，
 > 避免下次再花一轮推导执行顺序。优先级口径：
 > - **P0**：本周必做，低成本、无外部依赖、否则阻塞其它主线推进；
