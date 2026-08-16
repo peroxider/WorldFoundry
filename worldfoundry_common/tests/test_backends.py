@@ -198,3 +198,53 @@ def test_load_stack_missing_block_gives_defaults(tmp_path) -> None:
     stack, full = load_stack(p)
     assert stack.backends["device"].name == "auto"
     assert full["env"]["type"] == "mock"
+
+
+# --- M2-T4: vllm_ascend alias + strengthened probe --------------------------
+
+
+def test_vllm_ascend_listed_in_inference_axis() -> None:
+    """Both ``vllm`` and ``vllm_ascend`` are registered on the inference axis (M2-T4)."""
+    names = list_backends("inference")
+    assert "vllm" in names
+    assert "vllm_ascend" in names
+
+
+def test_vllm_aliases_to_vllm_ascend() -> None:
+    """``vllm`` and ``vllm_ascend`` share factory + available probe (backward-compat alias)."""
+    vllm = get_backend("inference", "vllm")
+    vllm_ascend = get_backend("inference", "vllm_ascend")
+    assert vllm.build is vllm_ascend.build, "factory must be shared"
+    # Both probes are the strengthened triple-import gate (one wraps the
+    # other), so they MUST return identical availability on every host.
+    assert vllm.available() is vllm_ascend.available() or (
+        vllm.available() == vllm_ascend.available()
+    )
+    # The legacy ``vllm`` hint cross-references the canonical ``vllm_ascend``.
+    assert vllm.hint is not None
+    assert "vllm_ascend" in vllm.hint
+
+
+def test_vllm_ascend_unavailable_on_host_without_wheels() -> None:
+    """Host without ``torch_npu + vllm + vllm_ascend`` wheels reports ``(False, hint)``.
+
+    Strengthened probe (M2-T4): even when ``worldfoundry_inf.vllm_ascend_worker``
+    is in-tree, missing any one of the three wheels flips availability to False.
+    """
+    ok, hint = backend_available("inference", "vllm_ascend")
+    assert ok is False
+    assert isinstance(hint, str)
+    assert ".[inf]" in hint
+
+
+def test_vllm_available_matches_vllm_ascend_outcome_on_host() -> None:
+    """``vllm`` and ``vllm_ascend`` share availability outcome on every host.
+
+    Both backends share the same probe (one wraps the other), so the
+    orchestrator can pick either name and route identically.
+    """
+    ok_vllm, hint_vllm = backend_available("inference", "vllm")
+    ok_ascend, hint_ascend = backend_available("inference", "vllm_ascend")
+    assert ok_vllm == ok_ascend
+    assert hint_vllm is not None and hint_ascend is not None
+    assert "[inf]" in hint_vllm and "[inf]" in hint_ascend
