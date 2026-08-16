@@ -117,6 +117,15 @@ W 的步骤挤进来——单文件聚焦单步骤，避免 runbook 自己 drift
    status（"Atlas 上机待硬件" → "Atlas 上机 ✅; baseline: ..."）
 4. 如果有意外 / 失败，把 stack trace + log 末尾 60 行贴到 runbook 末尾的
    「Lessons learned」一节（目前为空，下次窗口前补）
+5. **运行 [`scripts/verify_goal_evidence.py`](../../scripts/verify_goal_evidence.py)**
+   并把生成的 `goal_verdict.json` 一起 commit 上回（如果使用了
+   `--keep-out-dir` 或显式 `--out-dir`）。这是 3 轴目标（RLinf +
+   vLLM-Omni + ORT 扩散）的通用验证门 — Atlas 部署后必须 3/3 PASS，
+   否则说明 worldfoundry 的 RLinf / 推理 / 扩散任一管线在 Atlas
+   容器内出现回归。回归测试在
+   [`worldfoundry_inf/tests/test_verify_goal_evidence.py`](../../worldfoundry_inf/tests/test_verify_goal_evidence.py)
+   里覆盖（包括 diffusion 静默 fallback 到 PyTorch eager 的 critical
+   回归守卫）。
 
 ## Out of Scope
 
