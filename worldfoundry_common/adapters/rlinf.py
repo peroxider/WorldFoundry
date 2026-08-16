@@ -15,7 +15,8 @@ lazily so this module imports cleanly when RLinf is absent.
 """
 from __future__ import annotations
 
-from typing import Any, Callable
+from dataclasses import dataclass, field
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from worldfoundry_common.adapters.base import TrainingRunner
 
@@ -143,4 +144,65 @@ class RLinfEnvWorker:
             env.close()
 
 
-__all__ = ["RLinfRunner", "RLinfEnvWorker"]
+__all__ = [
+    "RLinfRunner",
+    "RLinfRunnerConfig",
+    "RLinfEnvWorker",
+    "RunnerFactory",
+]
+
+
+@dataclass
+class RLinfRunnerConfig:
+    """Typed configuration passed to a :class:`RunnerFactory`.
+
+    RLinf's :class:`EmbodiedRunner` is built from a live Ray ``Cluster``
+    plus pre-built worker groups (``actor`` / ``rollout`` / ``env`` /
+    ``reward``). The adapter cannot safely default any of these, so the
+    factory receives this dataclass and is responsible for turning it
+    into a real RLinf runner. A :class:`dict` form is also accepted for
+    downstream call sites that haven't migrated to the dataclass yet.
+
+    Attributes:
+        cluster_role: role this process plays in the Ray cluster
+            (``"head"`` for the orchestrating process, ``"worker"`` for a
+            Ray worker node). Used by the factory to decide whether to
+            start ``ray.init`` and where to attach worker groups.
+        worker_groups: mapping from RLinf worker-group name (``"actor"``,
+            ``"rollout"``, ``"env"``, ``"reward"``) to the actor class
+            that backs that group. Empty dict means the factory chooses
+            its own defaults.
+        world_model_builder: optional zero-arg callable that returns a
+            built world model (e.g. ``WorldModelActor`` from M1-T2). The
+            factory attaches it to the actor worker group.
+        extras: opaque dict for framework-specific overrides (e.g. RLinf
+            Hydra config keys). The factory decides how to apply them.
+    """
+
+    cluster_role: str = "head"
+    worker_groups: dict[str, str] = field(default_factory=dict)
+    world_model_builder: Callable[[], Any] | None = None
+    extras: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Render as the legacy plain-dict form for downstream callers."""
+        return {
+            "cluster_role": self.cluster_role,
+            "worker_groups": dict(self.worker_groups),
+            "world_model_builder": self.world_model_builder,
+            "extras": dict(self.extras),
+        }
+
+
+@runtime_checkable
+class RunnerFactory(Protocol):
+    """Callable protocol for an RLinf runner builder.
+
+    A factory takes either a :class:`RLinfRunnerConfig` or a legacy
+    plain ``dict`` (kept for backward compatibility with call sites that
+    haven't migrated) and returns an object with ``run()``. Marked
+    ``runtime_checkable`` so unit tests can ``isinstance(factory,
+    RunnerFactory)`` without subclassing.
+    """
+
+    def __call__(self, config: RLinfRunnerConfig | dict[str, Any]) -> Any: ...

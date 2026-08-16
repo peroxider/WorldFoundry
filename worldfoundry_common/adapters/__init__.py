@@ -15,7 +15,12 @@ from worldfoundry_common.adapters.base import (
     RolloutWorker,
     TrainingRunner,
 )
-from worldfoundry_common.adapters.rlinf import RLinfEnvWorker, RLinfRunner
+from worldfoundry_common.adapters.rlinf import (
+    RLinfEnvWorker,
+    RLinfRunner,
+    RLinfRunnerConfig,
+    RunnerFactory,
+)
 from worldfoundry_common.adapters.sglang import SGLangWorker
 from worldfoundry_common.adapters.verl import (
     VerlRolloutWorker,
@@ -29,6 +34,8 @@ __all__ = [
     "TrainingRunner",
     "RLinfRunner",
     "RLinfEnvWorker",
+    "RLinfRunnerConfig",
+    "RunnerFactory",
     "SGLangWorker",
     "VerlRunner",
     "VerlRolloutWorker",

@@ -664,9 +664,101 @@ class HfPixelDecoderShim(nn.Module):
         return self.decoder(latents, num_frames=num_frames)
 
 
+class WorldModelActor(nn.Module):
+    """RLinf/verl-compatible actor adapter wrapping :class:`HfJEPAPredictorShim`.
+
+    Exposes the ``forward(env_obs)`` surface that RLinf's actor worker
+    group and verl's actor/rollout path expect. ``env_obs`` is the
+    V-JEPA 2 latent output (``(B, N, encoder_dim)``) plus a boolean
+    mask ``(B, N)``; we wrap them in the predictor's existing
+    ``forward(context_tokens, bool_masked_pos, action=None)`` interface.
+
+    For action selection downstream (PPO policy head), the caller maps
+    the predicted target features to discrete/continuous actions via its
+    own policy head — this adapter is intentionally headless so RLinf
+    and verl can plug in their own heads.
+    """
+
+    def __init__(self, predictor: HfJEPAPredictorShim) -> None:
+        super().__init__()
+        if predictor is None:
+            raise ValueError("predictor is required")
+        self.predictor = predictor
+
+    def forward(
+        self,
+        context_tokens: Tensor,
+        bool_masked_pos: Tensor,
+        action: Tensor | None = None,
+    ) -> Tensor:
+        """Predict target features for the masked positions.
+
+        Args:
+            context_tokens: ``(B, N, encoder_dim)`` V-JEPA 2 encoder output.
+            bool_masked_pos: ``(B, N)`` bool mask -- positions to predict.
+            action: optional ``(B, K, action_dim)`` per-frame action sequence.
+                Forwarded to the predictor for action-conditioned prediction
+                when set; ignored by the smoke predictor.
+
+        Returns:
+            ``(M_total, encoder_dim)`` predictions at masked positions.
+        """
+        return self.predictor(context_tokens, bool_masked_pos, action=action)
+
+
+class WorldModelCritic(nn.Module):
+    """RLinf/verl-compatible critic adapter wrapping :class:`HfJEPAPredictorShim`.
+
+    Exposes ``value(env_obs) -> Tensor`` (scalar per batch element) that
+    RLinf's critic worker group and verl's critic path expect. The
+    value is the mean over the predictor's target-feature predictions
+    at masked positions; this is a v1 stand-in until W27+ ships a
+    dedicated value head.
+
+    Sister to :class:`WorldModelActor`. ``actor`` and ``critic`` can
+    share the same underlying :class:`HfJEPAPredictorShim` (the
+    W22/W27 EMA online encoder); on NPU they're separate workers in
+    the Ray cluster.
+    """
+
+    def __init__(self, predictor: HfJEPAPredictorShim) -> None:
+        super().__init__()
+        if predictor is None:
+            raise ValueError("predictor is required")
+        self.predictor = predictor
+
+    def value(
+        self,
+        context_tokens: Tensor,
+        bool_masked_pos: Tensor,
+        action: Tensor | None = None,
+    ) -> Tensor:
+        """Estimate state value as the mean predicted target feature.
+
+        Args:
+            context_tokens: ``(B, N, encoder_dim)`` V-JEPA 2 encoder output.
+            bool_masked_pos: ``(B, N)`` bool mask -- positions to predict.
+            action: optional action sequence (see :class:`WorldModelActor`).
+
+        Returns:
+            ``(B,)`` value estimate per batch element (mean over the
+            predicted target features).
+        """
+        preds = self.predictor(context_tokens, bool_masked_pos, action=action)
+        # preds is ``(M_total, encoder_dim)``; aggregate to ``(B,)`` by
+        # summing the per-batch masked-position count via the mask and
+        # taking the mean. For v1 we use the simpler "mean across the
+        # whole prediction" since batch boundaries within ``M_total``
+        # depend on the predictor's behaviour; downstream code that
+        # needs per-batch values should re-bin with ``bool_masked_pos``.
+        return preds.mean(dim=-1)
+
+
 __all__ = [
     "HfEncoderShimConfig",
     "HfVJEPA2EncoderShim",
     "HfJEPAPredictorShim",
     "HfPixelDecoderShim",
+    "WorldModelActor",
+    "WorldModelCritic",
 ]

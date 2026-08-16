@@ -1,22 +1,28 @@
-"""Surface-parity tests for VJEPA2NPUWorker vs VJEPA2Worker (W27 CPU prep).
+"""Surface-parity tests for VJEPA2NPUWorker vs VJEPA2Worker (W27 CPU prep + M2-T1..T3 closure).
 
 The Atlas NPU worker :class:`VJEPA2NPUWorker` and the CPU worker
 :class:`VJEPA2Worker` share the public ``predict_*`` contract: a request
 routed to either worker must accept the same parameter names + ordering
 + return type, so the API endpoint layer can dispatch uniformly.
 
-Today (W27 v1) the NPU path raises :class:`NotImplementedError` for the
-five batched / temporal / action-conditioned methods because the Atlas
-wiring is gated on the hardware window (roadmap G11). This module
+Post-W27 + M2-T1/T2/T3 (M2: vLLM inference closed-loop, see
+``docs/roadmap/2026-08-14-opensource-extensions-loop-todo.md`` §2): all
+five ``predict_*`` methods now have **CPU fallback paths** that mirror
+:mod:`worldfoundry_inf.vjepa2_worker` byte-for-byte, so the API
+endpoint dispatches the same way on both workers and the CPU ↔ NPU
+parity contract can be exercised without Atlas hardware. This module
 asserts that:
 
 1. The NPU worker's ``predict_*`` methods have signatures **identical**
    to the CPU worker's (``inspect.signature`` cross-check). A future
    Atlas implementer who renames a parameter, reorders an argument, or
    drops the return annotation breaks this contract test loudly.
-2. Calling any of the five ``NotImplementedError`` stubs raises with a
-   message that mentions "Atlas pilot" — so a caller can distinguish
-   "intentional deferral" from "actual bug".
+2. Calling the temporal / action methods **without** the corresponding
+   ckpt (``predictor_ckpt`` or ``action_predictor_ckpt``) raises a
+   :class:`RuntimeError` whose message names the missing ckpt — so a
+   caller can distinguish "not configured for this mode" from "actual
+   bug" without poking at private state. ``predict_masked_batch`` has
+   no ckpt requirement and must run on the initialized model.
 3. ``predict_action_conditioned_batch`` is present on the NPU worker
    (was missing before this commit; parity closure for W33/W25 batcher
    surface).
@@ -105,28 +111,54 @@ def test_npu_worker_exposes_all_parity_methods():
 
 
 # ---------------------------------------------------------------------------
-# 2. Stub raises with "Atlas pilot" message
+# 2. Without the matching ckpt, the temporal/action paths raise a clear
+# RuntimeError so callers can tell "not configured" from "actual bug".
+# predict_masked_batch has no ckpt requirement; we exercise it on the
+# initialized model.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("method_name", _PARITY_METHODS)
-def test_npu_stub_raises_not_implemented_with_atlas_pilot_message(method_name):
-    """All five stubs must raise NotImplementedError mentioning the Atlas deferral.
+@pytest.mark.parametrize(
+    "method_name",
+    [
+        "predict_temporal_batch",
+        "predict_temporal",
+        "predict_action_conditioned",
+        "predict_action_conditioned_batch",
+    ],
+)
+def test_npu_predict_raises_runtime_error_when_ckpt_missing(method_name):
+    """Calling a temporal/action method without predictor_ckpt /
+    action_predictor_ckpt must raise with a message naming the missing ckpt.
 
     Construct a stub instance via ``__new__`` to bypass ``__init__`` (which
-    requires a real VJEPA2 model path). The stub bodies don't read ``self``,
-    only raise, so the uninitialized instance is fine.
+    requires a real VJEPA2 model path). The fallback paths check the
+    ``predictor_ckpt`` / ``action_predictor_ckpt`` attribute on ``self``
+    before any forward work, so an uninitialized instance is fine.
     """
     stub = VJEPA2NPUWorker.__new__(VJEPA2NPUWorker)
+    # Match CPU-worker defaults so the configured-grid check passes and we
+    # reach the ckpt-missing branch.
+    stub.past_frames = 1
+    stub.future_frames = 1
+    stub.action_dim = 2
+    # predictor_ckpt / action_predictor_ckpt stay None.
+    stub.predictor_ckpt = None
+    stub.action_predictor_ckpt = None
+    # Lazy-bundle slots normally set by __init__.
+    stub.bundle = None
+    stub.action_bundle = None
+    stub._past_grid = None
+    stub._future_grid = None
     method = getattr(stub, method_name)
     args = _stub_args(method_name)
-    with pytest.raises(NotImplementedError, match="Atlas pilot"):
+    with pytest.raises(RuntimeError, match="predictor_ckpt|action_predictor_ckpt"):
         method(*args)
 
 
 def _stub_args(method_name: str) -> tuple:
-    """Return minimal valid positional args to invoke each stub (bypassing
-    Python's required-arg check before the stub body raises)."""
+    """Return minimal valid positional args to invoke each method (bypassing
+    Python's required-arg check before the fallback path's ckpt check)."""
     tiny_video = torch.zeros(1, 1, 3, 8, 8)
     tiny_actions = torch.zeros(1, 1, 2)
     table = {
@@ -141,11 +173,9 @@ def _stub_args(method_name: str) -> tuple:
     return table[method_name]
 
 
-def test_npu_stub_does_not_silently_succeed_after_load_model(tmp_path):
-    """Even after a real load_model, the five stubs must raise — guard
-    against a future refactor that wires them through the eager CPU path
-    and accidentally turns them into silently-working fallbacks (which
-    would defeat the Atlas-pilot gate)."""
+def test_npu_predict_masked_batch_runs_after_load_model(tmp_path):
+    """predict_masked_batch has no ckpt dependency — after load_model the
+    CPU fallback should produce per-sample outputs without raising."""
     cfg = transformers.VJEPA2Config(
         hidden_size=64, num_hidden_layers=2, num_attention_heads=2,
         image_size=196, patch_size=14, tubelet_size=1, in_chans=3,
@@ -158,19 +188,16 @@ def test_npu_stub_does_not_silently_succeed_after_load_model(tmp_path):
     w = VJEPA2NPUWorker(model_dir, dtype=torch.float32)
     w.load_model()
 
-    video = torch.zeros(1, 1, 3, 196, 196)
-    actions = torch.zeros(1, 1, 2)
-
-    with pytest.raises(NotImplementedError, match="Atlas pilot"):
-        w.predict_masked_batch([video], [0.5])
-    with pytest.raises(NotImplementedError, match="Atlas pilot"):
-        w.predict_temporal_batch([video], [1], [1])
-    with pytest.raises(NotImplementedError, match="Atlas pilot"):
-        w.predict_temporal(video, 1, 1)
-    with pytest.raises(NotImplementedError, match="Atlas pilot"):
-        w.predict_action_conditioned(video, actions, 1, 1)
-    with pytest.raises(NotImplementedError, match="Atlas pilot"):
-        w.predict_action_conditioned_batch([video], [actions], [1], [1])
+    # ``videos[i].shape`` must be ``(T, C, H, W)``; the batcher stacks on
+    # dim=0 to build ``(B, T, C, H, W)``. Use T=1, C=3 (in_chans=3), and
+    # the configured H=W=196 image size.
+    video = torch.zeros(1, 3, 196, 196)
+    out = w.predict_masked_batch([video], [0.5])
+    assert isinstance(out, list)
+    assert len(out) == 1
+    # HF VJEPA2 returns ``(B*N_tokens, hidden_size)`` when bool_masked_pos
+    # is supplied; with the tiny fixture B=1, N=14*14=196, hidden=64.
+    assert out[0].shape == (196, 64)
 
 
 # ---------------------------------------------------------------------------

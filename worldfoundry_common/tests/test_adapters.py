@@ -15,6 +15,8 @@ import pytest
 from worldfoundry_common.adapters import (
     RLinfEnvWorker,
     RLinfRunner,
+    RLinfRunnerConfig,
+    RunnerFactory,
     SGLangWorker,
     VerlRolloutWorker,
     VerlRunner,
@@ -180,7 +182,6 @@ def test_rlinf_runner_requires_factory_or_package() -> None:
 
 
 def test_rlinf_env_worker_rolls_out_worldfoundry_env() -> None:
-    from worldfoundry_common.backends.sim_env import resolve_env_spec
     from worldfoundry_common.backends import build_backend
 
     factory = build_backend("sim_env", "mock", obs_dim=4, action_dim=2)
@@ -197,6 +198,88 @@ def test_rlinf_env_worker_rolls_out_worldfoundry_env() -> None:
     assert len(truncs) == 2
     assert len(infos) == 2
     worker.close()
+
+
+# --------------------------------------------------------------------------- #
+# M1-T1: RLinfRunnerConfig + RunnerFactory Protocol
+# --------------------------------------------------------------------------- #
+def test_rlinf_runner_config_defaults_and_to_dict() -> None:
+    """Defaults match the TODO M1-T1 spec; to_dict mirrors the dataclass."""
+    cfg = RLinfRunnerConfig()
+    assert cfg.cluster_role == "head"
+    assert cfg.worker_groups == {}
+    assert cfg.world_model_builder is None
+    assert cfg.extras == {}
+    rendered = cfg.to_dict()
+    assert set(rendered.keys()) == {
+        "cluster_role", "worker_groups", "world_model_builder", "extras",
+    }
+    assert rendered["cluster_role"] == "head"
+    # to_dict copies so downstream mutation doesn't leak back.
+    rendered["worker_groups"]["actor"] = "MyActor"
+    assert cfg.worker_groups == {}
+
+
+def test_rlinf_runner_config_accepts_world_model_builder() -> None:
+    """world_model_builder is the seam for M1-T2 WorldModelActor/Critic."""
+
+    def builder():
+        return ("fake_world_model", {"dim": 64})
+
+    cfg = RLinfRunnerConfig(
+        cluster_role="worker",
+        worker_groups={"actor": "MyActor", "rollout": "MyRollout"},
+        world_model_builder=builder,
+        extras={"num_outer_iters": 1},
+    )
+    assert cfg.cluster_role == "worker"
+    assert cfg.worker_groups["actor"] == "MyActor"
+    assert cfg.world_model_builder() == ("fake_world_model", {"dim": 64})
+    assert cfg.extras["num_outer_iters"] == 1
+
+
+def test_rlinf_runner_factory_protocol_is_runtime_checkable() -> None:
+    """A plain function with the right signature passes isinstance() checks."""
+
+    # Body is never invoked; we only assert the runtime-checkable Protocol
+    # matches the factory's __call__ shape. Keeping the body minimal avoids
+    # pulling in test-only class scaffolding.
+    def factory(config):
+        return None
+
+    assert isinstance(factory, RunnerFactory)
+
+
+def test_rlinf_runner_with_typed_config_factory() -> None:
+    """A factory built from RLinfRunnerConfig produces a runner that runs."""
+    seen: list[RLinfRunnerConfig] = []
+
+    class _FakeRunner:
+        def __init__(self):
+            self.ran = False
+
+        def run(self):
+            self.ran = True
+
+    def factory(config):
+        # Normalize both forms (typed dataclass and legacy dict) to the
+        # dataclass before delegating to the real factory body.
+        if isinstance(config, dict):
+            config = RLinfRunnerConfig(**config)
+        seen.append(config)
+        return _FakeRunner()
+
+    cfg = RLinfRunnerConfig(
+        cluster_role="worker",
+        worker_groups={"actor": "MyActor"},
+        world_model_builder=lambda: ("wm", None),
+    )
+    runner = RLinfRunner(config=cfg, runner_factory=factory)
+    result = runner.run()
+    assert result == {"framework": "rlinf", "status": "completed"}
+    assert len(seen) == 1
+    assert seen[0].cluster_role == "worker"
+    assert seen[0].worker_groups["actor"] == "MyActor"
 
 
 # --------------------------------------------------------------------------- #
