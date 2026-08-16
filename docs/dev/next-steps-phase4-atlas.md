@@ -24,6 +24,35 @@ next-steps plan and exists so the next dev session can pick up
 without re-discovering which items are blocked on hardware vs.
 blocked on spec.
 
+## Goal-evidence gate (canonical "is the goal achieved?" probe)
+
+The persistent verbatim goal driving this work:
+
+> 持续执行开发直到世界模型训练基于RLinf执行，推理基于vllm(或者
+> vllm-omni)，世界模型的扩散模块也采用加速的推理引擎(非pytorch)
+
+is verifiable in one command via
+[`scripts/verify_goal_evidence.py`](../../scripts/verify_goal_evidence.py).
+The script runs the orchestrator under
+`--rl-backend=rlinf --inference-backend=vllm_omni`, parses the JSON
+summary, and asserts all three clauses (training-via-RLinf,
+inference-via-vLLM-Omni, diffusion-via-non-PyTorch-ORT). Exit 0
+means all three clauses pass; the per-clause PASS/FAIL lines + the
+"`VERIFIED: 3/3 clauses satisfied`" summary line are machine-parseable.
+
+Run it after every Atlas deploy as the post-deploy smoke:
+
+```bash
+python scripts/verify_goal_evidence.py
+```
+
+The regression guard
+[`worldfoundry_inf/tests/test_verify_goal_evidence.py`](../../worldfoundry_inf/tests/test_verify_goal_evidence.py)
+covers both the happy-path subprocess run and per-clause failure
+paths via in-process dict exercises (including the critical
+"diffusion_engine=pytorch" regression guard — if diffusion ever
+silently falls back to PyTorch eager, that test fails immediately).
+
 ## Master commit graph (Phase-3 closure recap)
 
 ```
