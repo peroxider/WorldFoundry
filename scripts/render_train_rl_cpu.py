@@ -213,6 +213,17 @@ class V2Config:
     # behavior so test harnesses can re-use artifacts without paying the
     # cv2.VideoWriter cost. Mirrors RecipeConfig.skip_render.
     skip_render: bool = False
+    # M1-T3: pluggable RL framework seam. ``"self_ppo"`` (default)
+    # preserves the v2.x in-process PPO path; ``"rlinf"`` routes
+    # through RLinfRunner with the supplied ``rlinf_runner_factory``;
+    # ``"verl"`` is a reserved hook (NotImplementedError today, M1-T5).
+    rl_backend: str = "self_ppo"
+    # M1-T3: dotted path to a ``RunnerFactory`` callable consumed by
+    # ``build_runner`` when ``rl_backend == "rlinf"``. Accepts either
+    # ``pkg.mod:attr`` (preferred) or ``pkg.mod.attr`` form. ``None``
+    # by default; CLI raises an actionable ``NotImplementedError``
+    # if rlinf is selected without a factory.
+    rlinf_runner_factory: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1548,7 +1559,98 @@ def parse_args(argv=None) -> argparse.Namespace:
                         "Atlas item) and the orchestrator still uses the "
                         "in-process path so a real run never silently swaps "
                         "compute.")
+    p.add_argument("--rl-backend", choices=("self_ppo", "verl", "rlinf"),
+                   default="self_ppo",
+                   help="M1-T3: pluggable RL framework. ``self_ppo`` (default) "
+                        "keeps the v2.x in-process PPO path; ``rlinf`` (planned "
+                        "M1-T4) routes through RLinfRunner via "
+                        "--rlinf-runner-factory; ``verl`` (planned M1-T5) is "
+                        "reserved as a hook and raises NotImplementedError today.")
+    p.add_argument("--rlinf-runner-factory", default=None,
+                   help="M1-T3: dotted path to a ``RunnerFactory`` callable "
+                        "passed to ``RLinfRunner(runner_factory=...)``. Accepts "
+                        "either ``pkg.mod:attr`` or ``pkg.mod.attr`` form. "
+                        "Required when --rl-backend=rlinf; ignored otherwise. "
+                        "On the host (no Ray cluster), pass a mock factory that "
+                        "returns a stub runner; on Atlas card 7 (M1-T4), pass a "
+                        "real factory that attaches RLinf worker groups.")
     return p.parse_args(argv)
+
+
+def import_dotted(path: str) -> Any:
+    """Import a dotted path ``pkg.mod:attr`` or ``pkg.mod.attr``.
+
+    M1-T3: resolves a CLI-supplied factory reference to a Python callable.
+    Accepts both ``pkg.mod:attr`` (preferred) and ``pkg.mod.attr`` (dotted
+    attribute access) forms. Raises ``ValueError`` listing the resolved
+    module path + missing attribute name when the import fails so the
+    caller gets an actionable error rather than a bare ``ImportError``.
+    """
+    if not path:
+        raise ValueError("import_dotted: empty path")
+    module_path, _, attr = path.partition(":")
+    if not attr:
+        # ``pkg.mod.attr`` form — split on the last dot.
+        module_path, _, attr = module_path.rpartition(".")
+        if not attr:
+            raise ValueError(
+                f"import_dotted: cannot parse {path!r}; expected "
+                f"'pkg.mod:attr' or 'pkg.mod.attr'."
+            )
+    import importlib
+
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError as exc:
+        raise ValueError(
+            f"import_dotted: cannot import module {module_path!r} "
+            f"(from path {path!r}): {exc}"
+        ) from exc
+    try:
+        return getattr(module, attr)
+    except AttributeError as exc:
+        raise ValueError(
+            f"import_dotted: module {module_path!r} has no attribute "
+            f"{attr!r} (from path {path!r}): {exc}"
+        ) from exc
+
+
+def build_runner(args: argparse.Namespace, env_pool: Any, policy: Any, cfg: Any) -> Any:
+    """Dispatch RL-framework backend (M1-T3).
+
+    Three-state seam: ``self_ppo`` (shipped, default), ``rlinf`` (planned
+    M1-T4, host smoke uses mock factory), ``verl`` (planned M1-T5,
+    reserved hook that raises ``NotImplementedError`` today).
+    """
+    backend = getattr(args, "rl_backend", "self_ppo")
+    if backend == "self_ppo":
+        # Existing v2.x path: caller wires PPO(policy, cfg) directly via
+        # policy_bootstrap_phase; returning ``policy`` is the no-op that
+        # keeps downstream code unchanged.
+        return policy
+    if backend == "rlinf":
+        factory_path = getattr(args, "rlinf_runner_factory", None)
+        if not factory_path:
+            raise NotImplementedError(
+                "--rl-backend=rlinf requires --rlinf-runner-factory <dotted.path>; "
+                "no factory supplied. Pass a mock factory for host smoke "
+                "(e.g. 'tests.test_rlinf_runner_factory:_mock_factory') or a "
+                "real factory for the Atlas card 7 e2e (M1-T4)."
+            )
+        factory = import_dotted(factory_path)
+        from worldfoundry_common.adapters.rlinf import RLinfRunner
+
+        runner = RLinfRunner(runner_factory=factory)
+        result = runner.run({"env_pool": env_pool, "policy": policy, "cfg": cfg})
+        return result
+    if backend == "verl":
+        raise NotImplementedError(
+            "--rl-backend=verl is reserved for M1-T5 (P2). Today, "
+            "falls back to self_ppo by omitting --rl-backend. "
+            "See docs/superpowers/specs/2026-08-15-w42-rlinf-runner-factory.md "
+            "§5.3."
+        )
+    raise ValueError(f"build_runner: unknown rl_backend {backend!r}")
 
 
 def main(argv=None) -> int:
@@ -1625,6 +1727,9 @@ def main(argv=None) -> int:
         mask_tubelet_size=(
             tuple(args.mask_tubelet_size) if args.mask_tubelet_size else None
         ),
+        # M1-T3: pluggable RL framework seam.
+        rl_backend=args.rl_backend,
+        rlinf_runner_factory=args.rlinf_runner_factory,
     )
     # W2.19: the HF encoder is now architecturally compatible with the
     # image-policy path (``--policy-encoder tiny_vjepa2``); the shim
@@ -1748,6 +1853,9 @@ def main(argv=None) -> int:
             "encoder_pretrained_revision": cfg.encoder_pretrained_revision,
             "hf_tubelet_size": cfg.hf_tubelet_size,
             "mask_tubelet_size": cfg.mask_tubelet_size,
+            # M1-T3: pluggable RL framework seam (CLI choice + factory ref).
+            "rl_backend": cfg.rl_backend,
+            "rlinf_runner_factory": cfg.rlinf_runner_factory,
         },
         "render": {
             "elapsed_seconds": round(render_t, 3),

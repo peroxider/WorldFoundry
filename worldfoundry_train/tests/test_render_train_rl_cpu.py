@@ -1317,3 +1317,94 @@ def test_parse_args_defaults_mask_tubelet_size_to_none() -> None:
     from scripts.render_train_rl_cpu import parse_args
     args = parse_args(["--out-dir", "/tmp/whatever"])
     assert args.mask_tubelet_size is None
+
+
+# --- M1-T3: --rl-backend CLI seam + RLinf dispatch + import_dotted ------------
+
+
+def test_rl_backend_self_ppo_default_unchanged() -> None:
+    """Default ``--rl-backend`` is ``self_ppo``; default factory is ``None`` (M1-T3)."""
+    from scripts.render_train_rl_cpu import parse_args
+    args = parse_args(["--out-dir", "/tmp/whatever"])
+    assert args.rl_backend == "self_ppo"
+    assert args.rlinf_runner_factory is None
+
+
+def test_rl_backend_rlinf_with_mock_factory_runs() -> None:
+    """``--rl-backend=rlinf`` + a mock factory path produces a runner result."""
+    from scripts.render_train_rl_cpu import build_runner
+
+    class _StubRunner:
+        def run(self, config):
+            return {"framework": "rlinf", "status": "completed", "config_keys": sorted(config.keys())}
+
+    def _mock_factory(config):
+        return _StubRunner()
+
+    class _Args:
+        rl_backend = "rlinf"
+        # Reference the test module's own factory via dotted import.
+        rlinf_runner_factory = (
+            "worldfoundry_train.tests.test_render_train_rl_cpu:_mock_factory"
+        )
+
+    result = build_runner(_Args(), env_pool=None, policy=None, cfg=None)
+    assert isinstance(result, dict)
+    assert result["framework"] == "rlinf"
+    assert result["status"] == "completed"
+
+
+# Module-level mock factory referenced by dotted path in
+# ``test_rl_backend_rlinf_with_mock_factory_runs``.
+def _mock_factory(config):
+    """Return a stub runner that mimics RLinfRunner.run() output shape.
+
+    RLinfRunner.run() calls ``self._runner.run()`` with no args after
+    building the runner via ``runner_factory(config)`` — see
+    ``worldfoundry_common/adapters/rlinf.py:77-82``.
+    """
+    class _Stub:
+        def run(self):
+            return {"framework": "rlinf", "status": "completed"}
+    return _Stub()
+
+
+def test_rl_backend_rlinf_without_factory_raises_actionable_error() -> None:
+    """``--rl-backend=rlinf`` without ``--rlinf-runner-factory`` raises ``NotImplementedError`` with M1-T3 hint."""
+    from scripts.render_train_rl_cpu import build_runner
+
+    class _Args:
+        rl_backend = "rlinf"
+        rlinf_runner_factory = None
+
+    with pytest.raises(NotImplementedError) as excinfo:
+        build_runner(_Args(), env_pool=None, policy=None, cfg=None)
+    assert "--rlinf-runner-factory" in str(excinfo.value)
+
+
+def test_rl_backend_verl_raises_notimplemented_m1t5() -> None:
+    """``--rl-backend=verl`` raises ``NotImplementedError`` referencing M1-T5."""
+    from scripts.render_train_rl_cpu import build_runner
+
+    class _Args:
+        rl_backend = "verl"
+        rlinf_runner_factory = None
+
+    with pytest.raises(NotImplementedError) as excinfo:
+        build_runner(_Args(), env_pool=None, policy=None, cfg=None)
+    assert "M1-T5" in str(excinfo.value)
+
+
+def test_import_dotted_handles_colon_and_dot() -> None:
+    """``import_dotted`` accepts both ``pkg.mod:attr`` and ``pkg.mod.attr`` forms."""
+    from scripts.render_train_rl_cpu import import_dotted
+
+    # Colon form: ``pkg.mod:attr``
+    colon_form = import_dotted("os.path:join")
+    # Dot form: ``pkg.mod.attr`` (last-dot split)
+    dot_form = import_dotted("os.path.join")
+    assert colon_form is dot_form  # Same object — same resolution path.
+    assert callable(colon_form)
+    # Empty path raises ValueError with actionable message.
+    with pytest.raises(ValueError, match="empty path"):
+        import_dotted("")
