@@ -2,7 +2,23 @@
 # Listed here so ``pip install -r requirements/vllm_omni.txt`` is a
 # no-op until the wheel ships; tracked under P4 in
 # docs/roadmap/2026-08-14-opensource-extensions-loop-todo.md section 9.5.
+#
+# Until the public ``vllm-omni`` wheel ships, the CPU stand-in at
+# ``worldfoundry_inf.vllm_omni.VLLMOmniPipeline`` is what gets
+# imported -- it binds the ORT-backed inference worker
+# (``worldfoundry_inf.onnx_vllm_worker.OnnxVJEPAWorker``) and the
+# ORT-backed diffusion pipeline
+# (``worldfoundry_inf.diffusion.backends.onnx_diffusion.OnnxDiffusionPipeline``)
+# behind one surface. Both halves require ``onnxruntime`` + ``onnx``
+# (the stand-in's "non-PyTorch accelerated inference engine"); we pin
+# them here so a fresh ``pip install -r requirements/vllm_omni.txt``
+# brings the stand-in online without an extra step. Atlas deployments
+# additionally need ``onnxruntime-ascend`` (resolved automatically by
+# ``worldfoundry_inf.onnx_npu_provider.default_providers()``).
 
 -r base.txt
+
+onnxruntime>=1.17
+onnx>=1.16
 
 # vllm-omni>=0.1   # public wheel not yet released

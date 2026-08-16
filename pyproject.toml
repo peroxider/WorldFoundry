@@ -52,9 +52,14 @@ video = ["av==14.0.0", "decord==0.6.0", "opencv-python>=4.8"]
 # installs cleanly.
 diffusion = ["diffusers>=0.30", "transformers[sentencepiece]>=4.55", "accelerate>=1.10"]
 # TODO M2-T6: vllm-omni end-to-end multimodal — public wheel not yet
-# shipped; tracked under W44+ gate. Listed here so ``pip install
-# -e .[vllm_omni]`` is a no-op until the wheel exists.
-vllm_omni = ["vllm-omni>=0.1"]
+# shipped; tracked under W44+ gate. Until the wheel exists, this extra
+# pulls in the CPU stand-in's "non-PyTorch accelerated inference
+# engine" deps (onnxruntime + onnx) so ``pip install -e .[vllm_omni]``
+# makes the orchestrator's ``vllm_omni`` backend dispatchable end-to-end
+# on host smoke and on Atlas. Atlas deployments additionally need
+# ``onnxruntime-ascend`` (resolved automatically by
+# ``worldfoundry_inf.onnx_npu_provider.default_providers()``).
+vllm_omni = ["vllm-omni>=0.1", "onnxruntime>=1.17", "onnx>=1.16"]
 
 [project.entry-points."vllm.platform_plugins"]
 worldfoundry_inf = "worldfoundry_inf._vllm_ascend_plugin:register"
