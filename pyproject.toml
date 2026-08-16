@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "worldfoundry"
 version = "0.1.0"
-description = "Ascend NPU world-model rendering/training/inference framework (JEPA family, simulator RL, simulator + hardware deployment) — orchestrating vllm-ascend, mindspeed, verl/RLinf, msmodelslim"
+description = "Ascend NPU world-model rendering/training/inference framework (JEPA family, simulator RL, simulator + hardware deployment) — orchestrating vllm-ascend, vllm-omni (ORT stand-in), mindspeed, verl/RLinf, msmodelslim; diffusion module is ONNX-Runtime-backed (CPUExecutionProvider on host, AscendExecutionProvider on Atlas) for non-PyTorch accelerated frame generation"
 requires-python = "==3.11.*"
 # C-T1: lock the version matrix to align with W35.2 ADR
 # (`docs/superpowers/specs/2026-08-06-w35-2-version-matrix-check.md`).
