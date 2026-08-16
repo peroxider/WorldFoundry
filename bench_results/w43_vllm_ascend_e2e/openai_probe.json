@@ -1,0 +1,72 @@
+{
+  "captured_at": "2026-08-16T14:52:33Z",
+  "atlas_endpoint_probes": [
+    {
+      "port": 1025,
+      "model": "Llama3-8B-Chinese-Chat",
+      "kind": "chat",
+      "status": "ok",
+      "http_code": 200,
+      "reply": "Hello! How can I assist you today",
+      "system_fingerprint": "vllm-0.23.0-35793fbf"
+    },
+    {
+      "port": 9123,
+      "model": "bge-large-zh-v1.5",
+      "kind": "embedding",
+      "status": "ok",
+      "http_code": 200,
+      "embedding_dim": 1024,
+      "embedding_sample": [
+        0.005559100303798914,
+        -0.046414539217948914,
+        -0.07509610801935196
+      ]
+    },
+    {
+      "port": 9124,
+      "model": "bge-reranker-large",
+      "kind": "rerank",
+      "status": "ok",
+      "http_code": 200,
+      "top_score": 0.03428676351904869
+    }
+  ],
+  "registry_probe": {
+    "inference_backends_listed": [
+      "mindie_sd",
+      "sglang",
+      "torch",
+      "vllm",
+      "vllm_ascend",
+      "vllm_omni"
+    ],
+    "inference_defaults": "torch",
+    "availability": {
+      "mindie_sd": {
+        "available": true,
+        "hint": null
+      },
+      "sglang": {
+        "available": false,
+        "hint": "Install sglang (github.com/sgl-project/sglang) to use this backend."
+      },
+      "torch": {
+        "available": true,
+        "hint": null
+      },
+      "vllm": {
+        "available": false,
+        "hint": "pip install -e '.[inf]'; alias of 'vllm_ascend' (canonical name; 'vllm' retained for backward compatibility)."
+      },
+      "vllm_ascend": {
+        "available": false,
+        "hint": "pip install -e '.[inf]' (requires torch_npu + vllm + vllm_ascend wheels); available only inside the worldfoundry-npu-vllm Docker image."
+      },
+      "vllm_omni": {
+        "available": false,
+        "hint": "vllm-omni public wheel pending (W44+); tracked under TODO M2-T6."
+      }
+    }
+  }
+}
