@@ -145,7 +145,7 @@ def check_m3():
         from worldfoundry_inf.diffusion.backends.cpu import (
             CPUPixelDecoderPipeline,
         )
-        from worldfoundry_common.backends.inference import registry
+        from worldfoundry_common.backends.inference import registry, make_engine
 
         # ABC contract
         for name in ("encode_latents", "decode_latents", "rollout"):
@@ -175,6 +175,8 @@ def check_m3():
         names = registry.list()
         assert "mindie_sd" in names, names
         assert "vllm_omni" in names, names
+        assert "onnx_diffusion" in names, names
+        assert "onnx_vllm" in names, names
 
         # Build availability
         avail_mindie = registry.available("mindie_sd")
@@ -183,9 +185,61 @@ def check_m3():
         # PipelineNotAvailableError is a real exception
         assert issubclass(PipelineNotAvailableError, Exception)
 
+        # vllm_omni dispatch (M2-T6 / M3 followup) -- the unified CPU stand-in
+        # that combines ORT inference + ORT diffusion. On Atlas boxes this is
+        # what gets used until the public vllm-omni wheel ships (W44+).
+        from worldfoundry_inf.vllm_omni import VLLMOmniPipeline, is_vllm_omni_available
+        if is_vllm_omni_available():
+            omni = make_engine("vllm_omni")
+            assert isinstance(omni, VLLMOmniPipeline)
+            # Both halves run through ORT (non-PyTorch), satisfying the
+            # "non-PyTorch accelerated inference engine" requirement for
+            # both the inference module and the diffusion module.
+            summary = omni.provider_summary()
+            assert summary["inference"]["engine"] == "onnxruntime", summary
+            assert summary["diffusion"]["engine"] == "onnxruntime", summary
+
+        # onnx_diffusion dispatch (M3-T4 followup) -- standalone ORT
+        # diffusion pipeline. Atlas boxes swap CPUExecutionProvider for
+        # AscendExecutionProvider via the helper in worldfoundry_inf.
+        from worldfoundry_inf.diffusion.backends.onnx_diffusion import (
+            OnnxDiffusionPipeline,
+            is_onnx_diffusion_available,
+        )
+        if is_onnx_diffusion_available():
+            onnx_diff = make_engine("onnx_diffusion")
+            assert isinstance(onnx_diff, OnnxDiffusionPipeline)
+            diff_summary = onnx_diff.provider_summary()
+            assert diff_summary["engine"] == "onnxruntime", diff_summary
+            # Providers were auto-selected; on Atlas with onnxruntime-ascend
+            # installed, AscendExecutionProvider is present.
+            resolved = diff_summary["providers_resolved"]
+            assert any("ExecutionProvider" in p for p in resolved), resolved
+
+        # Atlas-NPU-aware ORT provider selection. On Atlas boxes with the
+        # onnxruntime-ascend wheel, default_providers() returns
+        # ["AscendExecutionProvider", "CPUExecutionProvider"]; on host smoke
+        # boxes it returns ["CPUExecutionProvider"].
+        from worldfoundry_inf.onnx_npu_provider import (
+            default_providers,
+            is_ascend_provider_available,
+        )
+        providers = default_providers()
+        assert isinstance(providers, list) and len(providers) >= 1
+        # The provider list must reference real ORT execution providers.
+        assert all(isinstance(p, str) and "Provider" in p for p in providers), providers
+        # If AscendExecutionProvider is in the resolved list, the Ascend EP
+        # must appear before CPUExecutionProvider (ORT picks first match).
+        if "AscendExecutionProvider" in providers:
+            assert providers.index("AscendExecutionProvider") < providers.index(
+                "CPUExecutionProvider",
+            ), providers
+
         sec["passed"] = True
         sec["notes"].append(
             "pipeline ABC + CPU stub deterministic; registered = " + str(names)
+            + "; ORT providers = " + str(providers)
+            + "; ascend_available = " + str(is_ascend_provider_available())
         )
     except Exception:
         sec["notes"].append(traceback.format_exc())
