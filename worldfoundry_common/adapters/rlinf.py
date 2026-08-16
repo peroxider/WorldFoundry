@@ -75,11 +75,25 @@ class RLinfRunner(TrainingRunner):
         return self._runner
 
     def run(self, config: dict | None = None, **kwargs: Any) -> dict[str, Any]:
-        """Run the RLinf training loop and return a summary dict."""
+        """Run the RLinf training loop and return a summary dict.
+
+        If the inner runner returns a dict (e.g. the host-smoke mock
+        factory in ``worldfoundry_rl.rlinf_mock_factory`` returns
+        ``update_history`` / ``wall_seconds`` / ``kind``), the adapter
+        merges it under ``result`` so downstream summary JSONs can
+        surface the mock's per-update stats. Real RLinf
+        ``EmbodiedRunner.run()`` returns ``None``; the adapter still
+        returns the canonical ``{"framework", "status"}`` shape.
+        """
         cfg = config if config is not None else self._config
         runner = self._ensure_runner(cfg)
-        runner.run()
-        return {"framework": "rlinf", "status": "completed"}
+        inner = runner.run()
+        summary: dict[str, Any] = {"framework": "rlinf", "status": "completed"}
+        if isinstance(inner, dict):
+            summary["result"] = inner
+            if inner.get("kind"):
+                summary["kind"] = inner["kind"]
+        return summary
 
 
 class RLinfEnvWorker:

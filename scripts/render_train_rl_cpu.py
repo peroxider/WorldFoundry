@@ -812,6 +812,22 @@ def inference_phase(
 # Phase P: PPO bootstrap — actor consumes imagined latents
 # ---------------------------------------------------------------------------
 
+
+class _BoxSpace:
+    """Minimal ``Box(low=-inf, high=inf, shape=(dim,))`` stand-in for gym spaces.
+
+    The mock factory reads ``single_action_space.shape[0]``; the orchestrator's
+    in-process :class:`_MockCPUEnv` does not expose gym-style spaces, so we
+    wrap it with a tiny stub. Avoids depending on gymnasium for the host
+    smoke path.
+    """
+
+    def __init__(self, dim: int):
+        self.shape = (int(dim),)
+        self.low = -1.0
+        self.high = 1.0
+
+
 class _MockCPUEnv:
     """CPU-only synthetic env so the loop runs without mujoco."""
 
@@ -1803,6 +1819,93 @@ def main(argv=None) -> int:
           f"val_loss_init={pol['value_loss_initial']:+.4f} "
           f"n_env_steps={pol['n_env_steps']} elapsed={pol['elapsed_seconds']:.2f}s "
           f"rss={rss_after_pol_mb:.1f}MB")
+
+    # M1-T3 followup: when --rl-backend != "self_ppo", dispatch through
+    # the RL-framework seam so the orchestrator's policy phase leaves a
+    # framework-stamped record in the JSON summary. ``build_runner``
+    # returns the framework result dict (``{framework, status, result,
+    # kind}``); merge it into ``pol`` so downstream consumers can
+    # verify which framework served the run.
+    #
+    # The mock factory's :func:`build_runner` requires ``env_pool``
+    # with ``single_action_space.shape[0]``; build a small :class:`SyncEnvPool`
+    # from the same env class the policy phase uses so the rollout
+    # loop has live envs to step.
+    if getattr(args, "rl_backend", "self_ppo") != "self_ppo":
+        from worldfoundry_rl.env_pool import SyncEnvPool
+        from worldfoundry_rl.vision_policy import VisionPolicy
+
+        class _GymWrappedMockEnv:
+            """Tiny ``observation_space``/``action_space`` adapter over :class:`_MockCPUEnv`.
+
+            The mock factory's :func:`build_runner` reads
+            ``env_pool.single_action_space.shape[0]`` and flattens obs
+            dicts; the orchestrator's in-process :class:`_MockCPUEnv`
+            exposes raw ``reset`` / ``step`` but no gym-style spaces
+            or dict-shaped obs, so we wrap it. The wrapper emits
+            ``{"state": state_array}`` on ``reset``/``step`` so the
+            mock factory's ``for v in o.values()`` flattening works.
+            """
+
+            def __init__(self):
+                self._env = _MockCPUEnv(
+                    cfg.obs_dim, cfg.action_dim, seed=cfg.seed,
+                )
+                self.observation_space = _BoxSpace(cfg.obs_dim)
+                self.action_space = _BoxSpace(cfg.action_dim)
+
+            def reset(self, *, seed=None, options=None):
+                state, _ = self._env.reset(seed=seed, options=options)
+                return {"state": state}, {}
+
+            def step(self, action):
+                state, reward, terminated, truncated, info = self._env.step(action)
+                return (
+                    {"state": state},
+                    reward,
+                    terminated,
+                    truncated,
+                    info,
+                )
+
+            def close(self):
+                pass
+
+        def _make_gym_env():
+            return _GymWrappedMockEnv()
+        env_pool = SyncEnvPool(
+            [_make_gym_env for _ in range(2)],
+            seed=cfg.seed,
+        )
+        # The mock factory requires a callable policy; ``pol`` here
+        # is the policy-phase summary dict, not a module. Build a
+        # fresh :class:`VisionPolicy` matching ``(obs_dim, action_dim)``
+        # so the mock factory's :func:`_collect_rollout` + PPO update
+        # have a real module to drive. The point of this dispatch is
+        # to exercise the RLinf seam end-to-end (worker groups,
+        # rollout, PPO update), not to share weights with the policy
+        # phase; the real RLinf ``EmbodiedRunner`` attaches its own
+        # actor on Atlas.
+        rlinf_policy = VisionPolicy.from_state_dim(
+            obs_dim=cfg.obs_dim, action_dim=cfg.action_dim, hidden_dim=32,
+        )
+        rlinf_out = build_runner(args, env_pool=env_pool, policy=rlinf_policy, cfg=cfg)
+        if isinstance(rlinf_out, dict):
+            for k, v in rlinf_out.items():
+                pol[f"rlinf_{k}"] = v
+        rss_after_rlinf_mb = _rss_mb()
+        rlinf_framework = (
+            rlinf_out.get("framework", "unknown") if isinstance(rlinf_out, dict) else "unknown"
+        )
+        rlinf_status = (
+            rlinf_out.get("status", "unknown") if isinstance(rlinf_out, dict) else "unknown"
+        )
+        print(
+            f"[RTI2][L] rl_backend={args.rl_backend!r} "
+            f"framework={rlinf_framework} "
+            f"status={rlinf_status} "
+            f"rss={rss_after_rlinf_mb:.1f}MB"
+        )
 
     outer = iterative_loop_phase(
         cfg, ckpt, device,

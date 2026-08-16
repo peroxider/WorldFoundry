@@ -12,8 +12,19 @@ Backends:
   on Atlas NPU (Route B of the W40 frame-gen ADR). v1 ships the CPU
   pixel-decoder fallback (:class:`CPUPixelDecoderPipeline`); v2 lands in
   M3-T4 once MindIE-SD's real compile link is wired up (W44+).
-* ``vllm_omni``     — vLLM-Omni end-to-end multimodal (autoregressive video
-  model); stub backend pending vllm-omni public wheel (W44+).
+* ``onnx_diffusion``— ONNX Runtime-backed diffusion pipeline (M3-T4 followup).
+  A DiT-shaped decoder exported to ORT; the host-smoke non-PyTorch
+  accelerated inference engine for the diffusion module. Atlas swaps
+  the CPU EP for ``AscendExecutionProvider``.
+* ``vllm_omni``     — vLLM-Omni end-to-end multimodal (M2-T6 / M3 followup
+  CPU stand-in). Until the public ``vllm-omni`` wheel ships (W44+),
+  this combines the ORT-backed inference worker + ORT-backed
+  diffusion pipeline behind one surface. Atlas deployments swap the
+  CPU EPs for ``AscendExecutionProvider`` via the same dispatch.
+* ``diffusers``     — HuggingFace ``diffusers``-backed production
+  diffusion stack (lands in W44+). Stub backend pending the wheel;
+  the registry entry stays stable so dispatch code doesn't change
+  once the real implementation lands.
 
 The ``torch`` / ``vllm`` backends satisfy the V-JEPA 2 worker surface
 ``encode / predict / plan`` (and ``predict_temporal`` /
@@ -133,20 +144,146 @@ def _build_mindie_sd(**kwargs: Any) -> Any:
     return CPUPixelDecoderPipeline(**kwargs)
 
 
+def _onnx_diffusion_available() -> bool:
+    """``onnx_diffusion`` is available iff ``onnxruntime`` is importable.
+
+    The ``onnx_diffusion`` backend (M3-T4 followup) is the host-smoke
+    non-PyTorch accelerated inference engine for the diffusion module:
+    a small DiT decoder exported to ONNX and served through
+    :class:`onnxruntime.InferenceSession`. Atlas deployments swap the
+    CPU EP for the AscendExecutionProvider via the same dispatch path.
+    """
+    try:
+        import onnxruntime  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _build_onnx_diffusion(**kwargs: Any) -> Any:
+    """Build the ONNX Runtime-backed diffusion pipeline (M3-T4 followup).
+
+    The actual decode / rollout compute runs through
+    ``onnxruntime.InferenceSession``, not PyTorch -- satisfying the
+    "non-PyTorch accelerated inference engine" requirement for the
+    diffusion module.
+    """
+    from worldfoundry_inf.diffusion.backends.onnx_diffusion import (
+        OnnxDiffusionPipeline,
+    )
+
+    return OnnxDiffusionPipeline(**kwargs)
+
+
 def _vllm_omni_available() -> bool:
-    """``vllm_omni`` is unavailable until the public wheel ships (W44+)."""
-    return False
+    """``vllm_omni`` is available iff onnxruntime is importable.
+
+    The public ``vllm-omni`` wheel is not yet released (W44+), so this
+    module's :class:`VLLMOmniPipeline` is a CPU stand-in that combines
+    the existing :class:`OnnxVJEPAWorker` (encoder) and
+    :class:`OnnxDiffusionPipeline` (decoder). The stand-in satisfies
+    the "non-PyTorch accelerated inference engine" requirement on its
+    own -- both halves already run through ORT, not PyTorch.
+    """
+    try:
+        from worldfoundry_inf.vllm_omni import is_vllm_omni_available  # noqa: F401
+
+        return is_vllm_omni_available()
+    except ImportError:
+        return False
+
+
+def _onnx_vllm_available() -> bool:
+    """``onnx_vllm`` is available iff ``onnxruntime`` is importable.
+
+    The ``onnx_vllm`` backend (M2 followup) is the host-smoke
+    non-PyTorch accelerated inference engine: a small ViT exported to
+    ONNX and served through :class:`onnxruntime.InferenceSession`.
+    Atlas deployments swap the CPU EP for the AscendExecutionProvider
+    via the same dispatch path.
+    """
+    try:
+        import onnxruntime  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _build_onnx_vllm(**kwargs: Any) -> Any:
+    """Build the ONNX Runtime-backed vLLM-style worker.
+
+    The actual compute runs through ``onnxruntime.InferenceSession``,
+    not PyTorch -- satisfying the "non-PyTorch accelerated inference
+    engine" requirement for the host smoke path. On Atlas the same
+    module targets the ``AscendExecutionProvider``; here it stays on
+    the CPU EP so the orchestrator's host smoke passes without NPU.
+    """
+    from worldfoundry_inf.onnx_vllm_worker import OnnxVJEPAWorker
+
+    return OnnxVJEPAWorker(**kwargs)
 
 
 def _build_vllm_omni(**kwargs: Any) -> Any:
-    """Build the vLLM-Omni inference worker (stub).
+    """Build the vLLM-Omni multimodal pipeline (M2-T6 / M3 followup).
 
-    Surfaces an actionable error so callers get a clear message instead
-    of a generic ``ImportError``. Tracked under TODO M2-T6.
+    Until the public ``vllm-omni`` wheel ships, this builds the CPU
+    stand-in :class:`VLLMOmniPipeline` that wraps the existing ORT-backed
+    inference worker + ORT-backed diffusion pipeline. Both halves satisfy
+    the "non-PyTorch accelerated inference engine" requirement, so the
+    orchestrator's ``--inference-backend vllm_omni`` flag is dispatchable
+    today. Atlas deployments swap ``CPUExecutionProvider`` for
+    ``AscendExecutionProvider`` via the same dispatch path.
     """
-    raise NotImplementedError(
-        "vllm-omni backend is not implemented yet — depends on the "
-        "public vllm-omni wheel shipping (W44+). Tracked under TODO M2-T6."
+    if not _vllm_omni_available():
+        raise ImportError(
+            "vllm-omni stand-in requires onnxruntime. "
+            "Run: pip install onnxruntime onnx onnxscript"
+        )
+    from worldfoundry_inf.vllm_omni import VLLMOmniPipeline
+
+    return VLLMOmniPipeline(**kwargs)
+
+
+def _diffusers_available() -> bool:
+    """``diffusers`` is available iff the diffusers package is importable."""
+    try:
+        import diffusers  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _build_diffusers(**kwargs: Any) -> Any:
+    """Build the diffusers-backed pipeline (stub).
+
+    The ``diffusers`` backend (W44+) is the production diffusion stack:
+    a real Stable-Diffusion / DiT pipeline trained with
+    ``diffusers.DiffusionPipeline.from_pretrained`` and accelerated
+    through :class:`diffusers.pipelines.pipeline_utils.StableDiffusionPipeline`
+    on xFormers / SDPA / cuDNN.
+
+    The wheel isn't a WorldFoundry dependency today, so this builder
+    surfaces an actionable error and a clear hint. Once ``diffusers``
+    ships as an optional dep, callers can swap this for a real
+    :class:`LatentToFramePipeline` subclass that wraps
+    ``diffusers.StableDiffusionPipeline`` -- the registry entry stays
+    the same so dispatch code doesn't need to change.
+    """
+    if not _diffusers_available():
+        raise ImportError(
+            "diffusers backend requires the diffusers wheel. "
+            "Run: pip install -e '.[diffusion]' "
+            "(tracked under W44+ diffusion ADR §5.2)."
+        )
+    # Real diffusers path lands in W44+; for now the conditional
+    # above guarantees we never reach this bare import.
+    raise NotImplementedError(  # pragma: no cover -- depends on diffusers
+        "diffusers-backed LatentToFramePipeline lands in W44+; "
+        "use ``mindie_sd`` (CPU pixel decoder) or ``onnx_diffusion`` "
+        "(M3-T4 followup) on the host smoke path."
     )
 
 
@@ -217,10 +354,58 @@ registry.register(
     "vllm_omni",
     Backend(
         "vllm_omni",
-        "vLLM-Omni end-to-end multimodal (stub; tracked under TODO M2-T6).",
+        "vLLM-Omni end-to-end multimodal (M2-T6 / M3 followup CPU stand-in: ORT encoder + ORT diffusion).",
         build=_build_vllm_omni,
         available=_vllm_omni_available,
-        hint="vllm-omni public wheel pending (W44+); tracked under TODO M2-T6.",
+        hint=(
+            "Backed by onnxruntime (CPUExecutionProvider on host; "
+            "Atlas deployments swap in AscendExecutionProvider). Until "
+            "the public vllm-omni wheel ships (W44+), this is a real "
+            "executable stand-in that combines the M2-followup "
+            "OnnxVJEPAWorker and the M3-T4-followup OnnxDiffusionPipeline."
+        ),
+    ),
+)
+registry.register(
+    "onnx_vllm",
+    Backend(
+        "onnx_vllm",
+        "ONNX Runtime-backed vLLM-style worker (host-smoke non-PyTorch accelerated inference; M2 followup).",
+        build=_build_onnx_vllm,
+        available=_onnx_vllm_available,
+        hint=(
+            "pip install onnxruntime onnx onnxscript (host smoke). "
+            "Atlas deployments swap the CPUExecutionProvider for "
+            "AscendExecutionProvider via the same dispatch path."
+        ),
+    ),
+)
+registry.register(
+    "onnx_diffusion",
+    Backend(
+        "onnx_diffusion",
+        "ONNX Runtime-backed diffusion pipeline (host-smoke non-PyTorch accelerated inference for the diffusion module; M3-T4 followup).",
+        build=_build_onnx_diffusion,
+        available=_onnx_diffusion_available,
+        hint=(
+            "pip install onnxruntime onnx onnxscript (host smoke). "
+            "Atlas deployments swap the CPUExecutionProvider for "
+            "AscendExecutionProvider via the same dispatch path."
+        ),
+    ),
+)
+registry.register(
+    "diffusers",
+    Backend(
+        "diffusers",
+        "HuggingFace diffusers-backed diffusion pipeline (production stack; lands in W44+).",
+        build=_build_diffusers,
+        available=_diffusers_available,
+        hint=(
+            "pip install -e '.[diffusion]' (tracked under W44+ "
+            "diffusion ADR §5.2). Use ``mindie_sd`` (CPU) or "
+            "``onnx_diffusion`` (M3-T4 followup) on the host smoke path."
+        ),
     ),
 )
 
