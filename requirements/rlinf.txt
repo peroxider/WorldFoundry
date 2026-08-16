@@ -1,0 +1,15 @@
+# C-T4: RLinf (deferred per W35.2 §5.2 due to torch 2.10 vs torch_npu 2.9 minor conflict).
+#
+# This split is a placeholder pin; the actual rlinf==X.Y.Z needs runtime
+# validation against the locked torch 2.9.0 stack. W35.2 flagged the
+# minor-version conflict as a known risk; M1-T4 P2 Atlas e2e is the
+# validator. ``ray`` is shared with verl (C-T1) so no version bump here.
+#
+# ``-r base.txt`` is chained so this file installs cleanly on a bare
+# Python; pip skips re-installs of already-satisfied constraints inside
+# the worldfoundry-npu-vllm:phase1 parent image.
+
+-r base.txt
+
+ray==2.56.1
+rlinf==0.3.0

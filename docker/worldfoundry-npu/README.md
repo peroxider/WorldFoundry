@@ -8,17 +8,18 @@ between them is exact.
 
 | Tag | Built from | Adds | Purpose |
 |---|---|---|---|
-| `worldfoundry-npu:phase1` | `docker/worldfoundry-npu/Dockerfile` (FROM `ascend-pytorch:2.9.0-cann8.5.1-ubuntu22.04`) | locked matrix (`requirements/npu.txt` chains `base.txt`): torch 2.9.0, torch_npu 2.9.0, transformers 4.55.0, peft 0.18.0, accelerate 1.14.0, triton 3.7.1, datasets 3.6.0, fastapi/uvicorn/pydantic/opentelemetry | Canonical C-T3 base; the FROM for the two child tags. |
+| `worldfoundry-npu:phase1` | `docker/worldfoundry-npu/Dockerfile` (FROM `ascend-pytorch:2.9.0-cann8.5.1-ubuntu22.04`) | locked matrix (`requirements/npu.txt` chains `base.txt`): torch 2.9.0, torch_npu 2.9.0, transformers 4.55.0, peft 0.18.0, accelerate 1.14.0, triton 3.7.1, datasets 3.6.0, fastapi/uvicorn/pydantic/opentelemetry | Canonical C-T3 base; the FROM for the three child tags. |
 | `worldfoundry-npu-vllm:phase1` | `docker/worldfoundry-npu-vllm/Dockerfile` (FROM `worldfoundry-npu:phase1`) | `vllm==0.18.0` + `vllm-ascend==0.18.0` from `requirements/inf.txt` | M2 mainline — V-JEPA2 worker + Atlas serving path. |
 | `worldfoundry-npu-diffusion:phase1` | `docker/worldfoundry-npu-diffusion/Dockerfile` (FROM `worldfoundry-npu:phase1`) | `diffusers>=0.30` + `transformers[sentencepiece]>=4.55` from `requirements/diffusion.txt` | M3 mainline scaffold (v1 CPU pixel-decoder today; M3-T4 swaps in real MindIE-SD). |
+| `worldfoundry-npu-rlinf:phase1` | `docker/worldfoundry-npu-rlinf/Dockerfile` (FROM `worldfoundry-npu-vllm:phase1`) | `rlinf==0.3.0` + `ray==2.56.1` from `requirements/rlinf.txt` (C-T4) | M1-T4 P2 path — RLinf + Ray cluster e2e on Atlas card 7. Known torch 2.10 vs 2.9 minor conflict (W35.2 §5.2); host smoke uses mock factory, no image needed. |
 
 ## Build
 
-All three images are built from the repo root so the `COPY
+All four images are built from the repo root so the `COPY
 requirements/...` paths resolve. On Atlas:
 
 ```bash
-# 1. Base first (the two children need it).
+# 1. Base first (the three children need it).
 docker build -t worldfoundry-npu:phase1 \
     -f docker/worldfoundry-npu/Dockerfile .
 
@@ -28,6 +29,12 @@ docker build -t worldfoundry-npu-vllm:phase1 \
 
 docker build -t worldfoundry-npu-diffusion:phase1 \
     -f docker/worldfoundry-npu-diffusion/Dockerfile .
+
+# 3. rlinf layer (C-T4) sits on top of the vllm image; build only when
+#    M1-T4 P2 (RLinf + Ray cluster e2e on Atlas) is in scope. Host smoke
+#    does NOT need this image.
+docker build -t worldfoundry-npu-rlinf:phase1 \
+    -f docker/worldfoundry-npu-rlinf/Dockerfile .
 ```
 
 `docker buildx build` with a registry cache is recommended for CI; the
@@ -53,6 +60,14 @@ docker run --rm worldfoundry-npu:phase1 \
 docker run --rm worldfoundry-npu-diffusion:phase1 \
     python -c "import diffusers; print(diffusers.__version__)"
 # expect: >=0.30
+```
+
+C-T4 acceptance (only on Atlas; build worldfoundry-npu-rlinf:phase1 first):
+
+```bash
+docker run --rm worldfoundry-npu-rlinf:phase1 \
+    python -c "import ray, rlinf; print(ray.__version__, rlinf.__version__)"
+# expect: 2.56.1 0.3.0
 ```
 
 ## Run
