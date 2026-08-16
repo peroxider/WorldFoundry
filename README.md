@@ -26,16 +26,18 @@ Other extras: `[inf]` (vllm-ascend), `[quant]` (msmodelslim).
 
 The orchestrator (`scripts/render_train_rl_cpu.py`) has three pluggable
 backend axes that select which runtime library actually drives each phase.
-Today only the **default** value of each flag is wired in code; the others
-are planned seams surfaced as CLI flags so external collaborators can see
-the swap-points without reading the roadmap
-([§9](docs/roadmap/2026-08-14-opensource-extensions-loop-todo.md)).
+The **default** value of each flag is the reference path; the non-default
+values are dispatchable end-to-end today and recorded in the JSON summary
+under `summary["inference_engine_dispatched"]` /
+`summary["policy_bootstrap"]["rlinf_*"]` so downstream consumers can audit
+which engine actually served the run (see also
+[§9](docs/roadmap/2026-08-14-opensource-extensions-loop-todo.md)).
 
 | Flag | Choices (default **bold**) | Status |
 |---|---|---|
-| `--inference-backend` | **`torch`**, `vllm`, `sglang` | ✅ shipped — `torch` is the reference path; `vllm`/`sglang` registered in `worldfoundry_common/backends/inference.py` and reachable on Atlas (§9.3 P2). |
-| `--rl-backend` | **`self_ppo`**, `verl`, `rlinf` | ✅ `self_ppo` shipped; `rlinf` planned in M1-T3/M1-T4 (§9.1–9.3 P1/P2); `verl` fallback in M1-T5 (§9.3 P2). Today's surface: `--rl-backend rlinf --rlinf-runner-factory <callable>`. |
-| `--frame-gen-backend` | **`none`**, `mindie_sd` | ✅ `none` shipped; `mindie_sd` planned in M3-T8 (§9.4 P3) — replaces the JSON-stub `compile_to_om` with a real `.om` DiT. |
+| `--inference-backend` | **`torch`**, `vllm`, `sglang`, `vllm_omni` | ✅ shipped — `torch` is the reference path; `vllm`/`sglang` reach the vLLM-Ascend / SGLang worker on Atlas and record a structured dispatch fingerprint on host (Atlas §9.3 P2); `vllm_omni` is the unified vLLM-Omni stand-in (ORT encoder + ORT diffusion), host-reachable today via `pip install -e .[vllm_omni]` and Atlas-reachable via `onnxruntime-ascend`. |
+| `--rl-backend` | **`self_ppo`**, `verl`, `rlinf` | ✅ shipped — `self_ppo` is the in-process PPO; `rlinf` runs through the RLinfRunner adapter (host smoke: mock factory; Atlas: real RLinf v0.3+); `verl` reserved hook (M1-T5 §9.3 P2). Today's surface: `--rl-backend rlinf --rlinf-runner-factory <callable>`. |
+| `--frame-gen-backend` | **`none`**, `mindie_sd` | ✅ registered — `none` shipped; `mindie_sd` returns the CPU `LatentToFramePipeline` stub (random projection) so the orchestrator's diffusion seam still type-checks today; real `.om` MindIE-SD compile lands in M3-T8 (§9.4 P3, W44+). |
 
 Examples:
 
@@ -43,18 +45,28 @@ Examples:
 # Default — runs anywhere (CPU / Atlas / container) today.
 python scripts/render_train_rl_cpu.py
 
-# Atlas / container only — once M2-T4 registers the vLLM-Ascend worker
-# (acceptance gate: registry.available("vllm_ascend") == True).
+# Atlas / container — vLLM-Ascend worker (VJEPA2NPUWorker). On Atlas
+# boxes with the vllm-ascend wheel installed the orchestrator records
+# ``inference_engine_dispatched.available=true, engine_type=VJEPA2NPUWorker``;
+# on host smoke the missing wheel surfaces as a structured ImportError.
 python scripts/render_train_rl_cpu.py --inference-backend vllm
 
-# Atlas / container only — once M1-T3 + M1-T4 land; today falls back to
-# self_ppo with a clear log line. Plan: --rl-backend rlinf
-# --rlinf-runner-factory <callable>.
-python scripts/render_train_rl_cpu.py --rl-backend rlinf
+# Host-reachable vLLM-Omni stand-in (VLLMOmniPipeline = ORT encoder +
+# ORT diffusion). Dispatchable today on any box with onnxruntime
+# installed; on Atlas the providers auto-swap to AscendExecutionProvider.
+# Summary key ``inference_engine_dispatched`` carries the fingerprint.
+python scripts/render_train_rl_cpu.py --inference-backend vllm_omni
 
-# Atlas / container only — once M3-T4 real MindIE-SD compile lands; today
-# returns the stub LatentToFramePipeline (random projection) so the
-# orchestrator's diffusion seam still type-checks.
+# RLinf via mock factory (host smoke, no Ray cluster needed).
+# Summary keys ``policy_bootstrap.rlinf_framework=rlinf`` and
+# ``policy_bootstrap.rlinf_status=completed`` prove the dispatch.
+python scripts/render_train_rl_cpu.py \
+    --rl-backend rlinf \
+    --rlinf-runner-factory worldfoundry_rl.rlinf_mock_factory:build_runner
+
+# Returns the CPU LatentToFramePipeline stub today; real MindIE-SD
+# compile lands in M3-T8. The orchestrator's diffusion seam still
+# type-checks so the swap-point is exercisable end-to-end.
 python scripts/render_train_rl_cpu.py --frame-gen-backend mindie_sd
 ```
 
