@@ -31,12 +31,17 @@ mask/CLI).
 
 ## What was NOT delivered (P3 / roadmap §9.4)
 
-- **M3-T4** real MindIE-SD compile (`MindsdOmBackend.compile(...)` →
-  `.om` file with shape parity to the stub): depends on Atlas-side W44+
-  MindIE-SD real-chain link landing. Currently a JSON-placeholder; no
-  `compile_to_om` exists yet.
+- **M3-T4** real MindIE-SD compile — host-side code lands 2026-08-17 (this
+  commit): `worldfoundry_inf/compile/mindie_sd.py` now dispatches
+  `compile_to_om` to `mindie.sd.tools.compile(...)` (preferred) or `atc`
+  CLI subprocess (fallback) or JSON stub (backward compat). 19 unit
+  tests green. Atlas-side run blocked on the air-gap (no `mindie-sd`
+  wheel in uv cache + no outbound DNS); runbook at
+  `docs/dev/atlas-m3-t4-runbook.md` covers sideload path. **M3-T4
+  partial closure status:** code ✅ + tests ✅ + registry probe ✅ +
+  Atlas runbook ✅; Atlas end-to-end ⏸ blocked on wheel sideload.
 - **M3-T1 subdirs** `worldfoundry_inf/diffusion/{vae,transformer,scheduler}`
-  real implementations: blocked on M3-T4.
+  real implementations: blocked on M3-T4 Atlas run.
 - **M3-T5** W8A8 quant + accuracy regression: blocked on M3-T4.
 - **M3-T6** temporal rollout eval (CLIP / SSIM / PSNR): blocked on
   M3-T4.
@@ -45,6 +50,55 @@ mask/CLI).
 - **Atlas e2e**: blocked on M3-T4 (and on the same Atlas air-gap that
   blocks M2-T5 / M1-T4 / M1-T5 if compile requires external toolchain
   wheels).
+
+## M3-T4 partial closure — host-side code lands (2026-08-17)
+
+Commit `pending` lands the real `compile_to_om` implementation:
+
+### What changed
+
+- `worldfoundry_inf/compile/mindie_sd.py` (rewrite, ~250 LOC) —
+  three-way dispatch in priority order: `mindie.sd.tools.compile` →
+  `atc` CLI subprocess → JSON stub. New `prefer` arg pins the path.
+- `worldfoundry_common/backends/inference.py` — adds
+  `_mindie_sd_v2_available()` probe (returns True iff either
+  `mindie_sd` wheel importable OR `atc` CLI on PATH); updates
+  `mindie_sd` registry hint to reference `compile_to_om` real path.
+- `worldfoundry_inf/tests/test_mindie_sd.py` — extended from 2 to 19
+  tests: probe + dispatch + stub-payload schema + ATC subprocess
+  (with mocked `shutil.which` + `subprocess.run`) + mindie_sd path +
+  unsupported-hardware + provider_summary diagnostic.
+
+### Acceptance gates
+
+| Gate | Criterion | Result |
+|---|---|---|
+| Dual-track dispatch | `compile_path()` returns `mindie_sd` / `atc` / `stub` based on env | ✅ 3 probe tests + 3 explicit-prefer tests |
+| ATC subprocess call | `atc --model ... --framework 5 --output ... --soc-version Ascend910B4` | ✅ subprocess test asserts full cmd shape |
+| ATC failure surfaces | `OMCompileError` with stderr excerpt on non-zero rc | ✅ stderr-tail test |
+| ATC timeout | `OMCompileError` on `subprocess.TimeoutExpired` | ✅ timeout test |
+| mindie.sd.tools.compile path | Called with right kwargs + writes returned artifact | ✅ mocked-module test |
+| mindie_sd internal failure | `OMCompileError` with exception repr | ✅ failure test |
+| 910B vs 910C soc-version | `Ascend910B4` vs `Ascend910C` flag mapping | ✅ per-hardware test |
+| Stub backward compat | `phase == "phase1-stub"` key preserved | ✅ schema-preserved test |
+| Stub additive fields | New `compile_path` + `stub_reason` keys added | ✅ schema test |
+| Stub checksum determinism | Same source content → same sha256 | ✅ determinism test |
+| Provider diagnostic | `provider_summary()` returns shape-stable dict | ✅ diagnostic test |
+| Registry wiring | `_mindie_sd_v2_available` exposed + hint updated | ✅ smoke-tested |
+| **Atlas end-to-end** | Real `.om` artifact on Atlas card 7 | ⏸ blocked on Atlas air-gap + wheel sideload (runbook covers path) |
+
+### What is intentionally NOT in this commit
+
+- **NPU pipeline runtime** — `worldfoundry_inf/diffusion/backends/npu.py`
+  still raises `PipelineNotAvailableError`. The next session replaces
+  this with a real `acl.runtime` / `mslite` loader once an Atlas run
+  produces a working `.om`.
+- **W8A8 quant (M3-T5)** — requires `worldfoundry_inf/quantize_backends`
+  W8A8 quantizer to land (separate work).
+- **CLIP / SSIM / PSNR eval (M3-T6)** — requires a real decoder
+  producing pixel frames on Atlas.
+- **5-stage orchestrator integration (M3-T8)** — `--frame-gen-backend
+  mindie_sd` wiring into `scripts/render_train_rl_cpu.py`.
 
 ## What the orchestrator currently does
 
