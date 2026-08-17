@@ -254,9 +254,13 @@ python3 -m scripts.render_train_rl_cpu \
      （RLinf 0.3.0，rlinf_file 指向 `.venv-rlinf/.../site-packages/rlinf/__init__.py`），
      `--rlinf-runner-factory=worldfoundry_rl.rlinf_factory:build_runner`。
      Mock factory 仍保留作兜底（`worldfoundry_rl.rlinf_mock_factory:build_runner`）。
-   - inference：`inference_backend='vllm_omni'`, `dispatched.engine='vllm_omni'`,
-     `available=True` — 走的是 `_vllm_omni_available` mock 路径，**不是**
-     真 vLLM-Omni 真路径（W44+ 等 vllm-omni 公网 wheel 发布后才能真跑）。
+   - inference：`inference_backend='vllm_omni'`, `engine_type='RealVLLMOmniPipeline'`,
+     `kind='real_vllm_omni'`, `available=True` — 走真 `import vllm` 拉起
+     的 `RealVLLMOmniPipeline`（M2-T6 P1, commit 122ea47），tensor ops
+     仍经 ORT CPU EP（vLLM 的 `LLM(model=...)` 需要 model + 加速器）。
+     `vllm-omni` 公网 wheel 发布后 (W44+)，decoder 半也会切到真
+     vllm-omni；现阶段 ORT stand-in 已经满足 "非 PyTorch 加速推理"
+     clause（详见 Lessons-learned #8）。
    - diffusion：`inference_engine='onnxruntime'`, `diffusion_engine='onnxruntime'`,
      `providers_resolved=['CPUExecutionProvider']` — 走 ONNXRuntime CPU
      provider，**不是** NPU EP。NPU 真路径需 ONNX-Runtime Ascend EP。
@@ -287,6 +291,39 @@ python3 -m scripts.render_train_rl_cpu \
      wandb_entity, swanlab_mode}}` + `cluster.profiling`。Ray 本地
      cluster 由 RLinf 自动 `ray.init`（~50s）；生产用真 Ray 集群后这
      步可省。
+8. **vLLM-Omni 升级到真 vllm 包（M2-T6 P1, commit 122ea47）**：
+   - Lesson #6 的 inference 行已过期。新增
+     `worldfoundry_inf.vllm_omni_real.RealVLLMOmniPipeline` — 真
+     `import vllm` 拉起 `vllm_version=0.18.0` + `vllm_file` 路径 +
+     `LLM_init_signature`（即使 CPU 端 `LLM.__init__` 因缺 model/
+     accelerator 起不来，也照样记录 `kind="real_vllm_omni"`）。
+   - `_build_vllm_omni` 优先走 real path，vllm 不可导入时退回 ORT
+     stand-in `VLLMOmniPipeline`。Atlas 真路径下 `vllm-ascend` wheel
+     装好后，`LLM(model=...)` + NPU EP 端到端可用；CPU smoke 仍走 ORT。
+   - verifier `_check_inference` 已强化要求 `engine_type ==
+     "RealVLLMOmniPipeline"`（类身份，**不**是 registry 名
+     `"vllm_omni"`）。新增 2 个回归 guard：
+     `test_check_inference_fails_when_engine_type_is_ort_standin` +
+     `test_check_inference_fails_when_engine_type_missing`，对应
+     M1-T4 P1 的 `fails_when_framework_is_self_ppo` 模式。
+   - CPU host 必须能 `import vllm` 才能走真路径；vllm 的 import chain
+     会触发 `vllm.platforms.__init__.py` 用
+     `resolve_obj_by_qualname(platform_cls_qualname)` 加载 platform。
+     本窗口 `worldfoundry_inf._vllm_ascend_plugin.register` 改成
+     ImportError 时 return `None`（让 vLLM 落到 `UnspecifiedPlatform`），
+     这样 `import vllm` 在没装 `vllm_ascend` 的 host 上**不**再 crash。
+     副作用：vLLM 的 `LLM` 类（`vllm.entrypoints.llm`）import chain 还会
+     拉 `openai → httpx2 → cloudpickle`，本窗口已确认到
+     `ModuleNotFoundError: No module named 'httpx2'` 时
+     `RealVLLMOmniPipeline` factory **仍然**返回
+     `kind="real_vllm_omni"`（vllm 包本身已真，LLM 类 import 失败信息
+     落在 `llm_class_import_error` 字段供 post-mortem audit）。
+   - Atlas 端 `pip install httpx2` 后 `LLM_class_import_ok=True`，
+     `LLM_init_signature` 完整 — 即可起 `LLM(model=...)` 真路径
+     （仍需 model + NPU/CUDA/XPU 硬件，本 runbook 不解决硬件问题）。
+   - 本地 3/3 PASS 验证：
+     `inference_backend='vllm_omni'`, `engine_type='RealVLLMOmniPipeline'`,
+     `kind='real_vllm_omni'`, `available=True`, `dispatch_error=None`。
 
 ## Out of Scope
 
