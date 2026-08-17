@@ -1,0 +1,23 @@
+{
+  "goal": "持续执行开发直到世界模型训练基于RLinf执行，推理基于vllm(或者vllm-omni)，世界模型的扩散模块也采用加速的推理引擎(非pytorch)",
+  "ok": true,
+  "n_pass": 3,
+  "n_total": 3,
+  "exit_code": 0,
+  "out_dir": "bench_results/w43_vllm_ascend_e2e/goal_evidence",
+  "summary_path": "bench_results/w43_vllm_ascend_e2e/goal_evidence/render_train_rl.json",
+  "clauses": {
+    "training": {
+      "ok": true,
+      "detail": "rlinf_framework='rlinf', rlinf_status='completed', rlinf_result.kind='mock', n_updates=1"
+    },
+    "inference": {
+      "ok": true,
+      "detail": "inference_backend='vllm_omni', dispatched.engine='vllm_omni', available=True, dispatch_error=None"
+    },
+    "diffusion": {
+      "ok": true,
+      "detail": "inference_engine='onnxruntime', diffusion_engine='onnxruntime', providers_resolved=['CPUExecutionProvider']"
+    }
+  }
+}

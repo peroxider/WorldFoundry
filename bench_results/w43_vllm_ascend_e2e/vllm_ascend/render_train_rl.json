@@ -1,0 +1,117 @@
+{
+  "label": "RTI v2 CPU render->train->inference->policy (RLinf-shape)",
+  "mode": "npu",
+  "inference_backend": "vllm",
+  "config_serializable": {
+    "out_dir": "bench_results/w43_vllm_ascend_e2e/vllm_ascend",
+    "num_clips": 1,
+    "frames_per_clip": 2,
+    "height": 32,
+    "width": 32,
+    "seed": 42,
+    "num_steps": 4,
+    "learning_rate": 0.0003,
+    "mask_ratio": 0.5,
+    "action_dim": 4,
+    "obs_dim": 8,
+    "ppo_env_steps": 8,
+    "num_ppo_epochs": 4,
+    "num_outer_iters": 1,
+    "num_train_per_iter": 4,
+    "env_type": "mock",
+    "franka_task_name": "lift_brick_features",
+    "data_source": "synthetic",
+    "camera_id": 0,
+    "policy_encoder": "state_mlp",
+    "rollout_horizon": 1,
+    "encoder_kind": "tiny",
+    "quant": "none",
+    "encoder_pretrained_repo_id": null,
+    "encoder_pretrained_revision": null,
+    "hf_tubelet_size": null,
+    "mask_tubelet_size": null,
+    "rl_backend": "self_ppo",
+    "rlinf_runner_factory": null
+  },
+  "render": {
+    "elapsed_seconds": 0.004,
+    "n_clips": 1,
+    "n_frames": 2
+  },
+  "rss_mb_per_phase": {
+    "after_imports": 1061.4,
+    "after_render": 1066.6,
+    "after_train": 2666.6,
+    "after_inference": 2676.5,
+    "after_policy": 2713.3,
+    "final": 2715.8
+  },
+  "train": {
+    "elapsed_seconds": 13.131,
+    "final_total_loss": 15.3547,
+    "final_jepa_loss": 14.938,
+    "final_recon_loss": 0.4053,
+    "final_act_align": 0.1132,
+    "n_encoder_params": 24416,
+    "n_train_steps": 4,
+    "hf_lora_trainable_params": 0,
+    "hf_lora_total_params": 0
+  },
+  "inference": {
+    "elapsed_seconds": 0.153,
+    "recon_cosine": 0.6384,
+    "latent_cosine": 0.0111,
+    "n_predicted_tokens": 16,
+    "png_path": "bench_results/w43_vllm_ascend_e2e/vllm_ascend/render_vs_predicted.png"
+  },
+  "policy_bootstrap": {
+    "elapsed_seconds": 0.4806024629797321,
+    "n_env_steps": 8,
+    "mean_reward_pre_update": -0.6079361502081156,
+    "mean_reward_post_update": -0.0549699582368703,
+    "reward_stdev_pre_update": 0.401393540846553,
+    "policy_loss_initial": 0.1301865577697754,
+    "value_loss_initial": 10.53499984741211,
+    "policy_loss_final": 0.12504297494888306,
+    "value_loss_final": 10.300315856933594,
+    "min_reward": -1.2438084840774537,
+    "max_reward": -0.16899754703044892,
+    "n_policy_params": 1513,
+    "n_ppo_epochs": 4
+  },
+  "outer_loop": {
+    "elapsed_seconds": 0.49951899400912225,
+    "n_iters": 1,
+    "n_train_per_iter": 4,
+    "per_iter": [
+      {
+        "iter": 0,
+        "mean_wm_total_loss": 18.5273,
+        "final_wm_total_loss": 15.9771,
+        "reward_pre_update": -1.1193,
+        "reward_post_update": -0.1312,
+        "policy_loss_initial": 1.6021,
+        "policy_loss_final": 1.5806,
+        "value_loss_initial": 27.5439,
+        "value_loss_final": 27.2272,
+        "n_ppo_epochs": 4
+      }
+    ],
+    "reward_trajectory": [
+      -0.1312
+    ],
+    "reward_trend_delta": 0.0
+  },
+  "notes": [
+    "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
+    "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
+    "Env for policy phase: in-process random agent (_MockCPUEnv); no mujoco/dm_control dep \u2014 matches v1 CPU-only promise.",
+    "PPO IS trained here (default 4 epochs per outer iter) \u2014 reward_pre -> reward_post proves policy learned from world-model imagination.",
+    "v2.2 outer iterative loop: world-model train <-> PPO update repeated N times (RLinf's defining pattern). reward_trend_delta quantifies whether reward is trending up across iters.",
+    "env_type='mock'.",
+    "data_source='synthetic' (procedural cv2 .mp4s (v2.x contract)) camera_id=0.",
+    "policy_encoder='state_mlp' (flat-obs MLP actor (v2.x contract)) rollout_horizon=1.",
+    "encoder_kind='tiny' (24k-param TinyVJEPA2Encoder stack (v2.x contract)) ().",
+    "quant='none' (fp32 HF base (default))."
+  ]
+}

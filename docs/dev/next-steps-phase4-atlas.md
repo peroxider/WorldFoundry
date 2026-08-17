@@ -548,7 +548,7 @@ decoder / 换模型线）的 ADR 选型 + 数据算力预算。
 | 1 | W20 `.to("npu")` + Atlas 单卡 LoRA smoke | `6f34894` (CPU prep), `288ca14` (smoke script + runbook) | **CPU prep done; Atlas 上机待硬件** | Atlas single-card |
 | 2 | W26 W8A8 量化加载器 | `0f6c305` | **CPU prep done; Atlas 上机待硬件** | Atlas single-card |
 | 3 | W21 8 卡 FSDP 上机 | not yet | **proposed** | W20 |
-| 4 | W27 vLLM-Ascend worker e2e | `0b7f82a` | **CPU prep done; Atlas e2e 待硬件** | W20 + W26 |
+| 4 | W27 vLLM-Ascend worker e2e | `0b7f82a` | **Atlas 上机 ✅; torch=vllm cosine drift=0.0; summary.mode=npu (M2-T5 P2)** | W20 + W26 |
 | 5 | W29 Phase-3 集成回归 | not yet | **proposed** | W20 + W21 + W26 + W27 |
 | 6 | W30 仿真环境选型 ADR | `1e3db44` | **done** | none |
 | 7 | W35 RL 框架 ADR 验证门 | `024be09` | **W35.2 CPU ✅ / W35.1 待 Atlas** | W30 + Atlas (W35.1) |
