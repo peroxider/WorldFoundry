@@ -1562,20 +1562,22 @@ def parse_args(argv=None) -> argparse.Namespace:
                         "Must divide --encoder-hidden-size. Default 2. "
                         "16 = V-JEPA 2 small.")
     p.add_argument("--inference-backend",
-                   choices=("torch", "vllm", "sglang", "vllm_omni"),
+                   choices=("torch", "vllm", "sglang", "vllm_omni", "vllm_ascend"),
                    default="torch",
                    help="Inference-engine backend to resolve via the pluggable "
                         "registry (worldfoundry_common.backends.inference). "
                         "`torch` (default) runs the in-process eager path over "
                         "the locally-trained world-model stack — the correct "
-                        "v1 compute for this orchestrator. `vllm`/`sglang` "
-                        "resolve to engine-served VJEPA2Model surfaces "
-                        "(VJEPA2NPUWorker / SGLangWorker) which do NOT serve "
-                        "the tiny/HF stack yet; selecting them logs an explicit "
-                        "deferral (engine-served world-model inference is an "
-                        "Atlas item) and the orchestrator still uses the "
-                        "in-process path so a real run never silently swaps "
-                        "compute. `vllm_omni` resolves to the unified vLLM-Omni "
+                        "v1 compute for this orchestrator. `vllm` is the "
+                        "back-compat alias of `vllm_ascend` (canonical); both "
+                        "resolve to the vLLM-Ascend worker on Atlas. "
+                        "`sglang` resolves to SGLangWorker. Neither "
+                        "`vllm*`/`sglang` serve the tiny/HF stack yet; "
+                        "selecting them logs an explicit deferral "
+                        "(engine-served world-model inference is an Atlas item) "
+                        "and the orchestrator still uses the in-process path so "
+                        "a real run never silently swaps compute. "
+                        "`vllm_omni` resolves to the unified vLLM-Omni "
                         "stand-in (VLLMOmniPipeline: ORT encoder + ORT "
                         "diffusion) — dispatchable on host smoke via the "
                         "onnxruntime wheel and on Atlas via the onnxruntime-"

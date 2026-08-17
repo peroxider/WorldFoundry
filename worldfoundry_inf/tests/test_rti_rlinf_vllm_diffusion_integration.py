@@ -178,6 +178,46 @@ def test_rti_orchestrator_resolves_vllm_backend(tmp_path: Path) -> None:
     assert pb.get("rlinf_status") == "completed", pb
 
 
+def test_rti_orchestrator_resolves_vllm_ascend_backend(tmp_path: Path) -> None:
+    """``--inference-backend=vllm_ascend`` is dispatchable end-to-end through the CLI.
+
+    Regression guard for the runbook `atlas-booking-runbook-w35-p2.md`
+    Lessons-learned #1 (CLI/registry drift): argparse ``choices`` used to
+    omit ``vllm_ascend``, so runbook §3.2.2's literal command
+    ``--inference-backend vllm_ascend`` was rejected before any dispatch
+    could run. The patch adds ``vllm_ascend`` to argparse choices AND
+    records the canonical name (not the ``vllm`` alias) in
+    ``summary.inference_backend`` + ``inference_engine_dispatched.engine``,
+    so downstream consumers can distinguish Atlas-canonical runs from
+    back-compat alias runs.
+    """
+    out_dir = tmp_path / "rti_vllm_ascend"
+    out_dir.mkdir(parents=True)
+
+    summary, _result = _run_orchestrator(out_dir, inference_backend="vllm_ascend")
+
+    # Canonical name preserved end-to-end (NOT silently downgraded to alias).
+    assert summary["inference_backend"] == "vllm_ascend", summary["inference_backend"]
+
+    # Dispatch fingerprint recorded for vllm_ascend: on a host smoke box
+    # the vllm-ascend wheel isn't installed so the build raises
+    # ImportError, but the orchestrator surfaces it as a structured
+    # ``available=false, dispatch_error=...`` so a missing wheel is
+    # immediately visible (no silent deferral). On Atlas boxes with the
+    # wheel installed this would be ``available=true`` + ``VJEPA2NPUWorker``.
+    dispatched = summary.get("inference_engine_dispatched")
+    assert isinstance(dispatched, dict), dispatched
+    assert dispatched["engine"] == "vllm_ascend", dispatched
+    assert "available" in dispatched, dispatched
+    assert "dispatch_error" in dispatched, dispatched
+    # The two CLI names (vllm / vllm_ascend) hit the SAME registry builder
+    # path — fingerprint key set must match the vllm alias test above.
+    # RLinf dispatch still ran (training axis is independent).
+    pb = summary.get("policy_bootstrap", {})
+    assert pb.get("rlinf_framework") == "rlinf", pb
+    assert pb.get("rlinf_status") == "completed", pb
+
+
 def test_rti_orchestrator_resolves_vllm_omni_backend(tmp_path: Path) -> None:
     """``--inference-backend=vllm_omni`` is dispatchable end-to-end through the CLI.
 

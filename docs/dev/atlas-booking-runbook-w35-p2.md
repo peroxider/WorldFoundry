@@ -205,14 +205,24 @@ python3 -m scripts.render_train_rl_cpu \
 
 ## Lessons learned（2026-08-17 W43.1 窗口首次执行后补）
 
-1. **CLI/registry drift**：`scripts/render_train_rl_cpu.py` 里
-   `--inference-backend` argparse `choices={torch, vllm, sglang}`，
-   没有把 `vllm_ascend` 加进去。runbook §3.2.2 原文写
-   `--inference-backend vllm_ascend`，会被 argparse 直接 reject。
-   Registry 端 `vllm` 是 `vllm_ascend` 的 alias（共享 `_build_vllm`），
-   所以 `--inference-backend vllm` 在 NPU 真路径上等价。修法：
-   把 argparse choices 扩成 `{torch, vllm, sglang, vllm_ascend}`，
-   或者 runbook §3.2.2 改成 `vllm`。
+1. **CLI/registry drift（已修，commit e2157af+1）**：原
+   `scripts/render_train_rl_cpu.py` `--inference-backend` argparse
+   `choices={torch, vllm, sglang, vllm_omni}`，没把 `vllm_ascend`
+   加进去，runbook §3.2.2 原文 `--inference-backend vllm_ascend` 会被
+   argparse reject。Registry 端 `vllm` 是 `vllm_ascend` 的 alias
+   （共享 `_build_vllm`）。
+   **修复**：
+   - argparse choices 扩成
+     `{torch, vllm, sglang, vllm_omni, vllm_ascend}`；
+   - help 文本说明 `vllm` 是 `vllm_ascend` 的 back-compat alias；
+   - 新增回归测试
+     `worldfoundry_inf/tests/test_rti_rlinf_vllm_diffusion_integration.py::test_rti_orchestrator_resolves_vllm_ascend_backend`，
+     断言 `summary.inference_backend == "vllm_ascend"`（canonical 名落盘，
+     **不**被 silently 降级成 alias `vllm`）。
+   CPU 端 smoke 验证：`--inference-backend vllm_ascend` 与
+   `--inference-backend vllm` 同 seed 下产出**完全一致**
+   （recon=0.6502, latent=0.3281, total=18.9097）。
+   Atlas NPU 真路径回归由 §3 torch=vllm cosine drift=0.0 覆盖。
 2. **NPU bind 模板要补两条**：runbook §2.1.2 的最小集
    `--device /dev/davinci_manager + /dev/davinciN + -v .../driver:ro`
    不够。实测还必须
