@@ -249,9 +249,11 @@ python3 -m scripts.render_train_rl_cpu \
    所以即便 load > 5 也满足 §3.2 单卡 e2e 推进条件（**所有** NPU 都
    > 50% 才停）。下次窗口若 load 持续 > 10，建议换空闲时段重跑。
 6. **verify_goal_evidence.py 3/3 PASS（本地跑）**：
-   - training：`rlinf_framework='rlinf'`, `rlinf_result.kind='mock'` —
-     mock factory `worldfoundry_rl.rlinf_mock_factory:build_runner`
-     不需要真 RLinf 镜像也能跑通。
+   - training：`rlinf_framework='rlinf'`, `rlinf_result.kind='real_rlinf'` —
+     走过真 `rlinf.runners.embodied_runner.EmbodiedRunner` 构造
+     （RLinf 0.3.0，rlinf_file 指向 `.venv-rlinf/.../site-packages/rlinf/__init__.py`），
+     `--rlinf-runner-factory=worldfoundry_rl.rlinf_factory:build_runner`。
+     Mock factory 仍保留作兜底（`worldfoundry_rl.rlinf_mock_factory:build_runner`）。
    - inference：`inference_backend='vllm_omni'`, `dispatched.engine='vllm_omni'`,
      `available=True` — 走的是 `_vllm_omni_available` mock 路径，**不是**
      真 vLLM-Omni 真路径（W44+ 等 vllm-omni 公网 wheel 发布后才能真跑）。
@@ -260,6 +262,31 @@ python3 -m scripts.render_train_rl_cpu \
      provider，**不是** NPU EP。NPU 真路径需 ONNX-Runtime Ascend EP。
    本地 3/3 PASS 证明 wiring 正确，但 **不替代** Atlas NPU 真路径回归；
    Atlas 真路径回归由 §3 torch/vllm_ascend `cosine drift=0.0` 覆盖。
+7. **RLinf 通过 `pip install` 接入（无需 RLinf 官方 docker 镜像）**：
+   - 公网拉 `rlinfai/rlinf` 镜像被 DaoCloud 拒（"not in allowlist" issue #2328），
+     `docker.1ms.run` 镜像同样不可用；本窗口不依赖官方镜像。
+   - 实测可行路径：把 RLinf 作为 Python 包 `pip install` 进
+     `worldfoundry-franka:npu-cann9` 容器内的现有 Python（aliyun
+     `https://mirrors.aliyun.com/pypi/simple/` 镜像，绕开 `pypi.org`
+     TLS 超时；`pip install --no-deps rlinf` 防 torch 覆盖 torch_npu
+     2.9.0.post1；`pip install "huggingface_hub>=0.34.0,<1.0"` 修
+     transformers 4.55.0 兼容）。
+   - WSL2 主机同样在 `.venv-rlinf` (`uv venv && uv pip install ...`)
+     里装了 RLinf 0.3.0，配 `TORCH_DEVICE_BACKEND_AUTOLOAD=0` 跳过
+     `libascend_hal.so` auto-load。
+   - 新增 `worldfoundry_rl.rlinf_factory.build_runner`（M1-T4 P1）
+     通过 `--rlinf-runner-factory=worldfoundry_rl.rlinf_factory:build_runner`
+     接到 orchestrator，``rlinf_result.kind=='real_rlinf'`` 证明走过
+     `rlinf.runners.embodied_runner.EmbodiedRunner` 真类构造路径。
+     `verify_goal_evidence.py` 已切到该 real factory（mock 仍在
+     `worldfoundry_rl.rlinf_mock_factory:build_runner`，作为兜底）。
+   - 实测 EmbodiedRunner 构造所需最小 cfg keys：
+     `runner.{weight_sync_interval, max_epochs, overlap_env_bootstrap,
+     per_worker_log, per_worker_log_path, logger.{log_path,
+     project_name, experiment_name, logger_backends, wandb_proxy,
+     wandb_entity, swanlab_mode}}` + `cluster.profiling`。Ray 本地
+     cluster 由 RLinf 自动 `ray.init`（~50s）；生产用真 Ray 集群后这
+     步可省。
 
 ## Out of Scope
 

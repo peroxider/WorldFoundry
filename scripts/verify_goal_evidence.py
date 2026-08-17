@@ -13,10 +13,11 @@ It subprocesses the orchestrator with the goal-axis flags:
 
 then parses the JSON summary and asserts all three clauses:
 
-* **Training (RLinf):** ``policy_bootstrap.rlinf_framework=="rlinf"``
-  and ``rlinf_status=="completed"`` (the orchestrator reached the
-  policy phase through the RLinf adapter, not the in-process self_ppo
-  path).
+* **Training (RLinf):** ``policy_bootstrap.rlinf_framework=="rlinf"``,
+  ``rlinf_status=="completed"``, AND ``rlinf_result.kind=="real_rlinf"``
+  (the orchestrator reached the policy phase through the *real*
+  :class:`rlinf.runners.embodied_runner.EmbodiedRunner`, not the mock
+  factory or the in-process self_ppo path).
 * **Inference (vLLM-Omni):** ``inference_backend=="vllm_omni"`` and
   ``inference_engine_dispatched.available is True``.
 * **Diffusion (non-PyTorch ORT):**
@@ -74,7 +75,7 @@ def _run_orchestrator(out_dir: Path) -> tuple[dict[str, Any], subprocess.Complet
         "--seed", "0",
         "--rl-backend", "rlinf",
         "--rlinf-runner-factory",
-        "worldfoundry_rl.rlinf_mock_factory:build_runner",
+        "worldfoundry_rl.rlinf_factory:build_runner",
         "--inference-backend", "vllm_omni",
     ]
     result = subprocess.run(
@@ -93,14 +94,25 @@ def _run_orchestrator(out_dir: Path) -> tuple[dict[str, Any], subprocess.Complet
 
 
 def _check_training(summary: dict[str, Any]) -> tuple[bool, str]:
-    """Clause 1: training is based on RLinf execution."""
+    """Clause 1: training is based on RLinf execution.
+
+    Requires ``rlinf_result.kind == "real_rlinf"`` so the goal
+    is genuinely verified end-to-end through the real RLinf
+    package (not the mock factory which shares the same
+    ``framework=="rlinf"`` shape).
+    """
     pb = summary.get("policy_bootstrap", {})
     framework = pb.get("rlinf_framework")
     status = pb.get("rlinf_status")
-    ok = framework == "rlinf" and status == "completed"
+    kind = pb.get("rlinf_result", {}).get("kind")
+    ok = (
+        framework == "rlinf"
+        and status == "completed"
+        and kind == "real_rlinf"
+    )
     detail = (
         f"rlinf_framework={framework!r}, rlinf_status={status!r}, "
-        f"rlinf_result.kind={pb.get('rlinf_result', {}).get('kind')!r}, "
+        f"rlinf_result.kind={kind!r}, "
         f"n_updates={pb.get('rlinf_result', {}).get('n_updates')!r}"
     )
     return ok, detail
