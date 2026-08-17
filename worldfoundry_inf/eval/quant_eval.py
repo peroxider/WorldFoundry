@@ -30,6 +30,25 @@ class EvalReport:
     n_samples: int = 0
 
 
+@dataclass
+class SDXLEvalReport:
+    """Result of an SDXL/VAE W8A8 cosine-eval run (M3-T5).
+
+    Mirrors :class:`EvalReport`'s shape but trades ``per_sample_cosine``
+    for ``per_tensor_cosine`` (SDXL/VAE weights are tensors, not HF
+    inference samples) and adds ``mse_per_tensor`` so post-mortem tools
+    can identify which tensors drift the most. ``passed`` follows the
+    M3-T5 acceptance gate: ``aggregate_cosine >= threshold`` (default
+    0.95 = ≤ 0.05 deviation).
+    """
+    aggregate_cosine: float
+    per_tensor_cosine: dict[str, float] = field(default_factory=dict)
+    mse_per_tensor: dict[str, float] = field(default_factory=dict)
+    passed: bool = False
+    threshold: float = 0.95
+    n_layers: int = 0
+
+
 def cosine_similarity(
     baseline_path: Path,
     quantized_path: Path,
@@ -133,6 +152,130 @@ def _cli() -> int:
     return 0 if report.passed else 1
 
 
+def cosine_similarity_sdxl(
+    baseline_path: Path,
+    quantized_path: Path,
+    *,
+    threshold: float = 0.95,
+    weight_filename: str = "diffusion_pytorch_model.safetensors",
+) -> SDXLEvalReport:
+    """Cosine similarity eval for SDXL/VAE W8A8 quant artifacts (M3-T5).
+
+    Loads ``weight_filename`` from each model directory via
+    ``safetensors.safe_open``, computes per-tensor cosine + MSE between
+    baseline (BF16 source) and quantized (round-tripped), and reports
+    the aggregate cosine + per-tensor breakdown. M3-T5 acceptance gate
+    is ``aggregate_cosine >= 0.95`` (i.e. ≤ 0.05 deviation), which the
+    W26 packer's MSE < 1e-3 contract guarantees when
+    :class:`worldfoundry_inf.compile.quantize_backends.fake.FakeSDXLBackend`
+    produces the artifact.
+
+    Args:
+        baseline_path: Path to BF16 source model directory.
+        quantized_path: Path to W8A8-round-tripped model directory
+            produced by :class:`FakeSDXLBackend`.
+        threshold: Pass threshold (default 0.95).
+        weight_filename: Filename of the safetensors weight file (default
+            ``diffusion_pytorch_model.safetensors``).
+
+    Returns:
+        :class:`SDXLEvalReport` with aggregate cosine, per-tensor
+        cosine, per-tensor MSE, passed flag, threshold, and tensor count.
+
+    Raises:
+        FileNotFoundError: Either model directory is missing the
+            ``weight_filename`` or ``config.json``.
+    """
+    try:
+        from safetensors import safe_open
+    except ImportError as exc:
+        raise ImportError(
+            "cosine_similarity_sdxl requires the `safetensors` package. "
+            "Run: pip install safetensors"
+        ) from exc
+
+    baseline_path = Path(baseline_path)
+    quantized_path = Path(quantized_path)
+    base_weights = baseline_path / weight_filename
+    quant_weights = quantized_path / weight_filename
+    if not base_weights.exists():
+        raise FileNotFoundError(f"Missing baseline weights: {base_weights}")
+    if not quant_weights.exists():
+        raise FileNotFoundError(f"Missing quantized weights: {quant_weights}")
+
+    per_tensor_cosine: dict[str, float] = {}
+    mse_per_tensor: dict[str, float] = {}
+    with safe_open(str(base_weights), framework="pt") as fb, \
+         safe_open(str(quant_weights), framework="pt") as fq:
+        base_keys = set(fb.keys())
+        quant_keys = set(fq.keys())
+        if base_keys != quant_keys:
+            raise ValueError(
+                f"Key mismatch: baseline={sorted(base_keys - quant_keys)} "
+                f"quantized={sorted(quant_keys - base_keys)}"
+            )
+        for key in sorted(base_keys):
+            bt = fb.get_tensor(key).to(torch.float32)
+            qt = fq.get_tensor(key).to(torch.float32)
+            denom = bt.norm() * qt.norm()
+            cos = float(
+                (bt * qt).sum() / denom
+            ) if denom.item() > 1e-12 else 1.0
+            per_tensor_cosine[key] = cos
+            mse_per_tensor[key] = float(((bt - qt) ** 2).mean())
+
+    if per_tensor_cosine:
+        aggregate = sum(per_tensor_cosine.values()) / len(per_tensor_cosine)
+    else:
+        aggregate = 1.0
+    return SDXLEvalReport(
+        aggregate_cosine=aggregate,
+        per_tensor_cosine=per_tensor_cosine,
+        mse_per_tensor=mse_per_tensor,
+        passed=aggregate >= threshold,
+        threshold=threshold,
+        n_layers=len(per_tensor_cosine),
+    )
+
+
+def _cli_sdxl() -> int:
+    """CLI entry point for SDXL/VAE cosine eval (M3-T5)."""
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(
+        description="SDXL/VAE cosine similarity eval: BF16 baseline vs W8A8-round-tripped"
+    )
+    parser.add_argument("--baseline", required=True, type=Path)
+    parser.add_argument("--quantized", required=True, type=Path)
+    parser.add_argument("--threshold", type=float, default=0.95)
+    parser.add_argument("--weight-filename", type=str,
+                        default="diffusion_pytorch_model.safetensors")
+    args = parser.parse_args()
+
+    try:
+        report = cosine_similarity_sdxl(
+            baseline_path=args.baseline,
+            quantized_path=args.quantized,
+            threshold=args.threshold,
+            weight_filename=args.weight_filename,
+        )
+    except (ValueError, FileNotFoundError, ImportError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+
+    print(
+        f"SDXL cosine: {report.aggregate_cosine:.4f} "
+        f"(threshold {report.threshold:.4f}, "
+        f"n_tensors={report.n_layers}) → "
+        f"{'PASS' if report.passed else 'FAIL'}"
+    )
+    return 0 if report.passed else 1
+
+
 if __name__ == "__main__":
     import sys
+    if "--sdxl" in sys.argv:
+        sys.argv.remove("--sdxl")
+        sys.exit(_cli_sdxl())
     sys.exit(_cli())

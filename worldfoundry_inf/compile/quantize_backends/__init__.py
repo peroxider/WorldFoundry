@@ -83,4 +83,9 @@ from . import fake  # noqa: F401, E402  (FakeBackend self-registers via @registe
 
 # Public list of quant types the facade accepts. Backends register themselves
 # at import time; the facade only dispatches to types listed here.
-SUPPORTED_QUANT_TYPES: tuple[str, ...] = ("w8a8", "w4a8", "fake")  # w4a8 deferred to future sub-project; fake is a CPU smoke-test surrogate
+SUPPORTED_QUANT_TYPES: tuple[str, ...] = (
+    "w8a8",
+    "w4a8",
+    "fake",
+    "fake_sdxl",  # M3-T5: SDXL/VAE round-trip via real pack_w8a8_weight
+)  # w4a8 deferred to future sub-project; fake + fake_sdxl are CPU smoke surrogates
