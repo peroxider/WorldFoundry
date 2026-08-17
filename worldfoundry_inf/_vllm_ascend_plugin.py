@@ -33,15 +33,26 @@ def _vllm_model_registry():
         return None
 
 
-def register() -> str:
+def register() -> str | None:
     """Return the vLLM platform class path for the Ascend NPU.
 
     Called by vLLM when it loads the ``vllm.platform_plugins`` entry point.
     We delegate to vllm-ascend's existing platform implementation rather
     than ship our own — that's the established convention per vllm-ascend
     0.18.0's own ``register()``.
+
+    On CPU-only dev hosts (no Atlas, no vllm-ascend wheel), we return
+    ``None`` so vLLM's plugin loader falls through to the next option
+    (``vllm.platforms.interface.UnspecifiedPlatform``) instead of
+    crashing on ``import vllm_ascend``. The plugin still activates --
+    just doesn't dictate the platform class. Atlas deployments with
+    the vllm-ascend wheel installed get the real NPUPlatform.
     """
-    return "vllm_ascend.platform.NPUPlatform"
+    try:
+        import vllm_ascend.platform  # noqa: F401  -- probe wheel presence
+        return "vllm_ascend.platform.NPUPlatform"
+    except ImportError:
+        return None
 
 
 def register_model() -> None:

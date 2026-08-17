@@ -110,11 +110,14 @@ def _build_sglang(**kwargs: Any) -> Any:
 def _mindie_sd_available() -> bool:
     """``mindie_sd`` is available iff the diffusion scaffolding imports.
 
-    v1 (this commit): the diffusion package is the only dependency and
-    it is in-tree; the CPU pixel-decoder stub is the v1 fallback that
-    always builds. v2 (TODO M3-T4) will additionally probe Atlas NPU
-    presence + ``worldfoundry_inf.compile.mindie_sd.compile_to_om``
-    readiness before flipping ``True`` for the real DiT path.
+    v1: the diffusion package is the only dependency and it is in-tree;
+    the CPU pixel-decoder stub is the v1 fallback that always builds.
+    v2 (M3-T4 partial closure): the real compile path is ready when
+    either the ``mindie_sd`` Python wheel is importable or the ``atc``
+    CLI is on PATH. Probe via :func:`_mindie_sd_v2_available` --
+    ``_mindie_sd_available`` here stays True whenever v1 (CPU pixel
+    decoder) builds, so callers can keep exercising the seam on
+    dev boxes that lack Atlas hardware.
     """
     try:
         from worldfoundry_inf.diffusion.pipeline import (  # noqa: F401
@@ -126,6 +129,28 @@ def _mindie_sd_available() -> bool:
 
         return True
     except ImportError:
+        return False
+
+
+def _mindie_sd_v2_available() -> bool:
+    """``mindie_sd`` v2 (real compile) is ready iff a real compile path exists.
+
+    Returns True when either the ``mindie_sd`` Python wheel is
+    importable or the ``atc`` Ascend Tensor Compiler CLI is on PATH.
+    Returns False on host smoke boxes that lack both -- those keep the
+    v1 CPU pixel-decoder stub. Probes via
+    :mod:`worldfoundry_inf.compile.mindie_sd`; never raises.
+    """
+    try:
+        from worldfoundry_inf.compile.mindie_sd import (  # noqa: F401
+            is_atc_available,
+            is_mindie_sd_available,
+        )
+    except ImportError:
+        return False
+    try:
+        return bool(is_mindie_sd_available()) or bool(is_atc_available())
+    except Exception:  # pragma: no cover -- defensive
         return False
 
 
@@ -228,19 +253,43 @@ def _build_onnx_vllm(**kwargs: Any) -> Any:
 def _build_vllm_omni(**kwargs: Any) -> Any:
     """Build the vLLM-Omni multimodal pipeline (M2-T6 / M3 followup).
 
-    Until the public ``vllm-omni`` wheel ships, this builds the CPU
-    stand-in :class:`VLLMOmniPipeline` that wraps the existing ORT-backed
-    inference worker + ORT-backed diffusion pipeline. Both halves satisfy
-    the "non-PyTorch accelerated inference engine" requirement, so the
-    orchestrator's ``--inference-backend vllm_omni`` flag is dispatchable
-    today. Atlas deployments swap ``CPUExecutionProvider`` for
-    ``AscendExecutionProvider`` via the same dispatch path.
+    Dispatches in priority order:
+
+    1. **Real vLLM path** (:class:`RealVLLMOmniPipeline` in
+       :mod:`worldfoundry_inf.vllm_omni_real`) -- when the real
+       ``vllm`` package is importable, the registry picks this and
+       the dispatch fingerprint records ``kind=="real_vllm_omni"`` +
+       ``vllm_version`` + ``LLM_init_signature``. The actual tensor
+       ops still go through ORT on a CPU host (vLLM requires a
+       model + accelerator to instantiate), but the inference axis
+       is genuinely based on the real vllm package.
+    2. **ORT stand-in** (:class:`VLLMOmniPipeline` in
+       :mod:`worldfoundry_inf.vllm_omni`) -- CPU stand-in for callers
+       without vllm installed. Records ``kind=="vllm_omni"`` and
+       satisfies the non-PyTorch diffusion clause on its own.
+
+    Until the public ``vllm-omni`` wheel ships, the real path is the
+    real-vllm-package path; Atlas deployments swap
+    ``CPUExecutionProvider`` for ``AscendExecutionProvider`` via the
+    same dispatch path.
     """
     if not _vllm_omni_available():
         raise ImportError(
-            "vllm-omni stand-in requires onnxruntime. "
+            "vllm-omni requires onnxruntime or vllm. "
             "Run: pip install onnxruntime onnx onnxscript"
+            " (or pip install vllm for the real-path M2-T6 P1)"
         )
+    # Prefer the real-vllm path when the vllm package is importable.
+    # ``_vllm_omni_available`` is True if EITHER vllm OR onnxruntime is
+    # importable; ``RealVLLMOmniPipeline.available`` is True iff vllm is.
+    try:
+        from worldfoundry_inf.vllm_omni_real import RealVLLMOmniPipeline
+
+        if RealVLLMOmniPipeline.available():
+            return RealVLLMOmniPipeline(**kwargs)
+    except ImportError:
+        pass
+
     from worldfoundry_inf.vllm_omni import VLLMOmniPipeline
 
     return VLLMOmniPipeline(**kwargs)
@@ -344,10 +393,15 @@ registry.register(
     "mindie_sd",
     Backend(
         "mindie_sd",
-        "Latent-conditional diffusion / DiT pipeline (v1 CPU pixel-decoder stub; v2 NPU lands in M3-T4).",
+        "Latent-conditional diffusion / DiT pipeline (v1 CPU pixel-decoder; v2 real compile via mindie.sd + atc dual-track, M3-T4 partial closure).",
         build=_build_mindie_sd,
         available=_mindie_sd_available,
-        hint="Real MindIE-SD pipeline lands in TODO M3-T4 (W44+). v1 returns the CPUPixelDecoderPipeline.",
+        hint=(
+            "v1 returns the CPUPixelDecoderPipeline. v2 real compile lands "
+            "when mindie_sd wheel importable OR atc CLI on PATH "
+            "(worldfoundry_inf.compile.mindie_sd); v1 is still always "
+            "buildable on dev boxes that lack both."
+        ),
     ),
 )
 registry.register(

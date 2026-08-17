@@ -119,15 +119,33 @@ def _check_training(summary: dict[str, Any]) -> tuple[bool, str]:
 
 
 def _check_inference(summary: dict[str, Any]) -> tuple[bool, str]:
-    """Clause 2: inference is based on vLLM (or vLLM-Omni)."""
+    """Clause 2: inference is based on vLLM (or vLLM-Omni).
+
+    Requires the registry to have picked the real-vLLM path
+    (``engine_type == "RealVLLMOmniPipeline"``) rather than the ORT
+    stand-in (``engine_type == "VLLMOmniPipeline"``). This is the
+    M2-T6 P1 mirror of the M1-T4 P1 training-clause strictness: the
+    goal clause "推理基于vllm" must be satisfied through the real vllm
+    package, not a stand-in that just happens to share the CLI name.
+    The CLI-level ``engine`` field carries the registry name
+    (``"vllm_omni"``) regardless of which class was picked; the
+    class identity is in ``engine_type``.
+    """
     backend = summary.get("inference_backend")
     dispatched = summary.get("inference_engine_dispatched") or {}
     engine = dispatched.get("engine")
+    engine_type = dispatched.get("engine_type")
     available = dispatched.get("available")
     dispatch_error = dispatched.get("dispatch_error")
-    ok = backend == "vllm_omni" and engine == "vllm_omni" and available is True
+    ok = (
+        backend == "vllm_omni"
+        and engine == "vllm_omni"
+        and engine_type == "RealVLLMOmniPipeline"
+        and available is True
+    )
     detail = (
         f"inference_backend={backend!r}, dispatched.engine={engine!r}, "
+        f"engine_type={engine_type!r}, "
         f"available={available!r}, dispatch_error={dispatch_error!r}"
     )
     return ok, detail

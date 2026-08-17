@@ -1794,11 +1794,13 @@ def main(argv=None) -> int:
             from worldfoundry_common.backends.inference import make_engine
 
             pipe = make_engine("vllm_omni")
+            engine_type = type(pipe).__name__
             dispatched_summary = (
                 pipe.provider_summary() if hasattr(pipe, "provider_summary") else {}
             )
             inference_eng = dispatched_summary.get("inference", {}).get("engine")
             diffusion_eng = dispatched_summary.get("diffusion", {}).get("engine")
+            dispatch_kind = dispatched_summary.get("kind")
             providers_resolved = (
                 pipe.inference._resolved_providers
                 if hasattr(pipe, "inference")
@@ -1809,13 +1811,15 @@ def main(argv=None) -> int:
                 "engine": "vllm_omni",
                 "available": True,
                 "providers_resolved": list(providers_resolved),
+                "engine_type": engine_type,
+                "kind": dispatch_kind,
                 "inference_engine": inference_eng,
                 "diffusion_engine": diffusion_eng,
                 "dispatch_error": None,
             }
             print(
                 f"[RTI2] INFO: inference backend 'vllm_omni' dispatched via "
-                f"VLLMOmniPipeline (ORT providers={list(providers_resolved)}, "
+                f"{engine_type} (kind={dispatch_kind}, ORT providers={list(providers_resolved)}, "
                 f"inference_engine={inference_eng}, "
                 f"diffusion_engine={diffusion_eng}). Inference loop still runs "
                 f"in-process because the vLLM-Omni stand-in cannot serve this "
@@ -1828,6 +1832,8 @@ def main(argv=None) -> int:
                 "engine": "vllm_omni",
                 "available": False,
                 "providers_resolved": [],
+                "engine_type": None,
+                "kind": None,
                 "inference_engine": None,
                 "diffusion_engine": None,
                 "dispatch_error": f"{type(exc).__name__}: {exc}",

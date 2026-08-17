@@ -41,21 +41,40 @@ def _load_verify_module():
 
 
 def _good_training_dict() -> dict:
+    """Shape of a successful ``policy_bootstrap`` fingerprint.
+
+    The M1-T4 P1 verifier requires ``rlinf_result.kind == "real_rlinf"``,
+    proving the orchestrator reached the policy phase through the *real*
+    :class:`rlinf.runners.embodied_runner.EmbodiedRunner`, not the mock
+    factory (``kind == "mock"``) or the in-process self_ppo path.
+    """
     return {
         "policy_bootstrap": {
             "rlinf_framework": "rlinf",
             "rlinf_status": "completed",
-            "rlinf_result": {"kind": "mock", "n_updates": 1},
+            "rlinf_result": {"kind": "real_rlinf", "n_updates": 1},
         }
     }
 
 
 def _good_inference_dict() -> dict:
+    """Shape of a successful ``inference_engine_dispatched`` fingerprint.
+
+    The M2-T6 P1 verifier requires ``engine_type == "RealVLLMOmniPipeline"``,
+    proving the inference axis goes through the real vLLM package and the
+    RealVLLMOmniPipeline class, not the ORT stand-in ``VLLMOmniPipeline``
+    (which only shares the registry name). The ``kind="real_vllm_omni"``
+    parallel field carries the same information in the canonical
+    :meth:`RealVLLMOmniPipeline.provider_summary` format for downstream
+    dashboards.
+    """
     return {
         "inference_backend": "vllm_omni",
         "inference_engine_dispatched": {
             "engine": "vllm_omni",
             "available": True,
+            "engine_type": "RealVLLMOmniPipeline",
+            "kind": "real_vllm_omni",
             "dispatch_error": None,
         },
     }
@@ -123,6 +142,40 @@ def test_check_inference_fails_when_available_false() -> None:
     summary["inference_engine_dispatched"]["dispatch_error"] = (
         "ImportError: vllm-ascend not installed"
     )
+    ok, _detail = mod._check_inference(summary)
+    assert ok is False
+
+
+def test_check_inference_fails_when_engine_type_is_ort_standin() -> None:
+    """M2-T6 P1 regression guard: ORT stand-in class must NOT pass the gate.
+
+    Mirrors the M1-T4 P1 ``test_check_training_fails_when_framework_is_self_ppo``
+    pattern: a stand-in that just shares the CLI flag name must NOT satisfy
+    the inference clause. The ORT stand-in class is ``VLLMOmniPipeline``;
+    the real path class is ``RealVLLMOmniPipeline``. If the orchestrator ever
+    silently falls back to the stand-in (e.g. ``vllm`` import regresses), the
+    clause fails immediately.
+    """
+    mod = _load_verify_module()
+    summary = _good_inference_dict()
+    summary["inference_engine_dispatched"]["engine_type"] = "VLLMOmniPipeline"
+    summary["inference_engine_dispatched"]["kind"] = "vllm_omni"
+    ok, _detail = mod._check_inference(summary)
+    assert ok is False
+
+
+def test_check_inference_fails_when_engine_type_missing() -> None:
+    """M2-T6 P1 regression guard: orchestrator must record ``engine_type``.
+
+    If the orchestrator's vllm_omni branch ever drops the
+    ``engine_type`` capture (regression to pre-M2-T6-P1 fingerprint
+    shape), the clause fails immediately. Without this guard the
+    verifier would silently pass on a fingerprint that didn't carry
+    the real-vs-stand-in distinction.
+    """
+    mod = _load_verify_module()
+    summary = _good_inference_dict()
+    del summary["inference_engine_dispatched"]["engine_type"]
     ok, _detail = mod._check_inference(summary)
     assert ok is False
 
