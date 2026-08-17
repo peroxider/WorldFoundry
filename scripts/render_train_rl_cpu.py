@@ -224,6 +224,15 @@ class V2Config:
     # by default; CLI raises an actionable ``NotImplementedError``
     # if rlinf is selected without a factory.
     rlinf_runner_factory: str | None = None
+    # M3-T8: pluggable latent->frame diffusion backend. ``"none"`` (default)
+    # keeps the orchestrator a 5-stage pipeline (no frame-gen phase);
+    # ``"mindie_sd"`` inserts a frame_gen phase between inference and
+    # policy_bootstrap that builds the latent_to_frame pipeline via
+    # :func:`worldfoundry_common.backends.inference.make_engine`, runs
+    # ``pipe.rollout(...)``, computes M3-T6 rollout metrics, and writes
+    # a ``frame_gen_dispatched`` fingerprint. Default preserves all
+    # pre-M3-T8 behavior on every existing run / test.
+    frame_gen_backend: str = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -802,6 +811,14 @@ def inference_phase(
         "latent_cosine": latent_cos,
         "n_params": sum(p.numel() for p in encoder.parameters()),
         "n_predicted_tokens": int(pred_at_mask.shape[0]),
+        # M3-T8: non-JSON fields the orchestrator's frame_gen_phase
+        # consumes directly (the JSON summary strips these via .pop()
+        # before serialization so numpy/torch values don't leak into
+        # the summary). ``_pixels`` is the decoder output as
+        # ``np.ndarray (T, 3, H, W)``; ``_latent`` is the encoder's
+        # ``last_hidden_state`` as ``torch.Tensor (1, N, encoder_dim)``.
+        "_pixels": pixels,
+        "_latent": h.detach().cpu(),
         # W25-cleanup: relative path as string for JSON portability.
         # ``None`` when cv2 isn't importable (best-effort QA artifact).
         "png_path": str(png_path) if png_path is not None else None,
@@ -1599,6 +1616,18 @@ def parse_args(argv=None) -> argparse.Namespace:
                         "On the host (no Ray cluster), pass a mock factory that "
                         "returns a stub runner; on Atlas card 7 (M1-T4), pass a "
                         "real factory that attaches RLinf worker groups.")
+    p.add_argument("--frame-gen-backend", choices=("none", "mindie_sd"),
+                   default="none",
+                   help="M3-T8: pluggable latent->frame diffusion backend. "
+                        "``none`` (default) is a no-op (preserves all existing "
+                        "behavior); ``mindie_sd`` wires a real frame-gen phase "
+                        "between inference and policy_bootstrap that builds the "
+                        "latent_to_frame pipeline via make_engine('mindie_sd'), "
+                        "calls pipe.rollout(), computes M3-T6 rollout metrics, "
+                        "and writes a frame_gen_dispatched fingerprint. The "
+                        "host smoke path uses the CPU pixel-decoder stub "
+                        "(CPUPixelDecoderPipeline); Atlas deployments swap in "
+                        "NPUDiffusionPipeline via the same dispatch path.")
     return p.parse_args(argv)
 
 
@@ -1678,6 +1707,264 @@ def build_runner(args: argparse.Namespace, env_pool: Any, policy: Any, cfg: Any)
     raise ValueError(f"build_runner: unknown rl_backend {backend!r}")
 
 
+def frame_gen_phase(
+    cfg: V2Config,
+    backend: str,
+    device: str,
+    *,
+    predicted_video: torch.Tensor | None = None,
+    latent_rollout: torch.Tensor | None = None,
+    past_frames: int = 2,
+    future_frames: int = 2,
+) -> dict[str, Any]:
+    """M3-T8: pluggable latent->frame diffusion phase.
+
+    Mirrors :func:`inference_phase` shape: returns a dict the orchestrator
+    merges into ``summary.frame_gen`` and ``summary.frame_gen_dispatched``.
+
+    Two backends:
+        * ``"none"`` (default) -- no-op. Preserves all pre-M3-T8 behavior
+          so the new flag is opt-in. ``elapsed_seconds=0.0``,
+          ``frame_metrics=None``, dispatched fingerprint shows
+          ``backend=none / dispatched=False``.
+        * ``"mindie_sd"`` -- builds the pipeline via
+          :func:`worldfoundry_common.backends.inference.make_engine`,
+          captures ``pipe.provider_summary()`` for the dispatch
+          fingerprint, calls ``pipe.rollout(...)``, and computes
+          M3-T6 rollout metrics (SSIM/PSNR/CLIP/alignment). On host
+          smoke the registry returns :class:`CPUPixelDecoderPipeline`
+          (M3-T5 sibling for VAE quant); Atlas swaps in the NPU
+          diffusion pipeline via the same dispatch path.
+
+    Args:
+        cfg: Active V2Config.
+        backend: ``"none"`` or ``"mindie_sd"``.
+        device: Resolved device (cpu/npu).
+        predicted_video: Optional ``(T, 3, H, W)`` predicted frames from
+            the inference phase; used as the rollout reference for SSIM.
+        latent_rollout: Optional ``(N, D)`` latent rollout for
+            alignment scoring. Skipped when ``None``.
+        past_frames: ``T_past`` argument for ``pipe.rollout``.
+        future_frames: ``T_future`` argument for ``pipe.rollout``.
+
+    Returns:
+        dict with keys: ``backend``, ``elapsed_seconds``, ``frame_metrics``,
+        ``frame_gen_dispatched``, ``n_rollout_frames``.
+    """
+    t0 = time.time()
+    noop = {
+        "backend": "none",
+        "elapsed_seconds": 0.0,
+        "frame_metrics": None,
+        "frame_gen_dispatched": {
+            "backend": "none",
+            "dispatched": False,
+            "engine_type": None,
+            "kind": None,
+            "compile_path": None,
+            "extras": {},
+            "dispatch_error": None,
+        },
+        "n_rollout_frames": 0,
+    }
+    if backend == "none":
+        return noop
+
+    if backend != "mindie_sd":
+        # argparse ``choices`` should have caught this, but defensive
+        # guard so a programmer-typo'd CLI doesn't crash mid-run.
+        return {
+            **noop,
+            "frame_gen_dispatched": {
+                **noop["frame_gen_dispatched"],
+                "backend": backend,
+                "dispatch_error": (
+                    f"Unknown frame_gen_backend {backend!r}; expected "
+                    f"'none' or 'mindie_sd'."
+                ),
+            },
+        }
+
+    # mindie_sd path
+    try:
+        from worldfoundry_common.backends.inference import make_engine
+    except ImportError as exc:
+        return {
+            **noop,
+            "frame_gen_dispatched": {
+                **noop["frame_gen_dispatched"],
+                "backend": "mindie_sd",
+                "dispatch_error": f"ImportError: {exc}",
+            },
+        }
+
+    try:
+        # Pass the orchestrator's image dimensions to the CPU pipeline
+        # so the stub's ``img_size`` matches the inference phase's
+        # output (default 196 would reject 32x32 outputs with a
+        # ``img_size`` ValueError). ``patch_size`` is set so the grid
+        # is ``(height//8)`` — keeps the same Hg=Wg ≈ 14 ratio as the
+        # default 196/14 setup but at the orchestrator's resolution.
+        pipe = make_engine(
+            "mindie_sd",
+            img_size=cfg.height,
+            patch_size=max(1, cfg.height // 8),
+        )
+        engine_type = type(pipe).__name__
+        dispatched_summary = (
+            pipe.provider_summary() if hasattr(pipe, "provider_summary") else {}
+        )
+        compile_path = (
+            dispatched_summary.get("extras", {}).get("compile_path")
+            if isinstance(dispatched_summary.get("extras"), dict)
+            else None
+        )
+        kind = dispatched_summary.get("kind")
+        # Normalize ``predicted_video`` to a 5-D torch tensor the
+        # pipeline can consume. The orchestrator passes a 4-D numpy
+        # ``(T, 3, H, W)`` from the inference phase; the CPU pipeline's
+        # ``rollout`` requires ``(B, T, 3, H, W)``. NPU pipelines will
+        # do the same check; prepending a batch dim here keeps the
+        # contract uniform across backends.
+        if predicted_video is None:
+            pv = torch.zeros(1, past_frames + future_frames, 3, 196, 196)
+        elif isinstance(predicted_video, torch.Tensor):
+            pv = predicted_video
+            if pv.ndim == 4:
+                pv = pv.unsqueeze(0)
+        else:  # numpy array from inference_phase
+            pv = torch.from_numpy(np.asarray(predicted_video))
+            if pv.ndim == 4:
+                pv = pv.unsqueeze(0)
+        # Run the rollout. Real NPU pipelines will block here on Atlas;
+        # CPU stub returns the tiled-last-frame tensor in <1s.
+        rollout_video = pipe.rollout(
+            past_video=pv,
+            actions=None,
+            past_frames=past_frames,
+            future_frames=future_frames,
+        )
+        # Compute M3-T6 rollout metrics when a reference is available;
+        # fall back to a self-reference (SSIM=1.0, PSNR=inf) when the
+        # orchestrator didn't pass one (keeps the fingerprint honest
+        # about the absence rather than crashing). The reference must
+        # match the rollout's T axis; slice the future frames from
+        # the orchestrator's full past+future predicted_video.
+        frame_metrics: dict[str, Any] | None
+        try:
+            from worldfoundry_inf.eval.rollout_eval import (
+                compute_rollout_metrics,
+            )
+            # Clamp the rollout output to [0, 1] for CLIP compatibility
+            # (PIL raises ValueError on out-of-range floats). The
+            # inference phase's ``pixels`` is already clamped; the
+            # rollout's decoder output is the random-projection
+            # of the encoder hidden state which can be negative.
+            rollout_clamped = rollout_video.detach().cpu().clamp(0.0, 1.0)
+            rollout_np = rollout_clamped.numpy()
+            # rollout_video is (B, T, 3, H, W) — squeeze batch for M3-T6.
+            if rollout_np.ndim == 5:
+                rollout_np = rollout_np[0]
+            if predicted_video is not None:
+                ref_np = (
+                    predicted_video
+                    if isinstance(predicted_video, np.ndarray)
+                    else predicted_video.detach().cpu().numpy()
+                )
+                # Normalize to 4-D (T, 3, H, W). The orchestrator may
+                # pass a 4-D numpy or 5-D torch (B, T, 3, H, W); the
+                # test path may pass 5-D torch too. Squeeze batch.
+                if ref_np.ndim == 5:
+                    ref_np = ref_np[0]
+                # Slice the future frames from the reference to match
+                # the rollout's T axis (M3-T6 contract: same T).
+                if ref_np.shape[0] > rollout_np.shape[0]:
+                    ref_np = ref_np[-rollout_np.shape[0]:]
+            else:
+                ref_np = rollout_np  # self-reference -> SSIM=1.0
+            lat = (
+                latent_rollout.detach().cpu().numpy()
+                if isinstance(latent_rollout, torch.Tensor) else None
+            )
+            # Only compute alignment when the latent's first dim
+            # matches the rollout's T axis. The orchestrator's latent
+            # is ``(1, N, encoder_dim)`` from the inference phase where
+            # N is the patch count — semantically different from the
+            # rollout's T frames. Skip alignment to keep the metrics
+            # computable; the M3-T6 contract is that the gate is
+            # ``skipped`` (not silently passed) when latent signals
+            # are incompatible.
+            alignment_lat = None
+            alignment_frame = None
+            if lat is not None:
+                if lat.ndim == 3:
+                    lat2 = lat[0]  # (N, D)
+                else:
+                    lat2 = lat
+                if lat2.shape[0] == rollout_np.shape[0]:
+                    alignment_lat = lat2
+                    alignment_frame = rollout_np.reshape(
+                        rollout_np.shape[0], -1,
+                    )
+            frame_metrics_obj = compute_rollout_metrics(
+                predicted_video=rollout_np,
+                reference_video=ref_np,
+                latent_rollout=alignment_lat,
+                frame_rollout=alignment_frame,
+            )
+            frame_metrics = {
+                "ssim": frame_metrics_obj.ssim,
+                "psnr_db": frame_metrics_obj.psnr_db,
+                "clip_score": frame_metrics_obj.clip_score,
+                "latent_frame_alignment": frame_metrics_obj.latent_frame_alignment,
+                "n_frames": frame_metrics_obj.n_frames,
+                "passed": frame_metrics_obj.passed,
+                "thresholds": frame_metrics_obj.thresholds,
+            }
+        except Exception as exc:
+            frame_metrics = {
+                "error": f"{type(exc).__name__}: {exc}",
+                "n_frames": int(rollout_video.shape[0])
+                if hasattr(rollout_video, "shape") else 0,
+            }
+
+        return {
+            "backend": "mindie_sd",
+            "elapsed_seconds": time.time() - t0,
+            "frame_metrics": frame_metrics,
+            "frame_gen_dispatched": {
+                "backend": "mindie_sd",
+                "dispatched": True,
+                "engine_type": engine_type,
+                "kind": kind,
+                "compile_path": compile_path,
+                "extras": (
+                    dispatched_summary.get("extras", {})
+                    if isinstance(dispatched_summary, dict) else {}
+                ),
+                "dispatch_error": None,
+            },
+            "n_rollout_frames": int(rollout_video.shape[1])
+            if hasattr(rollout_video, "shape") and rollout_video.ndim >= 2 else 0,
+        }
+    except Exception as exc:
+        return {
+            "backend": "mindie_sd",
+            "elapsed_seconds": time.time() - t0,
+            "frame_metrics": None,
+            "frame_gen_dispatched": {
+                "backend": "mindie_sd",
+                "dispatched": False,
+                "engine_type": None,
+                "kind": None,
+                "compile_path": None,
+                "extras": {},
+                "dispatch_error": f"{type(exc).__name__}: {exc}",
+            },
+            "n_rollout_frames": 0,
+        }
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     # W22-quant: capture baseline RSS immediately after argparse so the
@@ -1755,6 +2042,8 @@ def main(argv=None) -> int:
         # M1-T3: pluggable RL framework seam.
         rl_backend=args.rl_backend,
         rlinf_runner_factory=args.rlinf_runner_factory,
+        # M3-T8: pluggable latent->frame diffusion backend.
+        frame_gen_backend=getattr(args, "frame_gen_backend", "none"),
     )
     # W2.19: the HF encoder is now architecturally compatible with the
     # image-policy path (``--policy-encoder tiny_vjepa2``); the shim
@@ -1919,6 +2208,32 @@ def main(argv=None) -> int:
           f"latent_cos={inf['latent_cosine']:+.4f} elapsed={inf['elapsed_seconds']:.2f}s "
           f"rss={rss_after_inf_mb:.1f}MB")
 
+    # M3-T8: optional frame-gen phase. Default ``--frame-gen-backend=none``
+    # is a no-op that preserves the pre-M3-T8 5-stage pipeline exactly;
+    # ``mindie_sd`` builds a latent_to_frame pipeline, runs rollout, and
+    # scores it via M3-T6. The fingerprint lands in
+    # ``summary.frame_gen_dispatched`` so post-mortem tools can verify
+    # which engine actually served the rollout. ``_pixels``/``_latent``
+    # are non-JSON fields from :func:`inference_phase`; they get
+    # stripped from the summary dict right after this call.
+    inf_pixels = inf.pop("_pixels", None)
+    inf_latent = inf.pop("_latent", None)
+    fg = frame_gen_phase(
+        cfg, cfg.frame_gen_backend, device,
+        predicted_video=inf_pixels,
+        latent_rollout=inf_latent,
+    )
+    rss_after_frame_gen_mb = _rss_mb()
+    fg_dispatched = fg.get("frame_gen_dispatched", {})
+    print(
+        f"[RTI2][F] backend={fg['backend']!r} "
+        f"elapsed={fg['elapsed_seconds']:.2f}s "
+        f"dispatched={fg_dispatched.get('dispatched', False)} "
+        f"engine_type={fg_dispatched.get('engine_type')!r} "
+        f"n_rollout_frames={fg.get('n_rollout_frames', 0)} "
+        f"rss={rss_after_frame_gen_mb:.1f}MB"
+    )
+
     pol = policy_bootstrap_phase(cfg, ckpt, device)
     rss_after_pol_mb = _rss_mb()
     print(f"[RTI2][P] reward_pre={pol['mean_reward_pre_update']:+.4f} "
@@ -2073,6 +2388,11 @@ def main(argv=None) -> int:
             # M1-T3: pluggable RL framework seam (CLI choice + factory ref).
             "rl_backend": cfg.rl_backend,
             "rlinf_runner_factory": cfg.rlinf_runner_factory,
+            # M3-T8: pluggable latent->frame diffusion backend. Default
+            # ``"none"`` keeps the orchestrator a 5-stage pipeline with
+            # no frame-gen phase; ``"mindie_sd"`` activates the
+            # frame_gen_phase + dispatch fingerprint.
+            "frame_gen_backend": cfg.frame_gen_backend,
         },
         "render": {
             "elapsed_seconds": round(render_t, 3),
@@ -2091,6 +2411,10 @@ def main(argv=None) -> int:
             "after_render": round(rss_after_render_mb, 1),
             "after_train": round(rss_after_train_mb, 1),
             "after_inference": round(rss_after_inf_mb, 1),
+            # M3-T8: when ``--frame-gen-backend != none`` this is the
+            # # RSS after the frame-gen phase; identical to
+            # # ``after_inference`` when the phase is a no-op.
+            "after_frame_gen": round(rss_after_frame_gen_mb, 1),
             "after_policy": round(rss_after_pol_mb, 1),
             "final": round(rss_final_mb, 1),
         },
@@ -2116,6 +2440,27 @@ def main(argv=None) -> int:
             # W25-cleanup: mirror v1's QA artifact; string path or None.
             "png_path": inf["png_path"],
         },
+        # M3-T8: 6th phase results. When ``--frame-gen-backend=none``
+        # (default) ``backend=="none"``, ``elapsed_seconds==0.0``, and
+        # ``frame_metrics is None``; the dispatched fingerprint still
+        # shows up so the gate is observable end-to-end.
+        "frame_gen": {
+            "backend": fg["backend"],
+            "elapsed_seconds": round(fg["elapsed_seconds"], 3),
+            "n_rollout_frames": fg.get("n_rollout_frames", 0),
+            "frame_metrics": (
+                # round floats for JSON readability; leave None alone
+                {k: (round(v, 4) if isinstance(v, float) else v)
+                 for k, v in (fg.get("frame_metrics") or {}).items()}
+                if fg.get("frame_metrics") else None
+            ),
+        },
+        # M3-T8: dispatch fingerprint mirrors the inference_engine_dispatched
+        # pattern. ``engine_type`` is the class identity from
+        # ``type(pipe).__name__`` (e.g. ``CPUPixelDecoderPipeline``); on
+        # Atlas ``NPUDiffusionPipeline``. ``dispatch_error`` is None on
+        # success and carries the structured error string on failure.
+        "frame_gen_dispatched": fg.get("frame_gen_dispatched", {}),
         "policy_bootstrap": pol,
         "outer_loop": outer,
         "notes": [

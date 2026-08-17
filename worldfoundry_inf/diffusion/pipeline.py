@@ -59,6 +59,23 @@ class LatentToFramePipeline(ABC):
         """
         return True
 
+    def provider_summary(self) -> dict:
+        """Return a structured dispatch fingerprint for the orchestrator.
+
+        M3-T8 contract: the orchestrator's ``frame_gen_phase`` records
+        this in ``summary.frame_gen_dispatched`` so post-mortem tools
+        can tell which pipeline class actually served the rollout. The
+        default returns a minimal ``engine`` / ``kind`` / ``available``
+        dict; concrete subclasses override to surface the real provider
+        name (CPU vs NPU vs ONNX EP), compile path, and any kwargs that
+        influence the dispatch (e.g. ``img_size``, ``patch_size``).
+        """
+        return {
+            "engine": type(self).__name__,
+            "kind": "unknown",
+            "available": bool(type(self).available()),
+        }
+
     @abstractmethod
     def encode_latents(self, video: torch.Tensor) -> torch.Tensor:
         """Encode ``(B, T, 3, H, W)`` video to ``(B, N, encoder_dim)``.

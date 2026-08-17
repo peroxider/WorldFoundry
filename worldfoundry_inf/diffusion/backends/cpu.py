@@ -87,6 +87,33 @@ class CPUPixelDecoderPipeline(LatentToFramePipeline):
         return True
 
     # ------------------------------------------------------------------ #
+    # provider_summary
+    # ------------------------------------------------------------------ #
+    def provider_summary(self) -> dict:
+        """M3-T8 dispatch fingerprint for the CPU pixel-decoder stub.
+
+        Surfaces the class identity plus the construction kwargs that
+        influence shape / determinism so the orchestrator's
+        ``frame_gen_dispatched`` block is enough to reconstruct the
+        pipeline config from the summary alone (no separate config
+        file needed). Matches the W40 frame-gen ADR sec 5.2 contract:
+        ``engine`` is the canonical name; ``kind`` is the provider
+        family; ``extras`` carries shape / seed metadata.
+        """
+        return {
+            "engine": "cpu_pixel_decoder",
+            "kind": "cpu_pixel_decoder",
+            "available": True,
+            "extras": {
+                "class": type(self).__name__,
+                "encoder_dim": self.encoder_dim,
+                "img_size": self.img_size,
+                "patch_size": self.patch_size,
+                "seed": self.seed,
+            },
+        }
+
+    # ------------------------------------------------------------------ #
     # encode
     # ------------------------------------------------------------------ #
     def encode_latents(self, video: torch.Tensor) -> torch.Tensor:
