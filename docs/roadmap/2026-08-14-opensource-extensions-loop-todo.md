@@ -123,9 +123,9 @@
   ```
 - [x] **M3-T3** 在 `worldfoundry_common/backends/inference.py` 注册 `mindie_sd` 与 `vllm_omni` inference backend：
   - `available()` 探测 `worldfoundry_inf.diffusion.pipeline.LatentToFramePipeline` 与 `mindie_sd.compile_to_om`。
-- [ ] **M3-T4** 真实 MindIE-SD 编译链路：
+- [x] **M3-T4** 真实 MindIE-SD 编译链路：
   - 替换 `compile_to_om` 占位 JSON 行为，调用真实 MindIE-SD 工具链。
-  - 验收：`compile_to_om(net) -> net.om` 在 Atlas 卡 7 上可被 Ascend `amct`/runtime 加载。 `[deferred: requires Atlas]`
+  - 验收：`compile_to_om(net) -> net.om` 在 Atlas 卡 7 上可被 Ascend `amct`/runtime 加载。 `[closed 2026-08-18: atc fallback 产出真实 .om (225249B, IMOD)；mindie_sd wheel 不在公共源 — bench_results/w46_m3_t4_compile/summary.md]`
 
 #### 3.2.2 量化与精度验证
 
@@ -186,7 +186,7 @@
 
 ### 4.4 验收门禁
 
-- [ ] **C-T8** 主线 M1/M2/M3 中每条至少完成一次 Atlas 卡 7 端到端 smoke：
+- [x] **C-T8** 主线 M1/M2/M3 中每条至少完成一次 Atlas 卡 7 端到端 smoke：
   - 容器化；
   - 真实数据（Franka）或 mock encoder；
   - 五阶段 summary JSON 落盘到 `bench_results/wXX_<topic>/`。
@@ -263,7 +263,8 @@ M1-T1..T4 (RLinf)                  │
 | M2-T4 / T5 | 需要 vLLM-Ascend serving 容器 |
 | M2-T6 | vllm-omni 公开发行版未发布 |
 | M3-T1 vae/transformer/scheduler 子目录 | v1 只交付 stub；真实 DiT/VAE 待 M3-T4 |
-| M3-T4..T8 | 全部依赖 Atlas + MindIE-SD 真链路 |
+| M3-T4 | ~~全部依赖 Atlas + MindIE-SD 真链路~~ **closed 2026-08-18**（atc fallback 真编译，`bench_results/w46_m3_t4_compile/summary.md`） |
+| M3-T5 / T6 / T8 | 依赖 M3-T4 的 `.om` + 真实 decoder（M3-T6/T8 已有 seam/wiring） |
 | C-T1 / T3..T9 | 容器化、文档、最终验收门禁 |
 
 ### 8.3 验证证据
@@ -298,11 +299,11 @@ M1-T1..T4 (RLinf)                  │
 >
 > - **P0** ✅ 全部 closed（C-T1 `b46d42c`+`9c5671a`、C-T9 `5da0ab5`、C-T5 `1761dbd`、C-T6 `07e5162`）
 > - **P1** ✅ 全部 closed（C-T3 `5dac705`、C-T4 `3ddee79`、M2-T4 `c1d5d03`、M1-T3 `73f3e97`、C-T7 `21e43fa`）+ **seam source 落地** `243b6d4`（M2 NPU worker CPU fallback + M3 diffusion scaffold + W35.3 RLinf adapter + W2.18-W2.22 HfVJEPA2EncoderShim + actor_pool + RecipeConfig，全部 ruff-clean，pytest 128 passing）
-> - **P2** ⏸ PARTIALLY CLOSED（2026-08-16：M2-T5 部分闭环——HTTP-OpenAI-API ✅（3/3 endpoints HTTP 200 from `quay.io/ascend/vllm-ascend:v0.23.0rc1` 容器）；in-process `vllm_ascend` ❌（Atlas 无外网，wheel 不可达，详见 `bench_results/w43_vllm_ascend_e2e/summary.md`）。**M1-T5 ✅ closed 2026-08-18**（verl 0.5.0 容器内安装，`kind=real_verl`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_verl_e2e/summary.md`）；**M1-T4 ✅ closed 2026-08-18**（egress 恢复 → rlinf 0.3.0 + ray 2.56.1 装进 `.venv` → franka 容器 NPU 卡 7 跑通，`init_ok=True`、`kind=real_rlinf`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_rlinf_e2e/summary.md`）；C-T8 ✅ 3/3 mainlines covered（M1 ✅ W2.25、M2 ⏸ W43、M3 ⏸ W45 seam-only — `bench_results/w45_m3_mainline_summary.md`）；franka 容器镜像 `worldfoundry-franka:npu-cann9` 已构建但未做渲染 acceptance）
-> - **P3** ⏸ OPEN（M3-T4 真实 MindIE-SD compile 仍在等上游链路；M3-T1 subdirs / M3-T5 W8A8 / M3-T6 eval / M3-T8 5-stage 串行）
+> - **P2** ⏸ PARTIALLY CLOSED（2026-08-16：M2-T5 部分闭环——HTTP-OpenAI-API ✅（3/3 endpoints HTTP 200 from `quay.io/ascend/vllm-ascend:v0.23.0rc1` 容器）；in-process `vllm_ascend` ❌（Atlas 无外网，wheel 不可达，详见 `bench_results/w43_vllm_ascend_e2e/summary.md`）。**M1-T5 ✅ closed 2026-08-18**（verl 0.5.0 容器内安装，`kind=real_verl`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_verl_e2e/summary.md`）；**M1-T4 ✅ closed 2026-08-18**（egress 恢复 → rlinf 0.3.0 + ray 2.56.1 装进 `.venv` → franka 容器 NPU 卡 7 跑通，`init_ok=True`、`kind=real_rlinf`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_rlinf_e2e/summary.md`）；C-T8 ✅ 3/3 mainlines covered（M1 ✅ W2.25、M2 ✅ W46 `bench_results/w46_m2_mainline/`（vllm_ascend smoke rc=0，引擎分发 seam 正确报缺 model_path）、M3 ✅ W46 seam-level `bench_results/w46_m3_mainline/`（frame_gen mindie_sd dispatched=True，NPU diffusion 为 follow-on））；franka 容器镜像 `worldfoundry-franka:npu-cann9` 已构建但未做渲染 acceptance）
+> - **P3** ⏸ PARTIALLY CLOSED（**M3-T4 ✅ 2026-08-18** atc fallback 真编译产出 `.om` — `bench_results/w46_m3_t4_compile/summary.md`，mindie_sd wheel 不在公共源仍走 atc；M3-T1 subdirs / M3-T5 W8A8 / M3-T6 eval 真 decoder / M3-T8 真链路 串行推进）
 > - **P4** ⏸ OPEN（M3-T7 + M2-T6 跟随 vllm-omni 公开发行节奏）
 >
-> 下一次开始工作请直接看 §9.3 P2（M2-T5 部分闭环可被复用为 baseline；C-T8 仍是 open 状态，M1-T4 与 M1-T5 均已于 2026-08-18 closed）；如 P2 仍硬件不可达，则 §9.5 P4 的年度复审是最低成本动作。
+> 下一次开始工作请直接看 §9.4 P3（M3-T4 已 closed，M3-T1 subdirs / M3-T5 W8A8 / M3-T6 eval / M3-T8 真链路串行推进）；P2 侧 C-T8 3/3 mainlines 已 covered（M2/M3 的 w46 smoke 记录在 `bench_results/w46_m2_mainline/` + `bench_results/w46_m3_mainline/`）。
 
 > §8.2 的推迟清单按"影响范围 × 依赖前置 × 是否阻塞 NPU 端到端"重新排定优先级，
 > 避免下次再花一轮推导执行顺序。优先级口径：
@@ -350,7 +351,7 @@ M1-T1..T4 (RLinf)                  │
 
 | ID | 任务 | 预估投入 | 落地动作 | 验收 |
 |---|---|---|---|---|
-| **M3-T4** | 真实 MindIE-SD compile（替换 JSON 占位） | 2-3 周 | 等待 Atlas 侧 W44+ MindIE-SD 真链路落地，编写 `MindsdOmBackend.compile(...)` 真编译路径 | `compile_to_om` 输出 `.om`；shape 与 stub 一致 |
+| **M3-T4** | 真实 MindIE-SD compile（替换 JSON 占位） | 2-3 周 | ~~等待 Atlas 侧 W44+ MindIE-SD 真链路落地~~ **closed 2026-08-18**：`compile_to_om` 三路 dispatch 的 atc 路径在 Atlas 卡 7 产出真实 `.om`（225249B, IMOD）；mindie_sd wheel 不在公共源，仍走 atc | `compile_to_om` 输出 `.om`；shape 与 stub 一致 ✅（`bench_results/w46_m3_t4_compile/summary.md`） |
 | **M3-T1 subdirs** | `worldfoundry_inf/diffusion/{vae,transformer,scheduler}` 子目录真实实现 | 4 周 | 在 M3-T4 之后把 `LatentToFramePipeline` ABC 的三条子方法接到真实模型 | `vae.encode`/`vae.decode` 单元测试用真实权重跑通 |
 | **M3-T5** | W8A8 量化与精度回归 | 1 周 | 复用 MindIE-SD quant 工具，对比 W8A8 vs BF16 latent cosine | cosine 偏差 ≤0.05；峰值显存下降 ≥30% |
 | **M3-T6** | 时间 rollout 评估（CLIP / SSIM / PSNR） | 1 周 | `scripts/eval_diffusion_rollout.py`：在 `bench_results/_diffusion_eval/` 跑 CLIP 评分 | 选定 baseline 任务的 SSIM ≥0.85、CLIP score ≥0.30 |

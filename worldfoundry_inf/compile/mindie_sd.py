@@ -177,6 +177,35 @@ def _compile_via_mindie_sd(
     return Path(result) if result is not None else output_path
 
 
+def _onnx_input_shape(onnx_file: Path) -> str | None:
+    """Materialize ATC ``--input_shape`` from an ONNX graph's inputs.
+
+    ``torch.onnx.export(..., dynamic_axes=...)`` writes symbolic dims
+    (``dim_value == 0``) into the graph; ATC rejects those with
+    ``Invalid_Argument: Value NULL for parameter --input_shape``. This
+    helper reads each graph input's shape, replaces symbolic/empty dims
+    with ``1``, and returns the ATC ``--input_shape`` argument string
+    (e.g. ``"latent:1,64,64"``). Returns ``None`` when ``onnx`` is not
+    importable or the graph has no inputs (let ATC report its own error).
+    """
+    try:
+        import onnx  # noqa: F401  -- optional runtime dep
+    except ImportError:  # pragma: no cover -- probe is best-effort
+        return None
+    model = onnx.load(str(onnx_file))
+    spec_parts: list[str] = []
+    for graph_input in model.graph.input:
+        dims: list[str] = []
+        for dim in graph_input.type.tensor_type.shape.dim:
+            if dim.dim_value > 0:
+                dims.append(str(int(dim.dim_value)))
+            else:  # symbolic / dynamic dim -> ATC needs a concrete value
+                dims.append("1")
+        if dims:
+            spec_parts.append(f"{graph_input.name}:{','.join(dims)}")
+    return ";".join(spec_parts) if spec_parts else None
+
+
 def _compile_via_atc(
     model_path: Path,
     output_path: Path,
@@ -215,6 +244,13 @@ def _compile_via_atc(
         "--output", str(output_path),
         "--soc-version", soc_version,
     ]
+    # ATC rejects dynamic axes with "Value NULL for parameter
+    # --input_shape is invalid". torch.onnx.export with dynamic_axes
+    # produces exactly that, so materialize concrete input shapes from
+    # the graph (dynamic dims -> 1) and pass --input_shape explicitly.
+    input_shape = _onnx_input_shape(onnx_file)
+    if input_shape:
+        cmd += ["--input_shape", input_shape]
     try:
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=1800,
@@ -237,6 +273,14 @@ def _compile_via_atc(
             f"stdout (tail): {stdout_tail}"
         )
 
+    # ATC appends ".om" to the --output value (e.g. "model.om" ->
+    # "model.om.om"), so check both the requested path and the
+    # suffixed one; rename to the requested path to keep the public
+    # contract (`compile_to_om` returns exactly `output_path`).
+    if not output_path.exists():
+        atc_appended = Path(str(output_path) + ".om")
+        if atc_appended.exists():
+            atc_appended.rename(output_path)
     if not output_path.exists():
         raise OMCompileError(
             f"atc returned 0 but did not write {output_path}; "
