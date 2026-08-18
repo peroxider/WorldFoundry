@@ -14,9 +14,15 @@ import logging
 from worldfoundry_inf import _vllm_ascend_plugin as plugin
 
 
-def test_register_returns_npu_platform_path():
-    """register() returns vllm_ascend.platform.NPUPlatform — the documented contract."""
-    assert plugin.register() == "vllm_ascend.platform.NPUPlatform"
+def test_register_returns_none_to_avoid_double_activation():
+    """register() returns None — vllm-ascend's own 'ascend' plugin owns activation.
+
+    vLLM 0.18 raises ``RuntimeError: Only one platform plugin can be
+    activated`` when two out-of-tree platform plugins return a class
+    path. vllm-ascend ships its own ``ascend`` plugin, so this module
+    must return None (never double-activate).
+    """
+    assert plugin.register() is None
 
 
 def test_register_model_no_op_when_vllm_missing(caplog):

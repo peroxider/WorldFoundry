@@ -1,0 +1,36 @@
+{
+  "m3_t7": {
+    "pipeline_type": "RealVLLMOmniPipeline",
+    "pipeline_kind": "real_vllm_omni",
+    "vllm_omni_version": "0.18.0",
+    "extras": {
+      "dispatch": "real_vllm",
+      "vllm_version": "0.18.0+empty"
+    }
+  },
+  "m2_t6_adapter": {
+    "vllm_version": "0.18.0+empty",
+    "llm_class_import_ok": true,
+    "llm_class_path": "vllm.entrypoints.llm.LLM"
+  },
+  "frame_metrics": {
+    "ssim": null,
+    "psnr_db": null,
+    "clip_score": null,
+    "n_frames": 8,
+    "passed": null,
+    "thresholds": null,
+    "note": "pipeline has no VAE reconstruct path; metrics skipped"
+  },
+  "rollout_shape": [
+    1,
+    2,
+    3,
+    64,
+    64
+  ],
+  "notes": [
+    "P4 joint eval: M3-T7 Omni output + M2-T6 vllm-omni adapter + M3-T6 metrics",
+    "clip_score null when CLIP backbone unavailable (HF_ENDPOINT mirror on Atlas)"
+  ]
+}

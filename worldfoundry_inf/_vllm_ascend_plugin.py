@@ -36,23 +36,29 @@ def _vllm_model_registry():
 def register() -> str | None:
     """Return the vLLM platform class path for the Ascend NPU.
 
-    Called by vLLM when it loads the ``vllm.platform_plugins`` entry point.
-    We delegate to vllm-ascend's existing platform implementation rather
-    than ship our own — that's the established convention per vllm-ascend
-    0.18.0's own ``register()``.
+    vLLM 0.18's ``resolve_current_platform_cls_qualname`` raises
+    ``RuntimeError: Only one platform plugin can be activated`` when
+    TWO out-of-tree platform plugins return a non-None class path.
+    vllm-ascend 0.18.0 ships its OWN ``vllm.platform_plugins`` entry
+    point (``ascend``) that returns ``vllm_ascend.platform.NPUPlatform``,
+    so this module must return ``None`` on Atlas to let that plugin be
+    the single activated one — returning the same path here would
+    double-activate and crash vLLM startup.
 
-    On CPU-only dev hosts (no Atlas, no vllm-ascend wheel), we return
-    ``None`` so vLLM's plugin loader falls through to the next option
-    (``vllm.platforms.interface.UnspecifiedPlatform``) instead of
-    crashing on ``import vllm_ascend``. The plugin still activates --
-    just doesn't dictate the platform class. Atlas deployments with
-    the vllm-ascend wheel installed get the real NPUPlatform.
+    On CPU-only dev hosts (no Atlas, no vllm-ascend wheel), we also
+    return ``None`` so vLLM's plugin loader falls through to
+    ``vllm.platforms.interface.UnspecifiedPlatform`` instead of
+    crashing. The probe still touches ``vllm_ascend.platform`` so the
+    wheel's presence is validated; ``register_model`` (the
+    ``vllm.general_plugins`` entry point) does the actual VJEPA2Model
+    registration.
     """
     try:
         import vllm_ascend.platform  # noqa: F401  -- probe wheel presence
-        return "vllm_ascend.platform.NPUPlatform"
     except ImportError:
-        return None
+        pass
+    # vllm-ascend's own 'ascend' plugin owns platform activation.
+    return None
 
 
 def register_model() -> None:

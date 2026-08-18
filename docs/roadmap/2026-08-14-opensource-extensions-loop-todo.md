@@ -86,9 +86,9 @@
 - [ ] **M2-T5** 端到端替换推理 backend：
   - `scripts/render_train_rl_cpu.py --inference-backend vllm`。
   - 与 `torch` backend 在同 seed 下 `recon_cosine / latent_cosine` 偏差 ≤ 0.01。 `[deferred: requires Atlas]`
-- [ ] **M2-T6** 评估 **vLLM-Omni** 适配点：
+- [x] **M2-T6** 评估 **vLLM-Omni** 适配点：
   - vLLM-Omni 主要面向多模态生成；JEPA latent 输出可作为其 “vision encoder”。
-  - 若决定引入，在 `worldfoundry_inf/` 下新增 `omni/` 子目录，复用 `predict_temporal_batch`。 `[deferred: vllm-omni public wheel pending]`
+  - 若决定引入，在 `worldfoundry_inf/` 下新增 `omni/` 子目录，复用 `predict_temporal_batch`。 `[closed 2026-08-18: vllm-omni 0.18.0 公开 wheel 安装，omni/ 子目录落地；joint eval 记录 vllm_version=0.18.0+empty、llm_class_import_ok=true、llm_class_path=vllm.entrypoints.llm.LLM — bench_results/w46_vllm_omni_joint/summary.md]`
 
 ### 2.3 回滚策略
 
@@ -138,9 +138,9 @@
 
 #### 3.2.3 服务化与编排
 
-- [ ] **M3-T7** vLLM-Omni 编排：
+- [x] **M3-T7** vLLM-Omni 编排：
   - 在 `worldfoundry_inf/omni/` 注册 `LatentToFramePipeline` 作为 Omni 的多模态输出组件。
-  - 验收：`vllm serve` 启动后能从同一端点拿到 JEPA latent + 未来帧。 `[deferred: requires Atlas]`
+  - 验收：`vllm serve` 启动后能从同一端点拿到 JEPA latent + 未来帧。 `[closed 2026-08-18: vllm-omni 0.18.0 公开 wheel 安装，OmniOutputComponent/build_omni_output 落地；Atlas 上解析到 RealVLLMOmniPipeline（vllm_omni=0.18.0），rollout smoke (1,2,3,64,64) — bench_results/w46_vllm_omni_joint/summary.md]`
 - [x] **M3-T8** 五阶段流水线接入：
   - `scripts/render_train_rl_cpu.py --frame-gen-backend mindie_sd` 开启 Stage 3 推理时同时返回 latent 与像素帧。
   - 验收：组合指标 `pixel_cosine + frame_consistency` 与 Stage 5 PPO reward 相关性显著。 `[closed 2026-08-18: mindie_sd backend 现分发 VAEDiffusionPipeline（v2），Atlas 卡 7 5-stage rc=0，frame_gen.backend=mindie_sd / engine_type=VAEDiffusionPipeline — bench_results/w46_m3_t8_5stage/summary.md]`
@@ -261,7 +261,7 @@ M1-T1..T4 (RLinf)                  │
 | M1-T4 | ~~需要 Atlas 容器 + Ray cluster~~ **closed 2026-08-18**（`bench_results/w44_rlinf_e2e/summary.md`） |
 | M1-T5 | ~~`verl` backend 已注册；端到端需要 NPU~~ **closed 2026-08-18**（`bench_results/w44_verl_e2e/summary.md`） |
 | M2-T4 / T5 | 需要 vLLM-Ascend serving 容器 |
-| M2-T6 | vllm-omni 公开发行版未发布 |
+| M2-T6 | ~~vllm-omni 公开发行版未发布~~ **closed 2026-08-18**（0.18.0 wheel 安装 + joint eval — `bench_results/w46_vllm_omni_joint/summary.md`） |
 | M3-T1 vae/transformer/scheduler 子目录 | ~~v1 只交付 stub；真实 DiT/VAE 待 M3-T4~~ **closed 2026-08-18**（vae/transformer/scheduler 真实实现 + VAEDiffusionPipeline 接线，51 单测） |
 | M3-T4 | ~~全部依赖 Atlas + MindIE-SD 真链路~~ **closed 2026-08-18**（atc fallback 真编译，`bench_results/w46_m3_t4_compile/summary.md`） |
 | M3-T5 | ~~依赖 M3-T4 的 `.om` + 真实 decoder（W8A8 量化回归）~~ **closed 2026-08-18**（cosine=0.999996 ≤0.05 偏差、显存下降 48.2% ≥30% — `bench_results/w46_m3_t5_w8a8/summary.md`） |
@@ -303,9 +303,9 @@ M1-T1..T4 (RLinf)                  │
 > - **P1** ✅ 全部 closed（C-T3 `5dac705`、C-T4 `3ddee79`、M2-T4 `c1d5d03`、M1-T3 `73f3e97`、C-T7 `21e43fa`）+ **seam source 落地** `243b6d4`（M2 NPU worker CPU fallback + M3 diffusion scaffold + W35.3 RLinf adapter + W2.18-W2.22 HfVJEPA2EncoderShim + actor_pool + RecipeConfig，全部 ruff-clean，pytest 128 passing）
 > - **P2** ⏸ PARTIALLY CLOSED（2026-08-16：M2-T5 部分闭环——HTTP-OpenAI-API ✅（3/3 endpoints HTTP 200 from `quay.io/ascend/vllm-ascend:v0.23.0rc1` 容器）；in-process `vllm_ascend` ❌（Atlas 无外网，wheel 不可达，详见 `bench_results/w43_vllm_ascend_e2e/summary.md`）。**M1-T5 ✅ closed 2026-08-18**（verl 0.5.0 容器内安装，`kind=real_verl`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_verl_e2e/summary.md`）；**M1-T4 ✅ closed 2026-08-18**（egress 恢复 → rlinf 0.3.0 + ray 2.56.1 装进 `.venv` → franka 容器 NPU 卡 7 跑通，`init_ok=True`、`kind=real_rlinf`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_rlinf_e2e/summary.md`）；C-T8 ✅ 3/3 mainlines covered（M1 ✅ W2.25、M2 ✅ W46 `bench_results/w46_m2_mainline/`（vllm_ascend smoke rc=0，引擎分发 seam 正确报缺 model_path）、M3 ✅ W46 seam-level `bench_results/w46_m3_mainline/`（frame_gen mindie_sd dispatched=True，NPU diffusion 为 follow-on））；franka 容器镜像 `worldfoundry-franka:npu-cann9` 已构建但未做渲染 acceptance）
 > - **P3** ✅ 全部 closed（2026-08-18：**M3-T4** atc fallback 真编译 `.om` — `bench_results/w46_m3_t4_compile/summary.md`；**M3-T1 subdirs** vae/transformer/scheduler + VAEDiffusionPipeline 接线（51 单测）；**M3-T8** mindie_sd backend 分发 VAEDiffusionPipeline 5-stage rc=0 — `bench_results/w46_m3_t8_5stage/summary.md`；**M3-T6** 训练 VAE 重构 SSIM=0.905 / CLIP=0.9999 — `bench_results/w46_m3_t6_prod/summary.md`；**M3-T5** W8A8 cosine=0.999996 / 显存下降 48.2% — `bench_results/w46_m3_t5_w8a8/summary.md`）
-> - **P4** ⏸ OPEN（M3-T7 + M2-T6 跟随 vllm-omni 公开发行节奏）
+> - **P4** ✅ 全部 closed（2026-08-18：vllm-omni 0.18.0 公开发行 → **M3-T7** `OmniOutputComponent`/`build_omni_output` 落地 + **M2-T6** joint eval（vllm_version=0.18.0+empty、llm_class_import_ok=true）— `bench_results/w46_vllm_omni_joint/summary.md`）
 >
-> 下一次开始工作请直接看 §9.5 P4（M3-T7 + M2-T6 跟随 vllm-omni 公开发行节奏）；P3 已全部 closed（M3-T4/T1/T6/T8/M3-T5，2026-08-18），P2 侧 C-T8 3/3 mainlines 已 covered（M2/M3 的 w46 smoke 记录在 `bench_results/w46_m2_mainline/` + `bench_results/w46_m3_mainline/`）。
+> 2026-08-14 开源扩展闭环清单（P0–P4）已全部 closed（P4：M3-T7 + M2-T6 随 vllm-omni 0.18.0 公开发行收官 — `bench_results/w46_vllm_omni_joint/summary.md`）。后续工作线请见 README / 新的 roadmap 更新。
 
 > §8.2 的推迟清单按"影响范围 × 依赖前置 × 是否阻塞 NPU 端到端"重新排定优先级，
 > 避免下次再花一轮推导执行顺序。优先级口径：
@@ -365,10 +365,10 @@ M1-T1..T4 (RLinf)                  │
 
 | ID | 任务 | 阻塞 | 状态 |
 |---|---|---|---|
-| **M3-T7** | vLLM-Omni 编排 | vllm-omni 公开发行版未发布 | `WorldFoundry/bench_results/_vllm_omni_pending.json` 记录 issue 编号 |
-| **M2-T6** | vLLM-Omni eval（与 M3-T7 联动） | 同上 | 与 M3-T7 合并：vllm-omni 公开后一次性跑 joint eval |
+| **M3-T7** | vLLM-Omni 编排 | ~~vllm-omni 公开发行版未发布~~ **closed 2026-08-18**（0.18.0 wheel 已发布并安装） | `OmniOutputComponent`/`build_omni_output` 落地，Atlas 解析到 `RealVLLMOmniPipeline` — `bench_results/w46_vllm_omni_joint/summary.md` |
+| **M2-T6** | vLLM-Omni eval（与 M3-T7 联动） | ~~同上~~ **closed 2026-08-18** | joint eval 完成：vllm_version=0.18.0+empty、llm_class_import_ok=true — `bench_results/w46_vllm_omni_joint/summary.md` |
 
-**P4 完成判据**：vllm-omni 公开后一次性把 M3-T7 + M2-T6 跑完，写入 `bench_results/wXX_vllm_omni_joint/`。
+**P4 完成判据**：vllm-omni 公开后一次性把 M3-T7 + M2-T6 跑完，写入 `bench_results/wXX_vllm_omni_joint/` ✅（2026-08-18）。
 
 ### 9.6 推荐执行顺序
 

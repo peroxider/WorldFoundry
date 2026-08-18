@@ -300,26 +300,27 @@ class OnnxVJEPAWorker:
         :meth:`VJEPA2Worker.encode`.
 
         The encoder was exported as 4-D ``(B, C, H, W)`` with only the
-        batch axis dynamic; we collapse ``(B, T)`` here in numpy and
-        reshape back to ``(B, T*N, D)`` after ORT returns.
+        batch axis declared dynamic; on some exporters the internal
+        ``gemm_input_reshape`` node is batch-1-only (dynamic batch at
+        the boundary does not propagate through every reshape). To stay
+        safe across exporters we run ORT **per frame** (batch=1) and
+        stack the results, then reshape back to ``(B, T*N, D)``.
         """
         if video_tensor.ndim != 5:
             raise ValueError(
                 f"video must be (B, T, C, H, W); got {tuple(video_tensor.shape)}"
             )
         b, t, c, h, w = video_tensor.shape
-        x = (
-            video_tensor.reshape(b * t, c, h, w)
-            .detach().cpu().numpy().astype(np.float32)
-        )
-        outputs = self.session.run(
-            ["last_hidden_state"], {"pixel_values": x},
-        )
-        feats = outputs[0]
-        feats_tensor = torch.from_numpy(feats)
-        n_tokens = feats_tensor.shape[1]
-        d = feats_tensor.shape[-1]
-        return feats_tensor.reshape(b, t * n_tokens, d)
+        frames = video_tensor.reshape(b * t, c, h, w)
+        feats_list = []
+        for i in range(b * t):
+            x = frames[i : i + 1].detach().cpu().numpy().astype(np.float32)
+            outputs = self.session.run(["last_hidden_state"], {"pixel_values": x})
+            feats_list.append(torch.from_numpy(outputs[0]))
+        feats = torch.cat(feats_list, dim=0)
+        n_tokens = feats.shape[1]
+        d = feats.shape[-1]
+        return feats.reshape(b, t * n_tokens, d)
 
     @torch.no_grad()
     def predict(
