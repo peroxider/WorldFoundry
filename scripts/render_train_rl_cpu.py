@@ -1698,12 +1698,20 @@ def build_runner(args: argparse.Namespace, env_pool: Any, policy: Any, cfg: Any)
         result = runner.run({"env_pool": env_pool, "policy": policy, "cfg": cfg})
         return result
     if backend == "verl":
-        raise NotImplementedError(
-            "--rl-backend=verl is reserved for M1-T5 (P2). Today, "
-            "falls back to self_ppo by omitting --rl-backend. "
-            "See docs/superpowers/specs/2026-08-15-w42-rlinf-runner-factory.md "
-            "§5.3."
+        # M1-T5 (P2): real verl dispatch. ``verl_factory.build_runner``
+        # imports the real verl package, inspects
+        # ``verl.trainer.main_ppo.run_ppo`` (the documented programmatic
+        # entry in verl 0.5.0) and returns a ``RealVerlRunner`` whose
+        # ``.run()`` emits the canonical summary dict (kind="real_verl").
+        # The orchestrator's own 5-phase pipeline drives the world-model
+        # train/inference/policy loop; this dispatch only leaves the
+        # framework-stamped record in ``policy_bootstrap``.
+        from worldfoundry_rl.verl_factory import build_runner as build_verl_runner
+
+        verl_runner = build_verl_runner(
+            {"env_pool": env_pool, "policy": policy, "cfg": cfg}
         )
+        return verl_runner.run()
     raise ValueError(f"build_runner: unknown rl_backend {backend!r}")
 
 

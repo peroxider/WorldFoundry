@@ -1382,17 +1382,76 @@ def test_rl_backend_rlinf_without_factory_raises_actionable_error() -> None:
     assert "--rlinf-runner-factory" in str(excinfo.value)
 
 
-def test_rl_backend_verl_raises_notimplemented_m1t5() -> None:
-    """``--rl-backend=verl`` raises ``NotImplementedError`` referencing M1-T5."""
+def test_rl_backend_verl_dispatches_to_real_factory() -> None:
+    """``--rl-backend=verl`` dispatches to the real verl_factory path (M1-T5).
+
+    M1-T5 replaced the reserved ``NotImplementedError`` hook with the real
+    verl dispatch: :func:`build_runner` routes through
+    ``worldfoundry_rl.verl_factory.build_runner`` which imports the real
+    verl package. With a fake ``verl`` installed in ``sys.modules`` the
+    branch must return the canonical ``{framework: verl, kind: real_verl}``
+    summary dict — proving the seam is wired (not a stub raise).
+    """
+    import sys
+    import types
+
     from scripts.render_train_rl_cpu import build_runner
 
     class _Args:
         rl_backend = "verl"
         rlinf_runner_factory = None
 
-    with pytest.raises(NotImplementedError) as excinfo:
-        build_runner(_Args(), env_pool=None, policy=None, cfg=None)
-    assert "M1-T5" in str(excinfo.value)
+    # Fake verl.trainer.main_ppo with the two symbols verl_factory imports.
+    verl = types.ModuleType("verl")
+    verl.__path__ = []
+    sys.modules["verl"] = verl
+    trainer = types.ModuleType("verl.trainer")
+    trainer.__path__ = []
+    main_ppo = types.ModuleType("verl.trainer.main_ppo")
+    main_ppo.run_ppo = lambda cfg: None
+    main_ppo.is_cuda_available = lambda: False
+    sys.modules["verl.trainer"] = trainer
+    sys.modules["verl.trainer.main_ppo"] = main_ppo
+    try:
+        out = build_runner(
+            _Args(),
+            env_pool=object(),   # verl_factory only checks non-None
+            policy=object(),
+            cfg=None,
+        )
+        assert isinstance(out, dict), out
+        assert out["framework"] == "verl", out
+        assert out["kind"] == "real_verl", out
+        assert out["entry_point"] == "verl.trainer.main_ppo.run_ppo", out
+        assert out["status"] == "completed", out
+    finally:
+        for name in ("verl", "verl.trainer", "verl.trainer.main_ppo"):
+            sys.modules.pop(name, None)
+
+
+def test_rl_backend_verl_without_verl_raises_import_error() -> None:
+    """``--rl-backend=verl`` without the verl package raises ImportError (M1-T5).
+
+    The real factory imports verl at module import time; on a box without
+    verl the error must surface as ``ImportError`` naming ``verl`` (not a
+    silent fallback to self_ppo), so misconfigured hosts fail loudly.
+    """
+    import sys
+
+    from scripts.render_train_rl_cpu import build_runner
+
+    class _Args:
+        rl_backend = "verl"
+        rlinf_runner_factory = None
+
+    # Ensure no verl is importable (pop any leftover fake from other tests).
+    for name in list(sys.modules):
+        if name == "verl" or name.startswith("verl."):
+            sys.modules.pop(name, None)
+
+    with pytest.raises(ImportError) as excinfo:
+        build_runner(_Args(), env_pool=object(), policy=object(), cfg=None)
+    assert "verl" in str(excinfo.value)
 
 
 def test_import_dotted_handles_colon_and_dot() -> None:

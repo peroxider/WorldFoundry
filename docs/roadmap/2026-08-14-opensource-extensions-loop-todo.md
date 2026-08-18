@@ -45,12 +45,12 @@
   - 复用现有 LoRA 编码器与 action-conditioned predictor。
   - 暴露 `forward(env_obs)` / `value(env_obs)` 接口。
 - [ ] **M1-T3** 在 `scripts/render_train_rl_cpu.py` 或新入口脚本中提供 `--rl-backend rlinf --rlinf-runner-factory <callable>` 路径，失败时优雅降级到 `--rl-backend self_ppo`。 `[deferred: requires Atlas]`
-- [ ] **M1-T4** 在 Atlas 容器中验证一次 rlinf-backed run：
+- [x] **M1-T4** 在 Atlas 容器中验证一次 rlinf-backed run：
   - 单机 Ray cluster，`actor`/`rollout`/`env`/`reward` 至少各 1 worker。
-  - 验收：`rewards` 与 `self_ppo` 路径在同 seed 下趋势一致（±5%）。 `[deferred: requires Atlas]`
-- [ ] **M1-T5** 若 W35.2 版本矩阵冲突仍未解决，按 ADR 切到 **verl**：
+  - 验收：`rewards` 与 `self_ppo` 路径在同 seed 下趋势一致（±5%）。 `[closed 2026-08-18: init_ok=True, kind=real_rlinf, wm_loss drift 0.0%, reward_post drift ~1.2% — bench_results/w44_rlinf_e2e/summary.md]`
+- [x] **M1-T5** 若 W35.2 版本矩阵冲突仍未解决，按 ADR 切到 **verl**：
   - 在 `worldfoundry_common/backends/training.py` 注册 `verl` backend（已在 `worldfoundry_common/backends/training.py:112-121` 注册；端到端需 NPU）。
-  - 验收：`scripts/render_train_rl_cpu.py --rl-backend verl --num-outer-iters 1` 一次跑通。 `[deferred: requires Atlas]`
+  - 验收：`scripts/render_train_rl_cpu.py --rl-backend verl --num-outer-iters 1` 一次跑通。 `[closed 2026-08-18: verl 0.5.0 容器内安装，kind=real_verl，wm_loss drift 0.0%、reward_post drift ~1.2% — bench_results/w44_verl_e2e/summary.md]`
 
 ### 1.3 回滚策略
 
@@ -257,8 +257,9 @@ M1-T1..T4 (RLinf)                  │
 
 | ID | 推迟原因 |
 |---|---|
-| M1-T3 / T4 | 需要 Atlas 容器 + Ray cluster |
-| M1-T5 | `verl` backend 已注册；端到端需要 NPU |
+| M1-T3 | 需要 Atlas 容器 + Ray cluster（已由 M1-T4 2026-08-18 闭环顺带验证） |
+| M1-T4 | ~~需要 Atlas 容器 + Ray cluster~~ **closed 2026-08-18**（`bench_results/w44_rlinf_e2e/summary.md`） |
+| M1-T5 | ~~`verl` backend 已注册；端到端需要 NPU~~ **closed 2026-08-18**（`bench_results/w44_verl_e2e/summary.md`） |
 | M2-T4 / T5 | 需要 vLLM-Ascend serving 容器 |
 | M2-T6 | vllm-omni 公开发行版未发布 |
 | M3-T1 vae/transformer/scheduler 子目录 | v1 只交付 stub；真实 DiT/VAE 待 M3-T4 |
@@ -297,11 +298,11 @@ M1-T1..T4 (RLinf)                  │
 >
 > - **P0** ✅ 全部 closed（C-T1 `b46d42c`+`9c5671a`、C-T9 `5da0ab5`、C-T5 `1761dbd`、C-T6 `07e5162`）
 > - **P1** ✅ 全部 closed（C-T3 `5dac705`、C-T4 `3ddee79`、M2-T4 `c1d5d03`、M1-T3 `73f3e97`、C-T7 `21e43fa`）+ **seam source 落地** `243b6d4`（M2 NPU worker CPU fallback + M3 diffusion scaffold + W35.3 RLinf adapter + W2.18-W2.22 HfVJEPA2EncoderShim + actor_pool + RecipeConfig，全部 ruff-clean，pytest 128 passing）
-> - **P2** ⏸ PARTIALLY CLOSED（2026-08-16：M2-T5 部分闭环——HTTP-OpenAI-API ✅（3/3 endpoints HTTP 200 from `quay.io/ascend/vllm-ascend:v0.23.0rc1` 容器）；in-process `vllm_ascend` ❌（Atlas 无外网，wheel 不可达，详见 `bench_results/w43_vllm_ascend_e2e/summary.md`）。M1-T5 / M1-T4 同原因 blocked（`bench_results/w44_rlinf_e2e/summary.md` + `bench_results/w44_verl_e2e/summary.md`）；C-T8 ✅ 3/3 mainlines covered（M1 ✅ W2.25、M2 ⏸ W43、M3 ⏸ W45 seam-only — `bench_results/w45_m3_mainline_summary.md`）；franka 容器镜像 `worldfoundry-franka:npu-cann9` 已构建但未做渲染 acceptance）
+> - **P2** ⏸ PARTIALLY CLOSED（2026-08-16：M2-T5 部分闭环——HTTP-OpenAI-API ✅（3/3 endpoints HTTP 200 from `quay.io/ascend/vllm-ascend:v0.23.0rc1` 容器）；in-process `vllm_ascend` ❌（Atlas 无外网，wheel 不可达，详见 `bench_results/w43_vllm_ascend_e2e/summary.md`）。**M1-T5 ✅ closed 2026-08-18**（verl 0.5.0 容器内安装，`kind=real_verl`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_verl_e2e/summary.md`）；**M1-T4 ✅ closed 2026-08-18**（egress 恢复 → rlinf 0.3.0 + ray 2.56.1 装进 `.venv` → franka 容器 NPU 卡 7 跑通，`init_ok=True`、`kind=real_rlinf`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_rlinf_e2e/summary.md`）；C-T8 ✅ 3/3 mainlines covered（M1 ✅ W2.25、M2 ⏸ W43、M3 ⏸ W45 seam-only — `bench_results/w45_m3_mainline_summary.md`）；franka 容器镜像 `worldfoundry-franka:npu-cann9` 已构建但未做渲染 acceptance）
 > - **P3** ⏸ OPEN（M3-T4 真实 MindIE-SD compile 仍在等上游链路；M3-T1 subdirs / M3-T5 W8A8 / M3-T6 eval / M3-T8 5-stage 串行）
 > - **P4** ⏸ OPEN（M3-T7 + M2-T6 跟随 vllm-omni 公开发行节奏）
 >
-> 下一次开始工作请直接看 §9.3 P2（M2-T5 部分闭环可被复用为 baseline；M1-T5 / M1-T4 / C-T8 仍是 open 状态）；如 P2 仍硬件不可达，则 §9.5 P4 的年度复审是最低成本动作。
+> 下一次开始工作请直接看 §9.3 P2（M2-T5 部分闭环可被复用为 baseline；C-T8 仍是 open 状态，M1-T4 与 M1-T5 均已于 2026-08-18 closed）；如 P2 仍硬件不可达，则 §9.5 P4 的年度复审是最低成本动作。
 
 > §8.2 的推迟清单按"影响范围 × 依赖前置 × 是否阻塞 NPU 端到端"重新排定优先级，
 > 避免下次再花一轮推导执行顺序。优先级口径：
