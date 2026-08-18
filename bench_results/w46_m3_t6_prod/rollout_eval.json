@@ -1,0 +1,19 @@
+{
+  "ckpt": "bench_results/w46_m3_t6_prod/vae_prod.pt",
+  "n_frames": 16,
+  "img_size": 32,
+  "ssim": 0.9049567244946957,
+  "psnr_db": 16.63442611694336,
+  "clip_score": 0.9999015927314758,
+  "latent_frame_alignment": 1.0,
+  "passed": true,
+  "thresholds": {
+    "ssim": 0.85,
+    "clip_score": 0.3,
+    "latent_frame_alignment": 0.8
+  },
+  "notes": [
+    "VAE encode->decode reconstruction on synthetic frames",
+    "clip_score null when CLIP backbone unavailable (HF_ENDPOINT mirror)"
+  ]
+}
