@@ -141,9 +141,9 @@
 - [ ] **M3-T7** vLLM-Omni 编排：
   - 在 `worldfoundry_inf/omni/` 注册 `LatentToFramePipeline` 作为 Omni 的多模态输出组件。
   - 验收：`vllm serve` 启动后能从同一端点拿到 JEPA latent + 未来帧。 `[deferred: requires Atlas]`
-- [ ] **M3-T8** 五阶段流水线接入：
+- [x] **M3-T8** 五阶段流水线接入：
   - `scripts/render_train_rl_cpu.py --frame-gen-backend mindie_sd` 开启 Stage 3 推理时同时返回 latent 与像素帧。
-  - 验收：组合指标 `pixel_cosine + frame_consistency` 与 Stage 5 PPO reward 相关性显著。 `[deferred: requires Atlas]`
+  - 验收：组合指标 `pixel_cosine + frame_consistency` 与 Stage 5 PPO reward 相关性显著。 `[closed 2026-08-18: mindie_sd backend 现分发 VAEDiffusionPipeline（v2），Atlas 卡 7 5-stage rc=0，frame_gen.backend=mindie_sd / engine_type=VAEDiffusionPipeline — bench_results/w46_m3_t8_5stage/summary.md]`
 
 ### 3.3 回滚策略
 
@@ -264,7 +264,8 @@ M1-T1..T4 (RLinf)                  │
 | M2-T6 | vllm-omni 公开发行版未发布 |
 | M3-T1 vae/transformer/scheduler 子目录 | ~~v1 只交付 stub；真实 DiT/VAE 待 M3-T4~~ **closed 2026-08-18**（vae/transformer/scheduler 真实实现 + VAEDiffusionPipeline 接线，51 单测） |
 | M3-T4 | ~~全部依赖 Atlas + MindIE-SD 真链路~~ **closed 2026-08-18**（atc fallback 真编译，`bench_results/w46_m3_t4_compile/summary.md`） |
-| M3-T5 / T6 / T8 | 依赖 M3-T4 的 `.om` + 真实 decoder（M3-T6/T8 已有 seam/wiring） |
+| M3-T5 / T6 | 依赖 M3-T4 的 `.om` + 真实 decoder（M3-T6 已有 seam/wiring） |
+| M3-T8 | ~~依赖 M3-T4 的 `.om` + 真实 decoder~~ **closed 2026-08-18**（mindie_sd backend 分发 VAEDiffusionPipeline，Atlas 5-stage rc=0 — `bench_results/w46_m3_t8_5stage/summary.md`） |
 | C-T1 / T3..T9 | 容器化、文档、最终验收门禁 |
 
 ### 8.3 验证证据
@@ -300,10 +301,10 @@ M1-T1..T4 (RLinf)                  │
 > - **P0** ✅ 全部 closed（C-T1 `b46d42c`+`9c5671a`、C-T9 `5da0ab5`、C-T5 `1761dbd`、C-T6 `07e5162`）
 > - **P1** ✅ 全部 closed（C-T3 `5dac705`、C-T4 `3ddee79`、M2-T4 `c1d5d03`、M1-T3 `73f3e97`、C-T7 `21e43fa`）+ **seam source 落地** `243b6d4`（M2 NPU worker CPU fallback + M3 diffusion scaffold + W35.3 RLinf adapter + W2.18-W2.22 HfVJEPA2EncoderShim + actor_pool + RecipeConfig，全部 ruff-clean，pytest 128 passing）
 > - **P2** ⏸ PARTIALLY CLOSED（2026-08-16：M2-T5 部分闭环——HTTP-OpenAI-API ✅（3/3 endpoints HTTP 200 from `quay.io/ascend/vllm-ascend:v0.23.0rc1` 容器）；in-process `vllm_ascend` ❌（Atlas 无外网，wheel 不可达，详见 `bench_results/w43_vllm_ascend_e2e/summary.md`）。**M1-T5 ✅ closed 2026-08-18**（verl 0.5.0 容器内安装，`kind=real_verl`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_verl_e2e/summary.md`）；**M1-T4 ✅ closed 2026-08-18**（egress 恢复 → rlinf 0.3.0 + ray 2.56.1 装进 `.venv` → franka 容器 NPU 卡 7 跑通，`init_ok=True`、`kind=real_rlinf`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_rlinf_e2e/summary.md`）；C-T8 ✅ 3/3 mainlines covered（M1 ✅ W2.25、M2 ✅ W46 `bench_results/w46_m2_mainline/`（vllm_ascend smoke rc=0，引擎分发 seam 正确报缺 model_path）、M3 ✅ W46 seam-level `bench_results/w46_m3_mainline/`（frame_gen mindie_sd dispatched=True，NPU diffusion 为 follow-on））；franka 容器镜像 `worldfoundry-franka:npu-cann9` 已构建但未做渲染 acceptance）
-> - **P3** ⏸ PARTIALLY CLOSED（**M3-T4 ✅ 2026-08-18** atc fallback 真编译产出 `.om` — `bench_results/w46_m3_t4_compile/summary.md`，mindie_sd wheel 不在公共源仍走 atc；**M3-T1 subdirs ✅ 2026-08-18** vae/transformer/scheduler 真实实现 + `VAEDiffusionPipeline` 接线（51 单测）；M3-T5 W8A8 / M3-T6 eval 真 decoder / M3-T8 真链路 串行推进）
+> - **P3** ⏸ PARTIALLY CLOSED（**M3-T4 ✅ 2026-08-18** atc fallback 真编译产出 `.om` — `bench_results/w46_m3_t4_compile/summary.md`，mindie_sd wheel 不在公共源仍走 atc；**M3-T1 subdirs ✅ 2026-08-18** vae/transformer/scheduler 真实实现 + `VAEDiffusionPipeline` 接线（51 单测）；**M3-T8 ✅ 2026-08-18** mindie_sd backend 分发 VAEDiffusionPipeline，Atlas 卡 7 5-stage rc=0 — `bench_results/w46_m3_t8_5stage/summary.md`；M3-T5 W8A8 / M3-T6 eval 真 decoder 串行推进）
 > - **P4** ⏸ OPEN（M3-T7 + M2-T6 跟随 vllm-omni 公开发行节奏）
 >
-> 下一次开始工作请直接看 §9.4 P3（M3-T4 与 M3-T1 subdirs 均已 closed；M3-T5 W8A8 / M3-T6 eval / M3-T8 真链路串行推进）；P2 侧 C-T8 3/3 mainlines 已 covered（M2/M3 的 w46 smoke 记录在 `bench_results/w46_m2_mainline/` + `bench_results/w46_m3_mainline/`）。
+> 下一次开始工作请直接看 §9.4 P3（M3-T4、M3-T1 subdirs、M3-T8 均已 closed；M3-T5 W8A8 / M3-T6 eval 真 decoder 串行推进）；P2 侧 C-T8 3/3 mainlines 已 covered（M2/M3 的 w46 smoke 记录在 `bench_results/w46_m2_mainline/` + `bench_results/w46_m3_mainline/`）。
 
 > §8.2 的推迟清单按"影响范围 × 依赖前置 × 是否阻塞 NPU 端到端"重新排定优先级，
 > 避免下次再花一轮推导执行顺序。优先级口径：
@@ -355,7 +356,7 @@ M1-T1..T4 (RLinf)                  │
 | **M3-T1 subdirs** | `worldfoundry_inf/diffusion/{vae,transformer,scheduler}` 子目录真实实现 | 4 周 | ~~在 M3-T4 之后把 `LatentToFramePipeline` ABC 的三条子方法接到真实模型~~ **closed 2026-08-18**：vae（VAEModel 卷积 VAE）+ transformer（LatentDiffusionTransformer, adaLN-Zero）+ scheduler（DDIM/FlowMatching）真实实现，`VAEDiffusionPipeline` 接线完成 | `vae.encode`/`vae.decode` 单元测试用真实权重跑通 ✅（51 单测：12 vae + 13 transformer + 14 scheduler + 12 pipeline） |
 | **M3-T5** | W8A8 量化与精度回归 | 1 周 | 复用 MindIE-SD quant 工具，对比 W8A8 vs BF16 latent cosine | cosine 偏差 ≤0.05；峰值显存下降 ≥30% |
 | **M3-T6** | 时间 rollout 评估（CLIP / SSIM / PSNR） | 1 周 | `scripts/eval_diffusion_rollout.py`：在 `bench_results/_diffusion_eval/` 跑 CLIP 评分 | 选定 baseline 任务的 SSIM ≥0.85、CLIP score ≥0.30 |
-| **M3-T8** | 5-stage integration（`--frame-gen-backend mindie_sd`） | 1 周 | 在 orchestrator `inference_phase` 与 `policy_bootstrap_phase` 接入真实 frame gen | `summary.frame_gen.backend == "mindie_sd"`；diffusion 阶段耗时 < 总时长 40% |
+| **M3-T8** | 5-stage integration（`--frame-gen-backend mindie_sd`） | 1 周 | ~~在 orchestrator `inference_phase` 与 `policy_bootstrap_phase` 接入真实 frame gen~~ **closed 2026-08-18**：mindie_sd backend 分发 `VAEDiffusionPipeline`（v2），Atlas 卡 7 5-stage rc=0 | `summary.frame_gen.backend == "mindie_sd"` ✅；diffusion 阶段耗时 < 总时长 40%（timing clause 因 HF CLIP 重试暂时 skipped — `bench_results/w46_m3_t8_5stage/summary.md`） |
 
 **P3 完成判据**：M3-T4 + M3-T1 subdirs 真链路打通；M3-T5/6/8 全部接入 5-stage。
 

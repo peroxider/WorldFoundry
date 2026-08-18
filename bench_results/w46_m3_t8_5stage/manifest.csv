@@ -1,0 +1,5 @@
+video_path,num_frames,height,width
+/workspace/bench_results/w46_m3_t8_5stage/videos/clip_0000.mp4,4,32,32
+/workspace/bench_results/w46_m3_t8_5stage/videos/clip_0001.mp4,4,32,32
+/workspace/bench_results/w46_m3_t8_5stage/videos/clip_0002.mp4,4,32,32
+/workspace/bench_results/w46_m3_t8_5stage/videos/clip_0003.mp4,4,32,32

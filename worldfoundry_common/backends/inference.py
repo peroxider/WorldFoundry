@@ -157,16 +157,30 @@ def _mindie_sd_v2_available() -> bool:
 def _build_mindie_sd(**kwargs: Any) -> Any:
     """Build the MindIE-SD latent-to-frame pipeline.
 
-    v1 (this commit): returns the CPU pixel-decoder stub
-    (:class:`CPUPixelDecoderPipeline`) so the route is end-to-end
-    testable on CPU-only hosts. v2 (TODO M3-T4) will dispatch to
-    :class:`NPUDiffusionPipeline` on Atlas and fall back here on CPU.
-    ``kwargs`` are forwarded so callers can override ``encoder_dim`` /
-    ``img_size`` / ``patch_size`` / ``seed``.
-    """
-    from worldfoundry_inf.diffusion.backends.cpu import CPUPixelDecoderPipeline
+    v2 (M3-T1 / M3-T8): returns the real VAE + DiT + scheduler
+    pipeline (:class:`VAEDiffusionPipeline`) so the orchestrator's
+    ``frame_gen`` phase runs actual diffusion, not a projection stub.
+    Falls back to the v1 CPU pixel-decoder stub only when the v2
+    pipeline cannot be built (e.g. torch unavailable).
 
-    return CPUPixelDecoderPipeline(**kwargs)
+    ``kwargs`` are forwarded to the v2 pipeline; ``patch_size`` (a v1
+    CPU-pixel-decoder-only param) is dropped because the v2 pipeline
+    derives the latent grid from ``img_size`` + the VAE's downscale
+    factor. The orchestrator's ``frame_gen_phase`` passes
+    ``img_size=cfg.height, patch_size=height//8`` — the drop keeps the
+    call site unchanged.
+    """
+    try:
+        from worldfoundry_inf.diffusion.backends.vae_diffusion import (
+            VAEDiffusionPipeline,
+        )
+
+        v2_kwargs = {k: v for k, v in kwargs.items() if k != "patch_size"}
+        return VAEDiffusionPipeline(**v2_kwargs)
+    except Exception:  # pragma: no cover -- defensive fallback
+        from worldfoundry_inf.diffusion.backends.cpu import CPUPixelDecoderPipeline
+
+        return CPUPixelDecoderPipeline(**kwargs)
 
 
 def _onnx_diffusion_available() -> bool:

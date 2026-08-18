@@ -1,0 +1,155 @@
+{
+  "label": "RTI v2 CPU render->train->inference->policy (RLinf-shape)",
+  "mode": "npu",
+  "inference_backend": "torch",
+  "inference_engine_dispatched": null,
+  "config_serializable": {
+    "out_dir": "bench_results/w46_m3_t8_5stage",
+    "num_clips": 4,
+    "frames_per_clip": 4,
+    "height": 32,
+    "width": 32,
+    "seed": 42,
+    "num_steps": 30,
+    "learning_rate": 0.0003,
+    "mask_ratio": 0.5,
+    "action_dim": 4,
+    "obs_dim": 8,
+    "ppo_env_steps": 16,
+    "num_ppo_epochs": 4,
+    "num_outer_iters": 1,
+    "num_train_per_iter": 10,
+    "env_type": "mock",
+    "franka_task_name": "lift_brick_features",
+    "data_source": "synthetic",
+    "camera_id": 0,
+    "policy_encoder": "state_mlp",
+    "rollout_horizon": 1,
+    "encoder_kind": "tiny",
+    "quant": "none",
+    "encoder_pretrained_repo_id": null,
+    "encoder_pretrained_revision": null,
+    "hf_tubelet_size": null,
+    "mask_tubelet_size": null,
+    "rl_backend": "self_ppo",
+    "rlinf_runner_factory": null,
+    "frame_gen_backend": "mindie_sd"
+  },
+  "render": {
+    "elapsed_seconds": 0.007,
+    "n_clips": 4,
+    "n_frames": 16
+  },
+  "rss_mb_per_phase": {
+    "after_imports": 1062.9,
+    "after_render": 1069.4,
+    "after_train": 2697.2,
+    "after_inference": 2699.1,
+    "after_frame_gen": 2897.5,
+    "after_policy": 2915.6,
+    "final": 2916.3
+  },
+  "train": {
+    "elapsed_seconds": 13.613,
+    "final_total_loss": 13.8176,
+    "final_jepa_loss": 13.4091,
+    "final_recon_loss": 0.3866,
+    "final_act_align": 0.2196,
+    "n_encoder_params": 24416,
+    "n_train_steps": 30,
+    "hf_lora_trainable_params": 0,
+    "hf_lora_total_params": 0
+  },
+  "inference": {
+    "elapsed_seconds": 0.144,
+    "recon_cosine": 0.6239,
+    "latent_cosine": 0.1498,
+    "n_predicted_tokens": 32,
+    "png_path": "bench_results/w46_m3_t8_5stage/render_vs_predicted.png"
+  },
+  "frame_gen": {
+    "backend": "mindie_sd",
+    "elapsed_seconds": 187.311,
+    "n_rollout_frames": 2,
+    "frame_metrics": {
+      "ssim": 0.0202,
+      "psnr_db": 7.9204,
+      "clip_score": null,
+      "latent_frame_alignment": 1.0,
+      "n_frames": 2,
+      "passed": false,
+      "thresholds": {
+        "ssim": 0.85,
+        "clip_score": 0.3,
+        "latent_frame_alignment": 0.8
+      }
+    }
+  },
+  "frame_gen_dispatched": {
+    "backend": "mindie_sd",
+    "dispatched": true,
+    "engine_type": "VAEDiffusionPipeline",
+    "kind": "vae_diffusion",
+    "compile_path": null,
+    "extras": {
+      "class": "VAEDiffusionPipeline",
+      "encoder_dim": 64,
+      "img_size": 32,
+      "latent_dim": 4,
+      "num_steps": 8,
+      "scheduler": "ddim",
+      "seed": 0
+    },
+    "dispatch_error": null
+  },
+  "policy_bootstrap": {
+    "elapsed_seconds": 0.5886154389590956,
+    "n_env_steps": 16,
+    "mean_reward_pre_update": -0.9274558890610933,
+    "mean_reward_post_update": -0.1789078963920474,
+    "reward_stdev_pre_update": 0.5331995149122842,
+    "policy_loss_initial": 0.33122777938842773,
+    "value_loss_initial": 57.92561340332031,
+    "policy_loss_final": 0.32494741678237915,
+    "value_loss_final": 57.420005798339844,
+    "min_reward": -2.0600621700286865,
+    "max_reward": -0.259077787399292,
+    "n_policy_params": 1513,
+    "n_ppo_epochs": 4
+  },
+  "outer_loop": {
+    "elapsed_seconds": 0.7526267560315318,
+    "n_iters": 1,
+    "n_train_per_iter": 10,
+    "per_iter": [
+      {
+        "iter": 0,
+        "mean_wm_total_loss": 9.9753,
+        "final_wm_total_loss": 8.0605,
+        "reward_pre_update": -0.9033,
+        "reward_post_update": -0.1701,
+        "policy_loss_initial": 2.6582,
+        "policy_loss_final": 2.639,
+        "value_loss_initial": 43.7079,
+        "value_loss_final": 43.3022,
+        "n_ppo_epochs": 4
+      }
+    ],
+    "reward_trajectory": [
+      -0.1701
+    ],
+    "reward_trend_delta": 0.0
+  },
+  "notes": [
+    "RTI v2 closes the RLinf loop: world-model imagination feeds back into the actor.",
+    "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
+    "Env for policy phase: in-process random agent (_MockCPUEnv); no mujoco/dm_control dep \u2014 matches v1 CPU-only promise.",
+    "PPO IS trained here (default 4 epochs per outer iter) \u2014 reward_pre -> reward_post proves policy learned from world-model imagination.",
+    "v2.2 outer iterative loop: world-model train <-> PPO update repeated N times (RLinf's defining pattern). reward_trend_delta quantifies whether reward is trending up across iters.",
+    "env_type='mock'.",
+    "data_source='synthetic' (procedural cv2 .mp4s (v2.x contract)) camera_id=0.",
+    "policy_encoder='state_mlp' (flat-obs MLP actor (v2.x contract)) rollout_horizon=1.",
+    "encoder_kind='tiny' (24k-param TinyVJEPA2Encoder stack (v2.x contract)) ().",
+    "quant='none' (fp32 HF base (default))."
+  ]
+}
