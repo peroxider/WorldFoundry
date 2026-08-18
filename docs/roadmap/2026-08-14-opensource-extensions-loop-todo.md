@@ -111,10 +111,10 @@
 #### 3.2.1 基础建设（Route B 前置）
 
 - [x] **M3-T1** 在 `worldfoundry_inf/diffusion/` 新建目录：
-  - `vae/`：优先复用 SDXL / Stable Video Diffusion 的 VAE（开源权重）。`[deferred: requires M3-T4 — placeholder]`
-  - `transformer/`：DiT 类 backbone（UViT / PixArt-α / Stable Video Diffusion UNet 都可作为起点）。`[deferred: requires M3-T4 — placeholder]`
-  - `scheduler/`：DDIM 与 Flow Matching 调度器。`[deferred: requires M3-T4 — placeholder]`
-  - `pipeline/`：`LatentToFramePipeline`（接收 JEPA latent + 可选动作 → 像素帧序列）。
+  - `vae/`：优先复用 SDXL / Stable Video Diffusion 的 VAE（开源权重）。`[closed 2026-08-18: VAEModel 真实卷积 VAE（encode/decode/reconstruct/training_step + from_pretrained 权重 hook），12 单测 — worldfoundry_inf/diffusion/vae/]`
+  - `transformer/`：DiT 类 backbone（UViT / PixArt-α / Stable Video Diffusion UNet 都可作为起点）。`[closed 2026-08-18: LatentDiffusionTransformer（adaLN-Zero + 可选 action 条件），13 单测 — worldfoundry_inf/diffusion/transformer/]`
+  - `scheduler/`：DDIM 与 Flow Matching 调度器。`[closed 2026-08-18: DDIMScheduler + FlowMatchingScheduler（add_noise/timesteps/sample），14 单测 — worldfoundry_inf/diffusion/scheduler/]`
+  - `pipeline/`：`LatentToFramePipeline`（接收 JEPA latent + 可选动作 → 像素帧序列）。`[closed 2026-08-18: VAEDiffusionPipeline 接线 vae+DiT+scheduler，12 单测 — worldfoundry_inf/diffusion/backends/vae_diffusion.py]`
 - [x] **M3-T2** 定义 `LatentToFramePipeline` 接口契约：
   ```python
   def encode_latents(self, jepa_features: torch.Tensor) -> torch.Tensor: ...
@@ -262,7 +262,7 @@ M1-T1..T4 (RLinf)                  │
 | M1-T5 | ~~`verl` backend 已注册；端到端需要 NPU~~ **closed 2026-08-18**（`bench_results/w44_verl_e2e/summary.md`） |
 | M2-T4 / T5 | 需要 vLLM-Ascend serving 容器 |
 | M2-T6 | vllm-omni 公开发行版未发布 |
-| M3-T1 vae/transformer/scheduler 子目录 | v1 只交付 stub；真实 DiT/VAE 待 M3-T4 |
+| M3-T1 vae/transformer/scheduler 子目录 | ~~v1 只交付 stub；真实 DiT/VAE 待 M3-T4~~ **closed 2026-08-18**（vae/transformer/scheduler 真实实现 + VAEDiffusionPipeline 接线，51 单测） |
 | M3-T4 | ~~全部依赖 Atlas + MindIE-SD 真链路~~ **closed 2026-08-18**（atc fallback 真编译，`bench_results/w46_m3_t4_compile/summary.md`） |
 | M3-T5 / T6 / T8 | 依赖 M3-T4 的 `.om` + 真实 decoder（M3-T6/T8 已有 seam/wiring） |
 | C-T1 / T3..T9 | 容器化、文档、最终验收门禁 |
@@ -300,10 +300,10 @@ M1-T1..T4 (RLinf)                  │
 > - **P0** ✅ 全部 closed（C-T1 `b46d42c`+`9c5671a`、C-T9 `5da0ab5`、C-T5 `1761dbd`、C-T6 `07e5162`）
 > - **P1** ✅ 全部 closed（C-T3 `5dac705`、C-T4 `3ddee79`、M2-T4 `c1d5d03`、M1-T3 `73f3e97`、C-T7 `21e43fa`）+ **seam source 落地** `243b6d4`（M2 NPU worker CPU fallback + M3 diffusion scaffold + W35.3 RLinf adapter + W2.18-W2.22 HfVJEPA2EncoderShim + actor_pool + RecipeConfig，全部 ruff-clean，pytest 128 passing）
 > - **P2** ⏸ PARTIALLY CLOSED（2026-08-16：M2-T5 部分闭环——HTTP-OpenAI-API ✅（3/3 endpoints HTTP 200 from `quay.io/ascend/vllm-ascend:v0.23.0rc1` 容器）；in-process `vllm_ascend` ❌（Atlas 无外网，wheel 不可达，详见 `bench_results/w43_vllm_ascend_e2e/summary.md`）。**M1-T5 ✅ closed 2026-08-18**（verl 0.5.0 容器内安装，`kind=real_verl`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_verl_e2e/summary.md`）；**M1-T4 ✅ closed 2026-08-18**（egress 恢复 → rlinf 0.3.0 + ray 2.56.1 装进 `.venv` → franka 容器 NPU 卡 7 跑通，`init_ok=True`、`kind=real_rlinf`、wm_loss drift 0.0%、reward_post drift ~1.2% — `bench_results/w44_rlinf_e2e/summary.md`）；C-T8 ✅ 3/3 mainlines covered（M1 ✅ W2.25、M2 ✅ W46 `bench_results/w46_m2_mainline/`（vllm_ascend smoke rc=0，引擎分发 seam 正确报缺 model_path）、M3 ✅ W46 seam-level `bench_results/w46_m3_mainline/`（frame_gen mindie_sd dispatched=True，NPU diffusion 为 follow-on））；franka 容器镜像 `worldfoundry-franka:npu-cann9` 已构建但未做渲染 acceptance）
-> - **P3** ⏸ PARTIALLY CLOSED（**M3-T4 ✅ 2026-08-18** atc fallback 真编译产出 `.om` — `bench_results/w46_m3_t4_compile/summary.md`，mindie_sd wheel 不在公共源仍走 atc；M3-T1 subdirs / M3-T5 W8A8 / M3-T6 eval 真 decoder / M3-T8 真链路 串行推进）
+> - **P3** ⏸ PARTIALLY CLOSED（**M3-T4 ✅ 2026-08-18** atc fallback 真编译产出 `.om` — `bench_results/w46_m3_t4_compile/summary.md`，mindie_sd wheel 不在公共源仍走 atc；**M3-T1 subdirs ✅ 2026-08-18** vae/transformer/scheduler 真实实现 + `VAEDiffusionPipeline` 接线（51 单测）；M3-T5 W8A8 / M3-T6 eval 真 decoder / M3-T8 真链路 串行推进）
 > - **P4** ⏸ OPEN（M3-T7 + M2-T6 跟随 vllm-omni 公开发行节奏）
 >
-> 下一次开始工作请直接看 §9.4 P3（M3-T4 已 closed，M3-T1 subdirs / M3-T5 W8A8 / M3-T6 eval / M3-T8 真链路串行推进）；P2 侧 C-T8 3/3 mainlines 已 covered（M2/M3 的 w46 smoke 记录在 `bench_results/w46_m2_mainline/` + `bench_results/w46_m3_mainline/`）。
+> 下一次开始工作请直接看 §9.4 P3（M3-T4 与 M3-T1 subdirs 均已 closed；M3-T5 W8A8 / M3-T6 eval / M3-T8 真链路串行推进）；P2 侧 C-T8 3/3 mainlines 已 covered（M2/M3 的 w46 smoke 记录在 `bench_results/w46_m2_mainline/` + `bench_results/w46_m3_mainline/`）。
 
 > §8.2 的推迟清单按"影响范围 × 依赖前置 × 是否阻塞 NPU 端到端"重新排定优先级，
 > 避免下次再花一轮推导执行顺序。优先级口径：
@@ -352,7 +352,7 @@ M1-T1..T4 (RLinf)                  │
 | ID | 任务 | 预估投入 | 落地动作 | 验收 |
 |---|---|---|---|---|
 | **M3-T4** | 真实 MindIE-SD compile（替换 JSON 占位） | 2-3 周 | ~~等待 Atlas 侧 W44+ MindIE-SD 真链路落地~~ **closed 2026-08-18**：`compile_to_om` 三路 dispatch 的 atc 路径在 Atlas 卡 7 产出真实 `.om`（225249B, IMOD）；mindie_sd wheel 不在公共源，仍走 atc | `compile_to_om` 输出 `.om`；shape 与 stub 一致 ✅（`bench_results/w46_m3_t4_compile/summary.md`） |
-| **M3-T1 subdirs** | `worldfoundry_inf/diffusion/{vae,transformer,scheduler}` 子目录真实实现 | 4 周 | 在 M3-T4 之后把 `LatentToFramePipeline` ABC 的三条子方法接到真实模型 | `vae.encode`/`vae.decode` 单元测试用真实权重跑通 |
+| **M3-T1 subdirs** | `worldfoundry_inf/diffusion/{vae,transformer,scheduler}` 子目录真实实现 | 4 周 | ~~在 M3-T4 之后把 `LatentToFramePipeline` ABC 的三条子方法接到真实模型~~ **closed 2026-08-18**：vae（VAEModel 卷积 VAE）+ transformer（LatentDiffusionTransformer, adaLN-Zero）+ scheduler（DDIM/FlowMatching）真实实现，`VAEDiffusionPipeline` 接线完成 | `vae.encode`/`vae.decode` 单元测试用真实权重跑通 ✅（51 单测：12 vae + 13 transformer + 14 scheduler + 12 pipeline） |
 | **M3-T5** | W8A8 量化与精度回归 | 1 周 | 复用 MindIE-SD quant 工具，对比 W8A8 vs BF16 latent cosine | cosine 偏差 ≤0.05；峰值显存下降 ≥30% |
 | **M3-T6** | 时间 rollout 评估（CLIP / SSIM / PSNR） | 1 周 | `scripts/eval_diffusion_rollout.py`：在 `bench_results/_diffusion_eval/` 跑 CLIP 评分 | 选定 baseline 任务的 SSIM ≥0.85、CLIP score ≥0.30 |
 | **M3-T8** | 5-stage integration（`--frame-gen-backend mindie_sd`） | 1 周 | 在 orchestrator `inference_phase` 与 `policy_bootstrap_phase` 接入真实 frame gen | `summary.frame_gen.backend == "mindie_sd"`；diffusion 阶段耗时 < 总时长 40% |
