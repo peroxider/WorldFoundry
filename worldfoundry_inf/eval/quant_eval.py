@@ -238,6 +238,114 @@ def cosine_similarity_sdxl(
     )
 
 
+@dataclass
+class W8A8MemoryReport:
+    """Result of a W8A8 peak-memory reduction estimate (M3-T5).
+
+    Compares the BF16 source byte size against the W8A8-packed byte
+    size (int8 weights + per-row fp32 scales via the real W26 packer).
+    ``reduction_pct`` = ``1 - w8a8_bytes / source_bytes``; ``passed``
+    follows the M3-T5 acceptance gate: ``reduction_pct >= threshold``
+    (default 0.30 = ≥30% peak-memory reduction).
+    """
+
+    source_bytes: int
+    w8a8_bytes: int
+    reduction_pct: float
+    passed: bool = False
+    threshold: float = 0.30
+    n_tensors: int = 0
+    n_weights_rounded: int = 0
+    n_weights_skipped: int = 0
+
+
+def compute_w8a8_memory_reduction(
+    baseline_path: Path,
+    *,
+    threshold: float = 0.30,
+    weight_filename: str = "diffusion_pytorch_model.safetensors",
+) -> W8A8MemoryReport:
+    """Estimate W8A8 peak-memory reduction vs the BF16 source (M3-T5).
+
+    Loads ``weight_filename`` from ``baseline_path``, sums the BF16
+    source byte size, then estimates the W8A8-packed byte size by
+    round-tripping every 2-D float weight through the real W26 packer
+    (``pack_w8a8_weight`` — int8 weights + per-row fp32 scales). Skipped
+    tensors (4-D conv, non-float) are counted at source size (unchanged),
+    so the estimate is honest about what quantization actually shrinks.
+    M3-T5 acceptance gate: ``reduction_pct >= 0.30``.
+
+    Args:
+        baseline_path: Path to the BF16 source model directory.
+        threshold: Pass threshold for the reduction gate (default 0.30).
+        weight_filename: Safetensors weight filename (default
+            ``diffusion_pytorch_model.safetensors``).
+
+    Returns:
+        :class:`W8A8MemoryReport` with byte sizes, reduction %, and the
+        per-category tensor counts.
+
+    Raises:
+        FileNotFoundError: ``baseline_path`` missing the weight file.
+        ImportError: ``safetensors`` not installed.
+    """
+    try:
+        from safetensors import safe_open
+    except ImportError as exc:
+        raise ImportError(
+            "compute_w8a8_memory_reduction requires the `safetensors` "
+            "package. Run: pip install safetensors"
+        ) from exc
+
+    from worldfoundry_inf.quantize import pack_w8a8_weight
+
+    baseline_path = Path(baseline_path)
+    weights = baseline_path / weight_filename
+    if not weights.exists():
+        raise FileNotFoundError(f"Missing baseline weights: {weights}")
+
+    source_bytes = 0
+    w8a8_bytes = 0
+    n_total = 0
+    n_rounded = 0
+    n_skipped = 0
+    with safe_open(str(weights), framework="pt") as f:
+        for key in f.keys():
+            n_total += 1
+            tensor = f.get_tensor(key)
+            source_bytes += tensor.numel() * tensor.element_size()
+            if (
+                tensor.ndim == 2
+                and tensor.is_floating_point()
+                and tensor.dtype != torch.float64
+            ):
+                packed = pack_w8a8_weight(tensor)
+                # int8 weights: numel bytes; scales: one fp32 per row.
+                w8a8_bytes += (
+                    packed["weight"].numel()
+                    + packed["scale"].numel() * 4
+                )
+                n_rounded += 1
+            else:
+                w8a8_bytes += tensor.numel() * tensor.element_size()
+                n_skipped += 1
+
+    if source_bytes > 0:
+        reduction_pct = 1.0 - w8a8_bytes / source_bytes
+    else:
+        reduction_pct = 0.0
+    return W8A8MemoryReport(
+        source_bytes=source_bytes,
+        w8a8_bytes=w8a8_bytes,
+        reduction_pct=float(reduction_pct),
+        passed=reduction_pct >= threshold,
+        threshold=float(threshold),
+        n_tensors=n_total,
+        n_weights_rounded=n_rounded,
+        n_weights_skipped=n_skipped,
+    )
+
+
 def _cli_sdxl() -> int:
     """CLI entry point for SDXL/VAE cosine eval (M3-T5)."""
     import argparse
@@ -251,6 +359,8 @@ def _cli_sdxl() -> int:
     parser.add_argument("--threshold", type=float, default=0.95)
     parser.add_argument("--weight-filename", type=str,
                         default="diffusion_pytorch_model.safetensors")
+    parser.add_argument("--memory-threshold", type=float, default=0.30,
+                        help="M3-T5 peak-memory reduction gate (default 0.30 = 30%%)")
     args = parser.parse_args()
 
     try:
@@ -259,6 +369,11 @@ def _cli_sdxl() -> int:
             quantized_path=args.quantized,
             threshold=args.threshold,
             weight_filename=args.weight_filename,
+        )
+        mem = compute_w8a8_memory_reduction(
+            baseline_path=args.baseline,
+            weight_filename=args.weight_filename,
+            threshold=args.memory_threshold,
         )
     except (ValueError, FileNotFoundError, ImportError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -270,7 +385,13 @@ def _cli_sdxl() -> int:
         f"n_tensors={report.n_layers}) → "
         f"{'PASS' if report.passed else 'FAIL'}"
     )
-    return 0 if report.passed else 1
+    print(
+        f"W8A8 memory: {mem.source_bytes} -> {mem.w8a8_bytes} bytes "
+        f"(-{mem.reduction_pct:.1f}%) "
+        f"(threshold {mem.threshold:.0%}) → "
+        f"{'PASS' if mem.passed else 'FAIL'}"
+    )
+    return 0 if (report.passed and mem.passed) else 1
 
 
 if __name__ == "__main__":

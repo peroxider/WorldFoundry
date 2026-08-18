@@ -1,0 +1,14 @@
+{
+  "aggregate_cosine": 0.9999956018996962,
+  "cosine_threshold": 0.95,
+  "cosine_passed": true,
+  "n_tensors": 33,
+  "source_bytes": 1256520,
+  "w8a8_bytes": 650328,
+  "memory_reduction_pct": 0.4824,
+  "memory_threshold": 0.3,
+  "memory_passed": true,
+  "n_weights_rounded": 15,
+  "n_weights_skipped": 18,
+  "passed": true
+}
