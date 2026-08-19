@@ -1,0 +1,106 @@
+{
+  "backend": "cpu",
+  "device": "npu",
+  "config": {
+    "backend": "cpu",
+    "device": "npu",
+    "out_dir": "bench_results/recipe_atlas_real_e2e",
+    "num_clips": 3,
+    "frames_per_clip": 4,
+    "height": 32,
+    "width": 32,
+    "seed": 42,
+    "encoder_embed_dim": 32,
+    "encoder_depth": 2,
+    "encoder_hidden_size": 64,
+    "encoder_num_layers": 2,
+    "encoder_num_heads": 2,
+    "num_steps": 6,
+    "learning_rate": 0.0003,
+    "ema_momentum": 0.99,
+    "mask_ratio": 0.5,
+    "encoder_kind": "hf_vjepa2",
+    "encoder_pretrained": "/data/hf_cache/models--facebook--vjepa2-vitl-fpc64-256/snapshots/b3c1679b7c34d3255ef3547f27c7b226aefab26f",
+    "hf_tubelet_size": 2,
+    "quant": "none",
+    "env_type": "franka_kitchen",
+    "franka_task_name": "lift_brick_features",
+    "data_source": "franka_kitchen",
+    "camera_id": 0,
+    "action_dim": 9,
+    "obs_dim": 6,
+    "policy_encoder": "state_mlp",
+    "rollout_horizon": 1,
+    "ppo_env_steps": 16,
+    "num_ppo_epochs": 1,
+    "num_outer_iters": 1,
+    "num_train_per_iter": 2,
+    "log_every_n": 10,
+    "stages": [
+      "render",
+      "train",
+      "inference",
+      "policy",
+      "outer_loop"
+    ],
+    "skip_render": false
+  },
+  "stages": {
+    "render": {
+      "elapsed_seconds": 5.1110628099995665,
+      "manifest": "bench_results/recipe_atlas_real_e2e/manifest.csv",
+      "data_source": "franka_kitchen"
+    },
+    "train": {
+      "elapsed_seconds": 17.347189225023612,
+      "final_total_loss": 943.3781127929688,
+      "n_encoder_params": 328088448,
+      "n_train_steps": 6,
+      "ckpt": "bench_results/recipe_atlas_real_e2e/tiny_jepa_v2.pt"
+    },
+    "inference": {
+      "elapsed_seconds": 5.71743543096818,
+      "recon_cosine": 0.9033868312835693,
+      "latent_cosine": 0.0804477259516716,
+      "n_predicted_tokens": 4
+    },
+    "policy": {
+      "elapsed_seconds": 9.54251530696638,
+      "n_env_steps": 16,
+      "mean_reward_pre_update": 2.9235387840678695e-06,
+      "mean_reward_post_update": 2.9229545522174716e-06,
+      "reward_stdev_pre_update": 1.2344872499810263e-08,
+      "policy_loss_initial": 67.55355072021484,
+      "value_loss_initial": 7.542685125372373e-07,
+      "policy_loss_final": 67.55355072021484,
+      "value_loss_final": 7.542685125372373e-07,
+      "min_reward": 2.8757344420204944e-06,
+      "max_reward": 2.9267926879850137e-06,
+      "n_policy_params": 1619,
+      "n_ppo_epochs": 1
+    },
+    "outer_loop": {
+      "elapsed_seconds": 20.818165783013683,
+      "n_iters": 1,
+      "n_train_per_iter": 2,
+      "per_iter": [
+        {
+          "iter": 0,
+          "mean_wm_total_loss": 634.6928,
+          "final_wm_total_loss": 605.0496,
+          "reward_pre_update": 0.0,
+          "reward_post_update": 0.0,
+          "policy_loss_initial": 25.0058,
+          "policy_loss_final": 25.0058,
+          "value_loss_initial": 0.0,
+          "value_loss_final": 0.0,
+          "n_ppo_epochs": 1
+        }
+      ],
+      "reward_trajectory": [
+        0.0
+      ],
+      "reward_trend_delta": 0.0
+    }
+  }
+}

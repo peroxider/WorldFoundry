@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from worldfoundry_train.device import to_device
 from worldfoundry_train.recipe.config import RecipeConfig
 
 
@@ -175,6 +174,8 @@ class TrainStage(Stage):
                 log_every_n=cfg.log_every_n, data_source=cfg.data_source,
                 env_type=cfg.env_type, encoder_kind=cfg.encoder_kind,
                 quant=cfg.quant,
+                encoder_pretrained_repo_id=cfg.encoder_pretrained,
+                hf_tubelet_size=cfg.hf_tubelet_size,
             ),
             manifest,
             ctx.device,
@@ -219,6 +220,9 @@ class InferenceStage(Stage):
                 height=cfg.height, width=cfg.width, seed=cfg.seed,
                 mask_ratio=cfg.mask_ratio, action_dim=cfg.action_dim,
                 data_source=cfg.data_source, env_type=cfg.env_type,
+                encoder_kind=cfg.encoder_kind,
+                encoder_pretrained_repo_id=cfg.encoder_pretrained,
+                hf_tubelet_size=cfg.hf_tubelet_size,
             ),
             ckpt,
             ctx.device,
@@ -249,7 +253,6 @@ class PolicyStage(Stage):
     def run(self, ctx: RecipeContext) -> None:
         cfg = ctx.cfg
         ph = _load_phase_module()
-        ckpt = ctx.artifacts.get("ckpt") or (cfg.out_dir / "tiny_jepa_v2.pt")
         pol = ph.policy_bootstrap_phase(
             ph.V2Config(
                 out_dir=cfg.out_dir, height=cfg.height, width=cfg.width,
@@ -258,6 +261,9 @@ class PolicyStage(Stage):
                 env_type=cfg.env_type, franka_task_name=cfg.franka_task_name,
                 policy_encoder=cfg.policy_encoder,
                 rollout_horizon=cfg.rollout_horizon,
+                encoder_kind=cfg.encoder_kind,
+                encoder_pretrained_repo_id=cfg.encoder_pretrained,
+                hf_tubelet_size=cfg.hf_tubelet_size,
             ),
             ctx.artifacts["ckpt"],
             ctx.device,
@@ -282,7 +288,6 @@ class OuterLoopStage(Stage):
     def run(self, ctx: RecipeContext) -> None:
         cfg = ctx.cfg
         ph = _load_phase_module()
-        ckpt = ctx.artifacts.get("ckpt") or (cfg.out_dir / "tiny_jepa_v2.pt")
         outer = ph.iterative_loop_phase(
             ph.V2Config(
                 out_dir=cfg.out_dir, num_clips=cfg.num_clips,
@@ -305,6 +310,8 @@ class OuterLoopStage(Stage):
                 rollout_horizon=cfg.rollout_horizon,
                 encoder_kind=cfg.encoder_kind,
                 quant=cfg.quant,
+                encoder_pretrained_repo_id=cfg.encoder_pretrained,
+                hf_tubelet_size=cfg.hf_tubelet_size,
             ),
             ctx.artifacts["ckpt"],
             ctx.device,

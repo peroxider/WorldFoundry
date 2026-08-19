@@ -52,6 +52,17 @@ class RecipeConfig:
     ema_momentum: float = 0.99
     mask_ratio: float = 0.5
     encoder_kind: str = "tiny"   # "tiny" | "hf_vjepa2"
+    # Real-weight path: local HF snapshot / repo id passed to
+    # ``HfVJEPA2EncoderShim.from_pretrained`` when ``encoder_kind ==
+    # "hf_vjepa2"`` (e.g. ``/data/hf_cache/models--facebook--vjepa2-
+    # vitl-fpc64-256/snapshots/<sha>`` for the real 1.2B weights).
+    # ``None`` falls back to HF-hub download of the default repo id.
+    encoder_pretrained: str | None = None
+    # W2.22+: HF encoder tubelet size (effective only when
+    # ``encoder_kind == "hf_vjepa2"``). The real 1.2B
+    # ``vjepa2-vitl-fpc64-256`` checkpoint uses ``2``; ``None`` falls
+    # back to the W2.18 hardcoded ``tubelet_size=1``.
+    hf_tubelet_size: int | None = None
     # W22-quant: weight-only int8 on the HF encoder base. Only takes
     # effect when ``encoder_kind == "hf_vjepa2"``; the tiny stack has
     # no torchao integration. ``"none"`` keeps the HF base in fp32.

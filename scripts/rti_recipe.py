@@ -12,6 +12,22 @@ Examples:
     # Real MuJoCo 9-DoF manipulation env (dm_control) + real RGB data:
     python scripts/rti_recipe.py --env franka_kitchen --data-source franka_kitchen
 
+    # REAL end-to-end recipe (1.2B V-JEPA2 + real Franka data + NPU):
+    #   Atlas box (container) with the 1.2B weights snapshot local:
+    #   export MUJOCO_GL=egl   # headless GL (Mesa EGL); missing -> MjrContext error
+    #   python scripts/rti_recipe.py \\
+    #       --device npu \\
+    #       --encoder hf_vjepa2 \\
+    #       --encoder-pretrained /data/hf_cache/models--facebook--vjepa2-vitl-fpc64-256/snapshots/<sha> \\
+    #       --env franka_kitchen --data-source franka_kitchen \\
+    #       --franka-task-name lift_brick_features \\
+    #       --action-dim 9 --obs-dim 6 \\
+    #       --num-clips 3 --frames-per-clip 4 --num-steps 6 \\
+    #       --num-outer-iters 1 --num-train-per-iter 2 --num-ppo-epochs 1 \\
+    #       --out-dir bench_results/recipe_atlas_real_e2e
+    #   Verified on Atlas NPU card 7 (2026-08-19): final_total=950.3947
+    #   (matches w25). See bench_results/w46_atlas_real_e2e/summary.md.
+
     # Pin the device explicitly (WORLDFORGE_DEVICE honored too):
     python scripts/rti_recipe.py --device npu
 
@@ -81,6 +97,19 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--learning-rate", type=float, default=3e-4)
     p.add_argument("--mask-ratio", type=float, default=0.5)
     p.add_argument("--encoder", choices=("tiny", "hf_vjepa2"), default="tiny")
+    p.add_argument(
+        "--encoder-pretrained",
+        default=None,
+        help="Local HF snapshot / repo id for real weights when --encoder "
+             "hf_vjepa2 (e.g. /data/hf_cache/models--facebook--vjepa2-"
+             "vitl-fpc64-256/snapshots/<sha>). None -> HF-hub default.",
+    )
+    p.add_argument(
+        "--hf-tubelet-size", type=int, default=None,
+        help="HF encoder tubelet size (effective only when --encoder "
+             "hf_vjepa2). Real 1.2B vjepa2-vitl-fpc64-256 uses 2; None -> "
+             "tubelet_size=1 (W2.18 default).",
+    )
     # env / data
     p.add_argument("--env", choices=("mock", "franka_kitchen"), default="mock")
     p.add_argument("--franka-task-name", default="lift_brick_features")
@@ -146,6 +175,8 @@ def main(argv=None) -> int:
         encoder_num_heads=args.encoder_num_heads,
         num_steps=args.num_steps, learning_rate=args.learning_rate,
         mask_ratio=args.mask_ratio, encoder_kind=args.encoder,
+        encoder_pretrained=args.encoder_pretrained,
+        hf_tubelet_size=args.hf_tubelet_size,
         # W22-quant: weight-only int8 on the HF encoder base.
         quant=args.quant,
         env_type=args.env, franka_task_name=args.franka_task_name,
