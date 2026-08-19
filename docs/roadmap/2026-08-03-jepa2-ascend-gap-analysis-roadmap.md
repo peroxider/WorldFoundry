@@ -58,7 +58,7 @@ WorldFoundry 当前是 **"昇腾上的 V-JEPA 2 编码器微调 + 特征服务�
 | 设备探测/分布式 | ✅ `is_npu_available()` / `init_distributed(backend="hccl")`，CPU 降级 gloo + warning | `worldfoundry_common/npu_env.py:63-103` |
 | FSDP/DDP | ✅ HCCL 分支 + `torch.npu.set_device` | `worldfoundry_train/parallel/fsdp.py:42-50`、`parallel/ddp.py:27-29` |
 | vLLM-Ascend 插件 | ⚠️ 结构完整，Atlas 上机验证 deferred（W19b） | `worldfoundry_inf/_vllm_ascend_plugin.py:37-71`、`vllm_ascend_worker.py:20-22` |
-| 量化 | ⚠️ msmodelslim W8A8 后端 + W17 验证脚本齐备，需真实硬件执行；W4A8 deferred | `worldfoundry_inf/compile/quantize_backends/msmodelslim.py`、`scripts/w17_atlas_w8a8_eval.sh` |
+| 量化 | ⚠️ msmodelslim W8A8 后端 + W17 验证脚本齐备，需真实硬件执行；W4A8 deferred | `worldfoundry_inf/compile/quantize_backends/msmodelslim.py`、`scripts/archive/w17/w17_atlas_w8a8_eval.sh` |
 | 数据解码 | ⚠️ DVPP 硬件解码为 stub，`_dvpp_available()` 恒 False，走 decord CPU 兜底 | `worldfoundry_train/data/video_source.py:16,38-44` |
 | MindSpeed | ❌ W9 评估 NO-GO，`MMStrategy` 为 NotImplementedError 桩 | `docs/superpowers/specs/W9_EVAL_REPORT.md:5`、`worldfoundry_train/parallel/mindspeed.py:12-25` |
 | MindIE-SD 编译 | ❌ `compile_to_om` 只写占位 .om | `worldfoundry_inf/compile/mindie_sd.py:1-8` |

@@ -11,7 +11,7 @@ from worldfoundry_inf.api import encode, plan, predict
 from worldfoundry_inf.predict_batcher import PredictBatcher
 from worldfoundry_inf.scheduler import AdapterRouter
 from worldfoundry_inf.security import HmacTokenAuth
-import worldfoundry_inf.vjepa2_worker as vjepa2_worker
+import worldfoundry_inf.workers.vjepa2_worker as vjepa2_worker
 
 
 def create_app(

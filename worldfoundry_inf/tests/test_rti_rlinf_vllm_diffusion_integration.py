@@ -35,7 +35,7 @@ from pathlib import Path
 
 import pytest
 
-from worldfoundry_inf.vllm_omni import (
+from worldfoundry_inf.omni.pipeline import (
     VLLMOmniPipeline,
     is_vllm_omni_available,
 )
@@ -337,7 +337,7 @@ def test_onnx_diffusion_alone_is_dispatchable() -> None:
 
 def test_onnx_vllm_alone_is_dispatchable() -> None:
     """``make_engine("onnx_vllm")`` returns a standalone ORT inference worker."""
-    from worldfoundry_inf.onnx_vllm_worker import OnnxVJEPAWorker
+    from worldfoundry_inf.workers.onnx_vllm_worker import OnnxVJEPAWorker
 
     pipe = make_engine("onnx_vllm")
     assert isinstance(pipe, OnnxVJEPAWorker)

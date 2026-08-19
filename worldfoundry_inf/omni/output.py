@@ -128,7 +128,7 @@ def _build_priority_pipeline() -> tuple[LatentToFramePipeline, str, dict[str, An
         ``(pipeline, vllm_omni_version, extras)``.
     """
     try:
-        from worldfoundry_inf.vllm_omni_real import RealVLLMOmniPipeline
+        from worldfoundry_inf.omni.pipeline_real import RealVLLMOmniPipeline
 
         if RealVLLMOmniPipeline.available():
             pipe = RealVLLMOmniPipeline()
@@ -150,7 +150,7 @@ def _build_priority_pipeline() -> tuple[LatentToFramePipeline, str, dict[str, An
     except Exception:  # pragma: no cover -- defensive
         pass
 
-    from worldfoundry_inf.vllm_omni import VLLMOmniPipeline
+    from worldfoundry_inf.omni.pipeline import VLLMOmniPipeline
 
     return VLLMOmniPipeline(), _vllm_omni_version(), {"dispatch": "ort_standin"}
 

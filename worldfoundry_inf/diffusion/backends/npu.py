@@ -8,7 +8,7 @@ when the MindIE-SD real compile link lands and the W8A8 precision
 regression + ≥6 NPU-month data/compute evaluation clear the gate.
 
 Until then, this module ships as a **stub** that mirrors the
-``worldfoundry_inf.vllm_ascend_worker`` NPU-fallback pattern:
+``worldfoundry_inf.workers.vllm_ascend_worker`` NPU-fallback pattern:
 
 * :meth:`NPUDiffusionPipeline.available` returns ``False`` — there is
   no MindIE-SD runtime in this build.

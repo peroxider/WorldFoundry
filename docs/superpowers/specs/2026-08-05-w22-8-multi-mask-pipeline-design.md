@@ -289,7 +289,7 @@ loss = self._loss_for_masks(h_ctx, h_tgt, masks)
 2. `ruff check` 干净。
 3. `_loss_for_masks` 函数体 diff 为空（仅 docstring 可改），证明改动收敛
    在数据侧。
-4. CPU dry-run：`PYTHONPATH=. python3 scripts/w22_7_run_arm.py --arm b`
+4. CPU dry-run：`PYTHONPATH=. python3 scripts/archive/w22_7/w22_7_run_arm.py --arm b`
    在 `num_masks=2` 下跑通 40 步，loss 曲线趋势与 K=1 同量级——**只要求
    不发散，不要求更优**。K>1 的收益需要 Atlas pilot 200 步 + 探针指标才
    谈得上，CPU dry-run 的 40 步没有统计效力。

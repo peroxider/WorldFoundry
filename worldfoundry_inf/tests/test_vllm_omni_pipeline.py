@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from worldfoundry_inf.vllm_omni import (
+from worldfoundry_inf.omni.pipeline import (
     VLLMOmniPipeline,
     is_vllm_omni_available,
 )
@@ -26,7 +26,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _tiny_inference_cfg():
-    from worldfoundry_inf.onnx_vllm_worker import TinyViTConfig
+    from worldfoundry_inf.workers.onnx_vllm_worker import TinyViTConfig
 
     return TinyViTConfig(
         img_size=64, patch_size=8, embed_dim=32, depth=1, num_heads=2,
@@ -70,7 +70,7 @@ def test_vllm_omni_custom_inference_and_diffusion_cfgs() -> None:
 
 def test_vllm_omni_explicit_workers_pass_through() -> None:
     """Caller-supplied workers are kept verbatim (no rebuild)."""
-    from worldfoundry_inf.onnx_vllm_worker import OnnxVJEPAWorker
+    from worldfoundry_inf.workers.onnx_vllm_worker import OnnxVJEPAWorker
     from worldfoundry_inf.diffusion.backends.onnx_diffusion import (
         OnnxDiffusionPipeline,
     )

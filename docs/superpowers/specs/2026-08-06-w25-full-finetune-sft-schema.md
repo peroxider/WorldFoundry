@@ -142,7 +142,7 @@ objective term) and missing labels as unlabeled.
 - `tests/test_trainer_cpu.py::test_trainer_full_mode_loss_decreases_on_real_vjepa2`
   exercises the gradient flow end-to-end on a real (tiny) HF VJEPA 2
   encoder and asserts the loss decreases across 5 steps.
-- `scripts/w25_full_finetune_smoke.sh` runs both of the above and
+- `scripts/archive/w25/w25_full_finetune_smoke.sh` runs both of the above and
   exits 0.
 
 ## Cross-references

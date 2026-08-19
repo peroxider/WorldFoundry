@@ -141,9 +141,9 @@ self.model = self.strategy.wrap(self.model)
   - `wrap()` 失败 → 必须抛出明确的"V-JEPA 2 submodule not recognized by MindSpeed-MM" 错误信息（不暴露 MM 内部 traceback 噪音）
   - 运行时 OOM/deadlock → 透传异常，由 `w9_eval.sh` 捕获
 
-### 3.4 `scripts/w9_eval.sh`
+### 3.4 `scripts/archive/w9/w9_eval.sh`
 
-- **入口**：`bash scripts/w9_eval.sh`
+- **入口**：`bash scripts/archive/w9/w9_eval.sh`
 - **行为**：
   1. `docker run worldforge-base:phase1` 启动容器（复用 Phase-1 镜像，pin V-JEPA 2 commit 已就位）
   2. 运行两次 `python -m worldforge_train.bench --profile <p> --steps 200 --warmup 50 --tag <t>`：
@@ -218,7 +218,7 @@ for batch in dataloader:           # Phase-1 T5 已实现
 ### 4.2 W9 评估数据流
 
 ```
-bash scripts/w9_eval.sh
+bash scripts/archive/w9/w9_eval.sh
   │
   ├── docker run worldforge-base:phase1   # 复用 Phase-1 镜像（已 pin V-JEPA 2 commit）
   │
@@ -284,7 +284,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 
 | 测试 | 覆盖 | 断言 |
 |------|------|------|
-| `bash scripts/w9_eval.sh` 端到端 | B4 端到端 | 4 项 GO 项产出 + `W9_EVAL_REPORT.md` 存在 |
+| `bash scripts/archive/w9/w9_eval.sh` 端到端 | B4 端到端 | 4 项 GO 项产出 + `W9_EVAL_REPORT.md` 存在 |
 | W10 smoke（GO 路径专属） | W10 集成 | `WORLDFORGE_PROFILE=train-mmspeed` 跑 100 步训练不崩 + loss 单调下降（与 Phase-1 smoke 同等断言） |
 
 ### 6.3 与 spec §9 验收项 #5 对齐
@@ -320,7 +320,7 @@ WORLDFORGE_PROFILE=train-mmspeed python -m worldforge_train.train ...
 1. `worldforge_train/parallel/` 3 个文件
 2. `worldforge_train/train.py` 一行注入
 3. `worldforge_train/bench/` 子包（runner + compare）
-4. `scripts/w9_eval.sh`
+4. `scripts/archive/w9/w9_eval.sh`
 5. `docs/superpowers/specs/W9_EVAL_REPORT.md`（GO 或 NO-GO 均产出）
 6. `pyproject.toml` 新增 `[mindspeed]` extra
 7. 单元测试 11 unit tests on NO-GO path; 13 on GO path (T8's 2 tests added)（覆盖选择器 / FSDPStrategy / MMStrategy / compare.py）

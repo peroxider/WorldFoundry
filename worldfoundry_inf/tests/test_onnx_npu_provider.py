@@ -1,6 +1,6 @@
 """Tests for the Atlas-NPU-aware ORT provider selector (M2/M3 followup).
 
-The helper lives at :mod:`worldfoundry_inf.onnx_npu_provider` and
+The helper lives at :mod:`worldfoundry_inf.workers.onnx_npu_provider` and
 decides which ORT execution providers a session should register:
 
 * Atlas box with the ``onnxruntime-ascend`` wheel installed ->
@@ -15,8 +15,8 @@ the CPU provider so CI stays deterministic.
 GateGuard fact-force declaration
 -------------------------------
 * Importers (test-only, no new deps): pytest (existing dev dep);
-  ``worldfoundry_inf.onnx_npu_provider`` (new); existing
-  ``worldfoundry_inf.onnx_vllm_worker`` and
+  ``worldfoundry_inf.workers.onnx_npu_provider`` (new); existing
+  ``worldfoundry_inf.workers.onnx_vllm_worker`` and
   ``worldfoundry_inf.diffusion.backends.onnx_diffusion``.
 * Callers: none -- pytest-only.
 * Affected API (test surface):
@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import pytest
 
-from worldfoundry_inf.onnx_npu_provider import (
+from worldfoundry_inf.workers.onnx_npu_provider import (
     default_providers,
     is_ascend_provider_available,
 )
@@ -105,8 +105,8 @@ def test_default_providers_preserves_order_when_explicit() -> None:
 def test_onnx_vllm_worker_uses_default_providers_when_none_passed() -> None:
     """``OnnxVJEPAWorker(providers=None)`` calls ``default_providers()``."""
     pytest.importorskip("onnxruntime")
-    from worldfoundry_inf.onnx_npu_provider import default_providers
-    from worldfoundry_inf.onnx_vllm_worker import OnnxVJEPAWorker, TinyViTConfig
+    from worldfoundry_inf.workers.onnx_npu_provider import default_providers
+    from worldfoundry_inf.workers.onnx_vllm_worker import OnnxVJEPAWorker, TinyViTConfig
 
     worker = OnnxVJEPAWorker(cfg=TinyViTConfig(img_size=64, patch_size=8))
     assert worker.providers == default_providers()
@@ -115,7 +115,7 @@ def test_onnx_vllm_worker_uses_default_providers_when_none_passed() -> None:
 def test_onnx_diffusion_uses_default_providers_when_none_passed() -> None:
     """``OnnxDiffusionPipeline(providers=None)`` calls ``default_providers()``."""
     pytest.importorskip("onnxruntime")
-    from worldfoundry_inf.onnx_npu_provider import default_providers
+    from worldfoundry_inf.workers.onnx_npu_provider import default_providers
     from worldfoundry_inf.diffusion.backends.onnx_diffusion import (
         OnnxDiffusionPipeline,
     )
@@ -127,7 +127,7 @@ def test_onnx_diffusion_uses_default_providers_when_none_passed() -> None:
 def test_onnx_vllm_worker_respects_explicit_providers() -> None:
     """``OnnxVJEPAWorker(providers=[...])`` does NOT override the caller's list."""
     pytest.importorskip("onnxruntime")
-    from worldfoundry_inf.onnx_vllm_worker import OnnxVJEPAWorker, TinyViTConfig
+    from worldfoundry_inf.workers.onnx_vllm_worker import OnnxVJEPAWorker, TinyViTConfig
 
     worker = OnnxVJEPAWorker(
         cfg=TinyViTConfig(img_size=64, patch_size=8),

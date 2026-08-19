@@ -8,7 +8,7 @@ generated file. The dataset consumes manifests sequentially (no shuffle) and
 mask sequences are bit-identical across arms.
 
 Usage:
-    python scripts/w22_7_make_subset.py \
+    python scripts/archive/w22_7/w22_7_make_subset.py \
         --source /data/videomix22m/manifest.csv \
         --n 10000 \
         --out bench_results/w22_7/subset_manifest.csv

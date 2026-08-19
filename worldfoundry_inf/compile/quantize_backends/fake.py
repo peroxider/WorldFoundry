@@ -14,7 +14,7 @@ M3-T5 sibling: :class:`FakeSDXLBackend` registered as ``"fake_sdxl"`` —
 also CPU-runnable, also does NOT call msModelSlim, but instead of
 copying weights unchanged it round-trips every 2-D float weight through
 the real W8A8 ``pack_w8a8_weight`` / ``unpack_w8a8_weight`` from
-:mod:`worldfoundry_inf.quantize`. The MSE < 1e-3 contract of the W26
+:mod:`worldfoundry_inf.compile.quantize_primitives`. The MSE < 1e-3 contract of the W26
 packers guarantees cosine ≥ 0.99 vs the BF16 source, which satisfies
 the M3-T5 acceptance gate ("W8A8 vs BF16 latent cosine ≤ 0.05") on any
 host with torch installed. Diffusers-shaped models (SDXL/VAE) typically
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import torch
 
-from worldfoundry_inf.quantize import (
+from worldfoundry_inf.compile.quantize_primitives import (
     ACCEPTANCE_MSE_THRESHOLD,
     pack_w8a8_weight,
     unpack_w8a8_weight,
@@ -90,7 +90,7 @@ class FakeSDXLBackend:
     Loads every tensor from the source safetensors file (SDXL/VAE use
     ``diffusion_pytorch_model.safetensors``), round-trips every 2-D
     float weight through the real :func:`pack_w8a8_weight` /
-    :func:`unpack_w8a8_weight` from :mod:`worldfoundry_inf.quantize`,
+    :func:`unpack_w8a8_weight` from :mod:`worldfoundry_inf.compile.quantize_primitives`,
     writes the round-tripped weights back to the same filename under
     ``output_path``, and emits a ``quant_meta.json`` sidecar that
     ``worldfoundry_inf.eval.quant_eval.cosine_similarity_sdxl`` reads
@@ -191,7 +191,7 @@ class FakeSDXLBackend:
             "note": (
                 "FakeSDXLBackend CPU surrogate (M3-T5); every 2-D float "
                 "weight round-tripped through pack_w8a8_weight/"
-                "unpack_w8a8_weight from worldfoundry_inf.quantize. "
+                "unpack_w8a8_weight from worldfoundry_inf.compile.quantize_primitives. "
                 "Conv2D 4-D + non-float tensors are skipped unchanged."
             ),
         }

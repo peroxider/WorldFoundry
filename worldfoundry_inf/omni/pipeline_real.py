@@ -6,7 +6,7 @@ The orchestrator's ``--inference-backend vllm_omni`` seam (M2-T6)
 routes through the inference backend registry
 (:mod:`worldfoundry_common.backends.inference`), which in turn calls
 a builder function. The host-smoke path uses the CPU stand-in
-(:class:`worldfoundry_inf.vllm_omni.VLLMOmniPipeline`) because the
+(:class:`worldfoundry_inf.omni.pipeline.VLLMOmniPipeline`) because the
 public ``vllm-omni`` wheel isn't published and vLLM 0.18.0 itself
 requires a real model + GPU accelerator to instantiate its
 :class:`vllm.LLM` engine.
@@ -187,7 +187,7 @@ class RealVLLMOmniPipeline(LatentToFramePipeline):
         diffusion_cfg: Any | None = None,
     ) -> None:
         t0 = time.perf_counter()
-        from worldfoundry_inf.vllm_omni import (
+        from worldfoundry_inf.omni.pipeline import (
             _build_diffusion_pipeline,
             _build_inference_worker,
         )

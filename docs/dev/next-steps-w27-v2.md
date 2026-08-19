@@ -159,7 +159,7 @@ the SFT data schema.
    Optional[List[float]], "label": Optional[str]}`. Validation rules
    (action_dim if present must match the model's expected action_dim;
    num_frames must satisfy `past_frames + future_frames` if temporal mode).
-3. `scripts/w25_full_finetune_smoke.sh` — CPU-runnable smoke that runs the
+3. `scripts/archive/w25/w25_full_finetune_smoke.sh` — CPU-runnable smoke that runs the
    trainer in `full` mode for 5 steps on a synthetic clip and asserts the
    checkpoint is reloadable.
 4. Tests:

@@ -69,7 +69,7 @@ def check_m1():
 def check_m2():
     sec = _section("M2-T1/T2/T3: VJEPA2 worker parity")
     try:
-        from worldfoundry_inf.vllm_ascend_worker import VJEPA2NPUWorker
+        from worldfoundry_inf.workers.vllm_ascend_worker import VJEPA2NPUWorker
 
         worker = VJEPA2NPUWorker(model_path="dummy", device="cpu")
         for name in (
@@ -188,7 +188,7 @@ def check_m3():
         # vllm_omni dispatch (M2-T6 / M3 followup) -- the unified CPU stand-in
         # that combines ORT inference + ORT diffusion. On Atlas boxes this is
         # what gets used until the public vllm-omni wheel ships (W44+).
-        from worldfoundry_inf.vllm_omni import VLLMOmniPipeline, is_vllm_omni_available
+        from worldfoundry_inf.omni.pipeline import VLLMOmniPipeline, is_vllm_omni_available
         if is_vllm_omni_available():
             omni = make_engine("vllm_omni")
             assert isinstance(omni, VLLMOmniPipeline)
@@ -220,7 +220,7 @@ def check_m3():
         # onnxruntime-ascend wheel, default_providers() returns
         # ["AscendExecutionProvider", "CPUExecutionProvider"]; on host smoke
         # boxes it returns ["CPUExecutionProvider"].
-        from worldfoundry_inf.onnx_npu_provider import (
+        from worldfoundry_inf.workers.onnx_npu_provider import (
             default_providers,
             is_ascend_provider_available,
         )

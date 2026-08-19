@@ -216,7 +216,7 @@ def _compile_via_atc(
     ATC requires a single ONNX / caffe / pb model file as input. The
     convention here is ``<model_path>/model.onnx`` — the onnx export
     step is upstream of this function (see
-    ``worldfoundry_inf.quantize_backends`` for the export pipeline).
+    ``worldfoundry_inf.compile.quantize_primitives_backends`` for the export pipeline).
 
     Raises:
         OMCompileError: ``model.onnx`` missing, ``atc`` not on PATH,
@@ -232,7 +232,7 @@ def _compile_via_atc(
     if not onnx_file.exists():
         raise OMCompileError(
             f"ATC compile requires {onnx_file}; export the quantized "
-            f"model to ONNX first (worldfoundry_inf.quantize_backends)."
+            f"model to ONNX first (worldfoundry_inf.compile.quantize_primitives_backends)."
         )
 
     soc_version = _soc_version_for(target_hardware)

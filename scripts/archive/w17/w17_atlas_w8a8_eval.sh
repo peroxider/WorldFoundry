@@ -46,7 +46,7 @@ run_step() {
 run_w17() {
     # Step 0: preflight (must pass — bail loudly otherwise)
     run_step "PREFLIGHT: env check" "w17-preflight" \
-        python scripts/w17_preflight.py || return $?
+        python scripts/archive/w17/w17_preflight.py || return $?
 
     # Step 1: W8A8 quantize
     run_step "QUANTIZE: bf16 -> W8A8" "w17-quantize" \

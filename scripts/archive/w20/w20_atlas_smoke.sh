@@ -2,10 +2,10 @@
 # W20 Atlas single-card LoRA smoke.
 #
 # Usage:
-#     bash scripts/w20_atlas_smoke.sh                  # default: 5 + 100 steps
-#     bash scripts/w20_atlas_smoke.sh --steps 5         # 5-step smoke only
-#     bash scripts/w20_atlas_smoke.sh --steps 100       # 100-step run only
-#     WORLDFORGE_NO_DOCKER=1 bash scripts/w20_atlas_smoke.sh
+#     bash scripts/archive/w20/w20_atlas_smoke.sh                  # default: 5 + 100 steps
+#     bash scripts/archive/w20/w20_atlas_smoke.sh --steps 5         # 5-step smoke only
+#     bash scripts/archive/w20/w20_atlas_smoke.sh --steps 100       # 100-step run only
+#     WORLDFORGE_NO_DOCKER=1 bash scripts/archive/w20/w20_atlas_smoke.sh
 #                                                     # skip Docker wrapper
 #                                                     # (assume NPU already mounted)
 #

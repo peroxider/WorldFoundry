@@ -7,7 +7,7 @@ the autoregressive planning surface. The public ``vllm-omni`` wheel is
 not yet released (tracked under W44+), so this module ships a *real
 executable CPU stand-in* that:
 
-* Uses :class:`~worldfoundry_inf.onnx_vllm_worker.OnnxVJEPAWorker` for
+* Uses :class:`~worldfoundry_inf.workers.onnx_vllm_worker.OnnxVJEPAWorker` for
   the V-JEPA encoder path (already non-PyTorch via ORT).
 * Uses :class:`~worldfoundry_inf.diffusion.backends.onnx_diffusion.OnnxDiffusionPipeline`
   for the diffusion decoder path (also non-PyTorch via ORT).
@@ -70,7 +70,7 @@ def _build_inference_worker(
     for callers that pass a custom cfg or want Atlas-grade V-JEPA 2
     shapes.
     """
-    from worldfoundry_inf.onnx_vllm_worker import (
+    from worldfoundry_inf.workers.onnx_vllm_worker import (
         OnnxVJEPAWorker,
         TinyViTConfig,
     )

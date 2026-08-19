@@ -112,7 +112,7 @@ steps LoRA 微调，loss 曲线正常下降。W20 是 G1 的物理前提。
    不变以保持测试可跑）。
 2. `worldfoundry_train/npu_env.py`（新）— NPU 设备的 `rank` / `world_size`
    抽象，与现有 gloo CPU 路径并列。
-3. `scripts/w20_atlas_smoke.sh`（新）— 单卡 LoRA smoke，5 step 起步 +
+3. `scripts/archive/w20/w20_atlas_smoke.sh`（新）— 单卡 LoRA smoke，5 step 起步 +
    100 step 长程。
 4. 测试：`tests/test_npu_trainer.py`（新）— mock `npu_available` →
    True，断言 `.to("npu")` 被调用。
@@ -177,7 +177,7 @@ steps LoRA 微调，loss 曲线正常下降。W20 是 G1 的物理前提。
   阈值内 vs FP32 baseline）。
 - Atlas 上 `_patch_quantized_loader` 实际加载量化权重 + 完成
   一次完整 `/v1/world/predict` 调用，response 与 FP32 模型在
-  误差阈值内（阈值定义在 `scripts/w17_atlas_w8a8_eval.sh`）。
+  误差阈值内（阈值定义在 `scripts/archive/w17/w17_atlas_w8a8_eval.sh`）。
 
 ### Blocked-on
 - **Atlas 硬件窗口**（W20 之后；不需要等 FSDP，单卡即可）。
@@ -831,7 +831,7 @@ move to the bottom of the queue.
   含端到端 `run_training` spy 验证迁移点真在 `strategy.wrap` 之后发生）。
   CPU 路径字节级不变——`pytest worldfoundry_train/tests/` 392/392；全仓
   606 passed / 1 skipped，无回归。剩余的 Atlas 上机步骤
-  （`scripts/w20_atlas_smoke.sh` 5/100 step smoke +
+  （`scripts/archive/w20/w20_atlas_smoke.sh` 5/100 step smoke +
   `bench_results/atlas_baseline/single_card.json`）等硬件窗口。
 - **W2.16 — FrankaKitchen RGB + action transitions wired into the
   world-model train phase**: `worldfoundry_rl/env_franka_kitchen.py`

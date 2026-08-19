@@ -22,7 +22,7 @@ def client(monkeypatch):
             return torch.zeros(1, 196, 1024)
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.VJEPA2Worker",
+        "worldfoundry_inf.workers.vjepa2_worker.VJEPA2Worker",
         lambda *a, **kw: _StubWorker(),
     )
 
@@ -90,7 +90,7 @@ def predict_client(monkeypatch):
             return torch.zeros(1, 196, 1024)
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.VJEPA2Worker",
+        "worldfoundry_inf.workers.vjepa2_worker.VJEPA2Worker",
         lambda *a, **kw: _StubWorker(),
     )
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
@@ -140,7 +140,7 @@ def plan_client(monkeypatch):
             return torch.zeros(1, 196, 1024), [int(a) for a in actions]
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.VJEPA2Worker",
+        "worldfoundry_inf.workers.vjepa2_worker.VJEPA2Worker",
         lambda *a, **kw: _StubWorker(),
     )
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
@@ -279,7 +279,7 @@ def temporal_client(monkeypatch):
             # (B, N_future, hidden_dim), confidence in [-1, 1]
             return torch.zeros(1, future_frames * 196, 1024), 0.5
 
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker.VJEPA2Worker", lambda *a, **kw: _TemporalStubWorker())
+    monkeypatch.setattr("worldfoundry_inf.workers.vjepa2_worker.VJEPA2Worker", lambda *a, **kw: _TemporalStubWorker())
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))
 
 
@@ -436,7 +436,7 @@ def action_client(monkeypatch):
             return torch.zeros(1, future_frames * 196, 1024), 0.6
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.VJEPA2Worker",
+        "worldfoundry_inf.workers.vjepa2_worker.VJEPA2Worker",
         lambda *a, **kw: _ActionStubWorker(),
     )
     return TestClient(create_app(model_path="/fake/model", secret="test-secret"))

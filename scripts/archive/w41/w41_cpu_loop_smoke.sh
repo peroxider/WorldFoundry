@@ -2,9 +2,9 @@
 # W41 Phase-5 v1 CPU end-to-end loop smoke.
 #
 # Usage:
-#     bash scripts/w41_cpu_loop_smoke.sh                  # default 192 pool-steps
-#     bash scripts/w41_cpu_loop_smoke.sh --steps 192      # explicit total pool-steps
-#     bash scripts/w41_cpu_loop_smoke.sh --seed 42        # reproducible env init
+#     bash scripts/archive/w41/w41_cpu_loop_smoke.sh                  # default 192 pool-steps
+#     bash scripts/archive/w41/w41_cpu_loop_smoke.sh --steps 192      # explicit total pool-steps
+#     bash scripts/archive/w41/w41_cpu_loop_smoke.sh --seed 42        # reproducible env init
 #
 # Validates G7-extension Phase-5 v1: ManipulatorEnv (W41 deliverable 1) +
 # VisionPolicy (W41 deliverable 2) + the existing SyncEnvPool + PPO trainer

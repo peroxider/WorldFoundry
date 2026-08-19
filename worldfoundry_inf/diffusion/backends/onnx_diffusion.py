@@ -46,7 +46,7 @@ import torch
 from torch import nn
 
 from worldfoundry_inf.diffusion.pipeline import LatentToFramePipeline
-from worldfoundry_inf.onnx_npu_provider import default_providers
+from worldfoundry_inf.workers.onnx_npu_provider import default_providers
 
 
 def is_onnx_diffusion_available() -> bool:
@@ -131,7 +131,7 @@ def _build_onnx_session(
     """Construct an :class:`onnxruntime.InferenceSession` for the decoder.
 
     When ``providers`` is omitted, the helper
-    :func:`worldfoundry_inf.onnx_npu_provider.default_providers`
+    :func:`worldfoundry_inf.workers.onnx_npu_provider.default_providers`
     picks ``["AscendExecutionProvider", "CPUExecutionProvider"]`` on
     Atlas boxes and ``["CPUExecutionProvider"]`` on the host smoke.
     Callers can pin a list explicitly (e.g.

@@ -293,7 +293,7 @@ python3 -m scripts.render_train_rl_cpu \
      步可省。
 8. **vLLM-Omni 升级到真 vllm 包（M2-T6 P1, commit 122ea47）**：
    - Lesson #6 的 inference 行已过期。新增
-     `worldfoundry_inf.vllm_omni_real.RealVLLMOmniPipeline` — 真
+     `worldfoundry_inf.omni.pipeline_real.RealVLLMOmniPipeline` — 真
      `import vllm` 拉起 `vllm_version=0.18.0` + `vllm_file` 路径 +
      `LLM_init_signature`（即使 CPU 端 `LLM.__init__` 因缺 model/
      accelerator 起不来，也照样记录 `kind="real_vllm_omni"`）。

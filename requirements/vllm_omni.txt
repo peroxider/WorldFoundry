@@ -4,7 +4,7 @@
 # docs/roadmap/2026-08-14-opensource-extensions-loop-todo.md section 9.5.
 #
 # Until the public ``vllm-omni`` wheel ships, the CPU stand-in at
-# ``worldfoundry_inf.vllm_omni.VLLMOmniPipeline`` is what gets
+# ``worldfoundry_inf.omni.pipeline.VLLMOmniPipeline`` is what gets
 # imported -- it binds the ORT-backed inference worker
 # (``worldfoundry_inf.onnx_vllm_worker.OnnxVJEPAWorker``) and the
 # ORT-backed diffusion pipeline

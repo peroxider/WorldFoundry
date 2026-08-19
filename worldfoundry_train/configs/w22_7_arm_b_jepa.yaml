@@ -6,7 +6,7 @@
 # (design §9.2: fixed data subset, same seed/steps/batch/grad_accum/lr so
 # both arms see the same sample sequence and the same optimizer-step count).
 #
-# Data subset: scripts/w22_7_make_subset.py generates a FIXED manifest subset
+# Data subset: scripts/archive/w22_7/w22_7_make_subset.py generates a FIXED manifest subset
 # (seeded sampling, written to disk once); both arms MUST point
 # data.manifest at the same generated file. The dataset consumes the
 # manifest sequentially (no shuffle) and mask_fn is seeded per-sample-index

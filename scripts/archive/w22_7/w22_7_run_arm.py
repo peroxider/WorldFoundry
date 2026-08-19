@@ -8,7 +8,7 @@ Modes:
                 result.
   --mode atlas  Real run from the arm YAML config (ViT-L 1.2B + LoRA +
                 subset manifest). Single-process entry; the 8-card hccl/FSDP
-                launch is wrapped by scripts/w22_7_ab_experiment.sh via
+                launch is wrapped by scripts/archive/w22_7/w22_7_ab_experiment.sh via
                 torchrun (NPU device migration is W20 — see the .sh TODO).
 
 Artifacts (under --out, default bench_results/w22_7):
@@ -348,7 +348,7 @@ def run_arm_pilot(arm: str, out_dir: Path, steps: int, backend: str,
             if not manifest.is_file():
                 raise FileNotFoundError(
                     f"subset manifest missing: {manifest} — run "
-                    f"scripts/w22_7_make_subset.py first"
+                    f"scripts/archive/w22_7/w22_7_make_subset.py first"
                 )
             run_kwargs = dict(num_steps=steps)
 
@@ -549,7 +549,7 @@ def run_arm_dry(arm: str, out_dir: Path, steps: int, save_every_n: int,
 def run_arm_atlas(arm: str, config: Path, out_dir: Path, steps: int | None,
                   save_every_n: int) -> None:
     """Real arm run from YAML. Single-process entry; torchrun wrapping for
-    8-card hccl lives in scripts/w22_7_ab_experiment.sh (NPU migration W20).
+    8-card hccl lives in scripts/archive/w22_7/w22_7_ab_experiment.sh (NPU migration W20).
     """
     import yaml
 
@@ -558,7 +558,7 @@ def run_arm_atlas(arm: str, config: Path, out_dir: Path, steps: int | None,
     if not manifest.is_file():
         raise FileNotFoundError(
             f"subset manifest missing: {manifest} — run "
-            f"scripts/w22_7_make_subset.py first"
+            f"scripts/archive/w22_7/w22_7_make_subset.py first"
         )
     ckpt_dir = out_dir / arm / "ckpt"
     t0 = time.perf_counter()
@@ -578,7 +578,7 @@ def run_arm_atlas(arm: str, config: Path, out_dir: Path, steps: int | None,
         "loss_curve": losses,
         # NOTE: per-component timing + per-checkpoint probing on real weights
         # is wired the same way as dry mode once W20 (NPU device migration)
-        # lands; see scripts/w22_7_ab_experiment.sh TODO block.
+        # lands; see scripts/archive/w22_7/w22_7_ab_experiment.sh TODO block.
     }
     tp_path = out_dir / arm / "throughput.json"
     tp_path.parent.mkdir(parents=True, exist_ok=True)

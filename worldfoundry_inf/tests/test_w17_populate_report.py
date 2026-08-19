@@ -11,7 +11,7 @@ import pytest
 
 @pytest.fixture
 def populate_module():
-    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts" / "archive" / "w17"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     if "w17_populate_report" in sys.modules:

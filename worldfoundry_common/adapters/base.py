@@ -26,7 +26,7 @@ from typing import Any, Protocol, runtime_checkable
 class InferenceWorker(Protocol):
     """Contract every V-JEPA inference-engine worker must satisfy.
 
-    Mirrors :class:`worldfoundry_inf.vjepa2_worker.VJEPA2Worker` (and its
+    Mirrors :class:`worldfoundry_inf.workers.vjepa2_worker.VJEPA2Worker` (and its
     ``vllm`` sibling) so a caller can swap ``torch`` / ``vllm`` / any future
     V-JEPA engine without changing downstream code.
     """

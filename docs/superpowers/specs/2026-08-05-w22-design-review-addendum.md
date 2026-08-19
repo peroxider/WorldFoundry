@@ -56,7 +56,7 @@ W22 主 spec（2026-08-03）由 Kimi 起草，2026-08-04 落地 W22.1–W22.6（
 - 若 C 臂的 `recon_cosine` 与 B 臂差距不显著，说明 mask 信号弱，**问题不在算法而在 HF 架构层面（偏差 #1）**，需启动上游 patch 方案。
 - C 臂同时作为 B 臂的统计对照：剥离"encoder 拟合到训练分布"的贡献。
 
-**实现**：复用 W22.7 的 `make_subset` / `run_arm` 骨架，仅新增一份 YAML 配置 `worldfoundry_train/configs/w22_7_arm_c_mask0.yaml`，并在 `scripts/w22_7_ab_experiment.sh` 中加入 `c` 臂循环。
+**实现**：复用 W22.7 的 `make_subset` / `run_arm` 骨架，仅新增一份 YAML 配置 `worldfoundry_train/configs/w22_7_arm_c_mask0.yaml`，并在 `scripts/archive/w22_7/w22_7_ab_experiment.sh` 中加入 `c` 臂循环。
 
 ### 2.2 修订验收门槛 — 差值优于绝对值
 
@@ -161,7 +161,7 @@ V-JEPA 2 典型 T=8/16，但 trilinear 在小 T 上可能退化（interpolate �
 
 ### 5.4 M5 — `W22_7_PILOT_STEPS` 模块级 fallback
 
-**文件**：`scripts/w22_7_run_arm.py`
+**文件**：`scripts/archive/w22_7/w22_7_run_arm.py`
 **修改**：原内联字面量 `"200" if backend == "atlas" else "40"` 提到模块级常量 `DEFAULT_PILOT_STEPS_ATLAS / _DRY`，避免 docstring 与 main() 漂移。
 
 ### 5.5 M6 — `PredictorGradSyncStrategy` decorator 解释
@@ -202,6 +202,6 @@ V-JEPA 2 典型 T=8/16，但 trilinear 在小 T 上可能退化（interpolate �
 | Hyperparam 序列化 | `worldfoundry_train/checkpoint.py` (save_checkpoint, load_checkpoint) |
 | Predictor dtype cache | `worldfoundry_train/model/predictor.py` (forward) |
 | EMA 形状守卫 | `worldfoundry_train/model/ema.py` (update) |
-| Pilot step fallback | `scripts/w22_7_run_arm.py` (DEFAULT_PILOT_STEPS_ATLAS / _DRY) |
+| Pilot step fallback | `scripts/archive/w22_7/w22_7_run_arm.py` (DEFAULT_PILOT_STEPS_ATLAS / _DRY) |
 | Decorator 解释 | `worldfoundry_train/jepa_objective.py` (PredictorGradSyncStrategy docstring) |
 | 新单测 | `worldfoundry_train/tests/test_predictor.py` (4 项), `worldfoundry_train/tests/test_jepa_checkpoint.py` (4 项) |

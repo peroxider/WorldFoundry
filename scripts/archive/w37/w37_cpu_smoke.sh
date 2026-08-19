@@ -2,9 +2,9 @@
 # W37 v1 CPU skeleton smoke — CLI runner end-to-end.
 #
 # Usage:
-#     bash scripts/w37_cpu_smoke.sh                  # default 192 pool-steps
-#     bash scripts/w37_cpu_smoke.sh --steps 192      # explicit total pool-steps
-#     bash scripts/w37_cpu_smoke.sh --seed 42        # reproducible env init
+#     bash scripts/archive/w37/w37_cpu_smoke.sh                  # default 192 pool-steps
+#     bash scripts/archive/w37/w37_cpu_smoke.sh --steps 192      # explicit total pool-steps
+#     bash scripts/archive/w37/w37_cpu_smoke.sh --seed 42        # reproducible env init
 #
 # Validates W37 §A-F: YAML-driven CLI runner wires SyncEnvPool +
 # VisionPolicy + PPO via worldfoundry_train.{device,checkpoint} seams.

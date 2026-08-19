@@ -78,7 +78,7 @@ def register_model() -> None:
 
     # Lazy import of the worker so the entry-point loader doesn't pull in
     # torch_npu / transformers until vLLM is actually initializing.
-    from worldfoundry_inf.vllm_ascend_worker import VJEPA2NPUWorker
+    from worldfoundry_inf.workers.vllm_ascend_worker import VJEPA2NPUWorker
 
     try:
         registry.register_model("VJEPA2Model", VJEPA2NPUWorker)
@@ -92,11 +92,11 @@ def _patch_quantized_loader() -> None:
 
     When a V-JEPA 2 model has been quantized via the W11-W12 stack, vLLM's
     default HF loader reads ``model.safetensors`` as bf16 and never
-    consults :mod:`worldfoundry_inf.quantize`, so int8 packed weights
+    consults :mod:`worldfoundry_inf.compile.quantize_primitives`, so int8 packed weights
     would land in the inference graph as raw bytes. This hook registers
     a per-arch weight iterator that detects ``quant_meta.json`` via
-    :func:`worldfoundry_inf.quantize.is_w8a8_quantized` and, when present,
-    routes int8 weights through :func:`worldfoundry_inf.quantize.unpack_linear`.
+    :func:`worldfoundry_inf.compile.quantize_primitives.is_w8a8_quantized` and, when present,
+    routes int8 weights through :func:`worldfoundry_inf.compile.quantize_primitives.unpack_linear`.
 
     On CPU-only dev hosts (no vLLM installed) the import of vLLM's
     registry fails and the hook is a no-op + log, mirroring the fail-soft
@@ -114,7 +114,7 @@ def _patch_quantized_loader() -> None:
     # inference-side utilities + torch until a VJEPA2Model load starts.
     from pathlib import Path
     import torch
-    from worldfoundry_inf import quantize as _quantize
+    from worldfoundry_inf.compile import quantize_primitives as _quantize
 
     def _w8a8_loader(weights_iterator, model_dir):
         """Iterate ``(name, tensor)`` pairs, unpacking int8 weights in-place.

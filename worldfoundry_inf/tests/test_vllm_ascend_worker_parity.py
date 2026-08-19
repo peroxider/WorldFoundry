@@ -8,7 +8,7 @@ routed to either worker must accept the same parameter names + ordering
 Post-W27 + M2-T1/T2/T3 (M2: vLLM inference closed-loop, see
 ``docs/roadmap/2026-08-14-opensource-extensions-loop-todo.md`` §2): all
 five ``predict_*`` methods now have **CPU fallback paths** that mirror
-:mod:`worldfoundry_inf.vjepa2_worker` byte-for-byte, so the API
+:mod:`worldfoundry_inf.workers.vjepa2_worker` byte-for-byte, so the API
 endpoint dispatches the same way on both workers and the CPU ↔ NPU
 parity contract can be exercised without Atlas hardware. This module
 asserts that:
@@ -39,8 +39,8 @@ import pytest
 import torch
 import transformers
 
-from worldfoundry_inf.vjepa2_worker import VJEPA2Worker
-from worldfoundry_inf.vllm_ascend_worker import VJEPA2NPUWorker
+from worldfoundry_inf.workers.vjepa2_worker import VJEPA2Worker
+from worldfoundry_inf.workers.vllm_ascend_worker import VJEPA2NPUWorker
 
 
 # ---------------------------------------------------------------------------

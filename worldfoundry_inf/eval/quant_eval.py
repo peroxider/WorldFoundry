@@ -297,7 +297,7 @@ def compute_w8a8_memory_reduction(
             "package. Run: pip install safetensors"
         ) from exc
 
-    from worldfoundry_inf.quantize import pack_w8a8_weight
+    from worldfoundry_inf.compile.quantize_primitives import pack_w8a8_weight
 
     baseline_path = Path(baseline_path)
     weights = baseline_path / weight_filename

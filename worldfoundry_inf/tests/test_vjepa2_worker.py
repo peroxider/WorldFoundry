@@ -1,6 +1,6 @@
 import pytest
 
-from worldfoundry_inf.vjepa2_worker import VJEPA2Worker
+from worldfoundry_inf.workers.vjepa2_worker import VJEPA2Worker
 
 
 class _FakeHFModel:
@@ -17,14 +17,14 @@ class _FakeHFModel:
 
 
 def test_worker_init_loads_model(monkeypatch):
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
+    monkeypatch.setattr("worldfoundry_inf.workers.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
     assert worker.model is not None
 
 
 def test_worker_encode_returns_tensor(monkeypatch):
     import torch
-    monkeypatch.setattr("worldfoundry_inf.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
+    monkeypatch.setattr("worldfoundry_inf.workers.vjepa2_worker._load_hf_model", lambda path, dtype: _FakeHFModel())
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
     fake_video = torch.zeros(1, 16, 3, 224, 224)
     out = worker.encode(fake_video)
@@ -38,7 +38,7 @@ def test_worker_encode_returns_tensor(monkeypatch):
 
 def test_worker_without_predictor_ckpt_has_none_bundle(monkeypatch):
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
@@ -67,11 +67,11 @@ def test_worker_with_predictor_ckpt_loads_bundle(monkeypatch):
         return fake_bundle
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.load_jepa_inference_model", fake_load,
+        "worldfoundry_inf.workers.vjepa2_worker.load_jepa_inference_model", fake_load,
     )
 
     worker = VJEPA2Worker(
@@ -94,7 +94,7 @@ def test_worker_predict_action_conditioned_raises(monkeypatch):
     """Without action_predictor_ckpt, the worker raises RuntimeError (W27 v2 surface)."""
     import torch
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
@@ -111,7 +111,7 @@ def test_worker_predict_action_conditioned_raises(monkeypatch):
 
 def test_worker_without_action_predictor_ckpt_has_none_action_bundle(monkeypatch):
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     worker = VJEPA2Worker("/fake/model", adapter_name=None)
@@ -129,11 +129,11 @@ def test_worker_with_action_predictor_ckpt_loads_action_bundle(monkeypatch):
         return fake_bundle
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.load_action_conditioned_inference_model",
+        "worldfoundry_inf.workers.vjepa2_worker.load_action_conditioned_inference_model",
         fake_load,
     )
 
@@ -154,11 +154,11 @@ def test_worker_with_action_predictor_ckpt_action_dim_mismatch_raises(monkeypatc
     fake_bundle = _make_fake_action_bundle(action_dim=8)  # ckpt says 8
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.load_action_conditioned_inference_model",
+        "worldfoundry_inf.workers.vjepa2_worker.load_action_conditioned_inference_model",
         lambda ckpt, encoder, *, past_grid, future_grid, map_location="cpu",
              jepa_predictor=None: fake_bundle,
     )
@@ -178,11 +178,11 @@ def test_worker_predict_action_conditioned_runs_through_action_bundle(monkeypatc
     fake_bundle = _make_fake_action_bundle(action_dim=7)
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.load_action_conditioned_inference_model",
+        "worldfoundry_inf.workers.vjepa2_worker.load_action_conditioned_inference_model",
         lambda ckpt, encoder, *, past_grid, future_grid, map_location="cpu",
              jepa_predictor=None: fake_bundle,
     )
@@ -211,11 +211,11 @@ def test_worker_predict_action_conditioned_rejects_wrong_past_future(monkeypatch
     fake_bundle = _make_fake_action_bundle(action_dim=7)
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.load_action_conditioned_inference_model",
+        "worldfoundry_inf.workers.vjepa2_worker.load_action_conditioned_inference_model",
         lambda ckpt, encoder, *, past_grid, future_grid, map_location="cpu",
              jepa_predictor=None: fake_bundle,
     )
@@ -241,11 +241,11 @@ def test_worker_predict_action_conditioned_rejects_video_too_short(monkeypatch):
     fake_bundle = _make_fake_action_bundle(action_dim=7)
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.load_action_conditioned_inference_model",
+        "worldfoundry_inf.workers.vjepa2_worker.load_action_conditioned_inference_model",
         lambda ckpt, encoder, *, past_grid, future_grid, map_location="cpu",
              jepa_predictor=None: fake_bundle,
     )
@@ -271,11 +271,11 @@ def test_worker_predict_action_conditioned_rejects_wrong_actions_shape(monkeypat
     fake_bundle = _make_fake_action_bundle(action_dim=7)
 
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker._load_hf_model",
+        "worldfoundry_inf.workers.vjepa2_worker._load_hf_model",
         lambda path, dtype: _FakeHFModel(),
     )
     monkeypatch.setattr(
-        "worldfoundry_inf.vjepa2_worker.load_action_conditioned_inference_model",
+        "worldfoundry_inf.workers.vjepa2_worker.load_action_conditioned_inference_model",
         lambda ckpt, encoder, *, past_grid, future_grid, map_location="cpu",
              jepa_predictor=None: fake_bundle,
     )

@@ -15,8 +15,8 @@ import pytest
 
 @pytest.fixture
 def w17_preflight(monkeypatch):
-    """Import scripts/w17_preflight as a module."""
-    scripts_dir = Path(__file__).resolve().parents[2] / "scripts"
+    """Import scripts/archive/w17/w17_preflight as a module."""
+    scripts_dir = Path(__file__).resolve().parents[2] / "scripts" / "archive" / "w17"
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
     if "w17_preflight" in sys.modules:
@@ -120,7 +120,8 @@ def test_have_weights_uses_default_when_env_unset(w17_preflight, monkeypatch):
     monkeypatch.delenv("WORLDFORGE_QUANT_MODEL", raising=False)
     ok, hint = w17_preflight._have_weights()
     assert ok is False
-    assert "models/vjepa2-vitl-1.2b" in hint
+    assert "weights dir missing:" in hint
+    assert "models" in hint and "vjepa2-vitl-1.2b" in hint
 
 
 def test_main_exits_0_on_success(w17_preflight, monkeypatch, capsys):

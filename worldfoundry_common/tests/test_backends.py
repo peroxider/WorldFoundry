@@ -228,7 +228,7 @@ def test_vllm_aliases_to_vllm_ascend() -> None:
 def test_vllm_ascend_unavailable_on_host_without_wheels() -> None:
     """Host without ``torch_npu + vllm + vllm_ascend`` wheels reports ``(False, hint)``.
 
-    Strengthened probe (M2-T4): even when ``worldfoundry_inf.vllm_ascend_worker``
+    Strengthened probe (M2-T4): even when ``worldfoundry_inf.workers.vllm_ascend_worker``
     is in-tree, missing any one of the three wheels flips availability to False.
     """
     ok, hint = backend_available("inference", "vllm_ascend")

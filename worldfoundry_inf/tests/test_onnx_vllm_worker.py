@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from worldfoundry_inf.onnx_vllm_worker import (
+from worldfoundry_inf.workers.onnx_vllm_worker import (
     OnnxVJEPAWorker,
     TinyViTConfig,
     is_onnx_runtime_available,

@@ -8,7 +8,7 @@ Substitutes bracketed field markers in the report template and writes the
 final report. Determines verdict from cosine >= 0.98.
 
 Usage:
-    python scripts/w17_populate_report.py \\
+    python scripts/archive/w17/w17_populate_report.py \\
         --quant-meta models/vjepa2-vitl-1.2b-w8a8/quant_meta.json \\
         --eval-report bench_results/w17_w8a8_eval.json \\
         --output docs/superpowers/specs/W11_W12_QUANT_REPORT.md

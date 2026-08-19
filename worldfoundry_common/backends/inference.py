@@ -45,7 +45,7 @@ registry = BackendRegistry("inference")
 
 
 def _build_torch(**kwargs: Any) -> Any:
-    from worldfoundry_inf.vjepa2_worker import VJEPA2Worker
+    from worldfoundry_inf.workers.vjepa2_worker import VJEPA2Worker
 
     return VJEPA2Worker(**kwargs)
 
@@ -54,7 +54,7 @@ def _vllm_ascend_available() -> bool:
     """Triple-import probe for the Atlas ``vllm_ascend`` backend (M2-T4).
 
     Strengthened gate: requires ``torch_npu`` + ``vllm`` + ``vllm_ascend``
-    plus the in-tree ``worldfoundry_inf.vllm_ascend_worker`` shim. The
+    plus the in-tree ``worldfoundry_inf.workers.vllm_ascend_worker`` shim. The
     earlier ``_vllm_available`` only checked the in-tree shim and therefore
     reported True on hosts that lacked the wheel, which could route the
     orchestrator into a broken worker. This is the same shape
@@ -64,7 +64,7 @@ def _vllm_ascend_available() -> bool:
         import torch_npu  # noqa: F401
         import vllm  # noqa: F401
         import vllm_ascend  # noqa: F401
-        import worldfoundry_inf.vllm_ascend_worker  # noqa: F401
+        import worldfoundry_inf.workers.vllm_ascend_worker  # noqa: F401
 
         return True
     except ImportError:
@@ -79,7 +79,7 @@ def _vllm_available() -> bool:
 def _build_vllm(**kwargs: Any) -> Any:
     if not _vllm_available():
         raise ImportError("vllm-ascend not installed. Run: pip install -e '.[inf]'")
-    from worldfoundry_inf.vllm_ascend_worker import VJEPA2NPUWorker
+    from worldfoundry_inf.workers.vllm_ascend_worker import VJEPA2NPUWorker
 
     return VJEPA2NPUWorker(**kwargs)
 
@@ -226,7 +226,7 @@ def _vllm_omni_available() -> bool:
     own -- both halves already run through ORT, not PyTorch.
     """
     try:
-        from worldfoundry_inf.vllm_omni import is_vllm_omni_available  # noqa: F401
+        from worldfoundry_inf.omni.pipeline import is_vllm_omni_available  # noqa: F401
 
         return is_vllm_omni_available()
     except ImportError:
@@ -259,7 +259,7 @@ def _build_onnx_vllm(**kwargs: Any) -> Any:
     module targets the ``AscendExecutionProvider``; here it stays on
     the CPU EP so the orchestrator's host smoke passes without NPU.
     """
-    from worldfoundry_inf.onnx_vllm_worker import OnnxVJEPAWorker
+    from worldfoundry_inf.workers.onnx_vllm_worker import OnnxVJEPAWorker
 
     return OnnxVJEPAWorker(**kwargs)
 
@@ -270,7 +270,7 @@ def _build_vllm_omni(**kwargs: Any) -> Any:
     Dispatches in priority order:
 
     1. **Real vLLM path** (:class:`RealVLLMOmniPipeline` in
-       :mod:`worldfoundry_inf.vllm_omni_real`) -- when the real
+       :mod:`worldfoundry_inf.omni.pipeline_real`) -- when the real
        ``vllm`` package is importable, the registry picks this and
        the dispatch fingerprint records ``kind=="real_vllm_omni"`` +
        ``vllm_version`` + ``LLM_init_signature``. The actual tensor
@@ -278,7 +278,7 @@ def _build_vllm_omni(**kwargs: Any) -> Any:
        model + accelerator to instantiate), but the inference axis
        is genuinely based on the real vllm package.
     2. **ORT stand-in** (:class:`VLLMOmniPipeline` in
-       :mod:`worldfoundry_inf.vllm_omni`) -- CPU stand-in for callers
+       :mod:`worldfoundry_inf.omni.pipeline`) -- CPU stand-in for callers
        without vllm installed. Records ``kind=="vllm_omni"`` and
        satisfies the non-PyTorch diffusion clause on its own.
 
@@ -297,14 +297,14 @@ def _build_vllm_omni(**kwargs: Any) -> Any:
     # ``_vllm_omni_available`` is True if EITHER vllm OR onnxruntime is
     # importable; ``RealVLLMOmniPipeline.available`` is True iff vllm is.
     try:
-        from worldfoundry_inf.vllm_omni_real import RealVLLMOmniPipeline
+        from worldfoundry_inf.omni.pipeline_real import RealVLLMOmniPipeline
 
         if RealVLLMOmniPipeline.available():
             return RealVLLMOmniPipeline(**kwargs)
     except ImportError:
         pass
 
-    from worldfoundry_inf.vllm_omni import VLLMOmniPipeline
+    from worldfoundry_inf.omni.pipeline import VLLMOmniPipeline
 
     return VLLMOmniPipeline(**kwargs)
 

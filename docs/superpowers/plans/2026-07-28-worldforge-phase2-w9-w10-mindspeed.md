@@ -820,10 +820,10 @@ git commit -m "feat(train): bench compare with 4-condition GO/NO-GO gate"
 
 ---
 
-## Task 5: `scripts/w9_eval.sh` 端到端驱动脚本
+## Task 5: `scripts/archive/w9/w9_eval.sh` 端到端驱动脚本
 
 **Files:**
-- Create: `scripts/w9_eval.sh`
+- Create: `scripts/archive/w9/w9_eval.sh`
 
 **Step 5.1: 实现脚本**
 
@@ -832,7 +832,7 @@ git commit -m "feat(train): bench compare with 4-condition GO/NO-GO gate"
 # W9 MindSpeed-MM evaluation end-to-end driver (Phase-2 W9).
 #
 # Usage:
-#     bash scripts/w9_eval.sh
+#     bash scripts/archive/w9/w9_eval.sh
 #
 # Runs in worldforge-base:phase1 Docker container on 8x NPU host.
 # Produces docs/superpowers/specs/W9_EVAL_REPORT.md with GO/NO-GO verdict.
@@ -891,13 +891,13 @@ echo "==== W9 eval complete; see docs/superpowers/specs/W9_EVAL_REPORT.md ===="
 **Step 5.2: 标记可执行**
 
 ```bash
-chmod +x /mnt/c/WorkSpace/WorldForge/scripts/w9_eval.sh
+chmod +x /mnt/c/WorkSpace/WorldForge/scripts/archive/w9/w9_eval.sh
 ```
 
 **Step 5.3: Commit**
 
 ```bash
-git add scripts/w9_eval.sh
+git add scripts/archive/w9/w9_eval.sh
 git commit -m "feat(scripts): W9 MindSpeed-MM evaluation driver"
 ```
 
@@ -926,7 +926,7 @@ docker run --rm \
     -v "$(pwd):/workspace" \
     -v /data:/data \
     worldforge-base:phase1 \
-    bash /workspace/scripts/w9_eval.sh
+    bash /workspace/scripts/archive/w9/w9_eval.sh
 ```
 
 Expected: script runs both bench commands, produces JSON files in `bench_results/`, then writes Markdown report to `docs/superpowers/specs/W9_EVAL_REPORT.md`.

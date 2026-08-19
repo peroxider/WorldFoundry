@@ -34,7 +34,7 @@ class PipelineNotAvailableError(NotImplementedError):
 
     Subclasses :class:`NotImplementedError` so existing callers that
     catch ``NotImplementedError`` (e.g. the API endpoint's 503 mapping
-    in :mod:`worldfoundry_inf.vllm_ascend_worker`) keep working, while
+    in :mod:`worldfoundry_inf.workers.vllm_ascend_worker`) keep working, while
     letting new code raise a more specific error type.
     """
 

@@ -2,7 +2,7 @@
 
 Covers:
 - C-arm YAML config (mask_ratio=0, jepa.enabled=true).
-- ``scripts/w22_7_run_arm.py`` helpers (``_dry_cfg``, ``default_arm_config``,
+- ``scripts/archive/w22_7/w22_7_run_arm.py`` helpers (``_dry_cfg``, ``default_arm_config``,
   ``--arm`` choices).
 - ``scripts/w22_7_build_report.py`` Δ-table helpers (paired delta series,
   bootstrap CI, variance ratio at step cap) and the NPU profile slot.
@@ -19,8 +19,8 @@ import pytest
 import torch
 import yaml
 
-import scripts.w22_7_build_report as build_report_mod
-import scripts.w22_7_run_arm as run_arm_mod
+import scripts.archive.w22_7.w22_7_build_report as build_report_mod
+import scripts.archive.w22_7.w22_7_run_arm as run_arm_mod
 from worldfoundry_train.jepa_objective import (
     JEPAObjective,
     _PeakMemoryAPI,

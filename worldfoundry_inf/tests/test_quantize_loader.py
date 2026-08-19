@@ -1,8 +1,8 @@
-"""CPU tests for worldfoundry_inf.quantize + _vllm_ascend_plugin loader hook.
+"""CPU tests for worldfoundry_inf.compile.quantize_primitives + _vllm_ascend_plugin loader hook.
 
 Two halves:
 1. Round-trip + edge-case tests for the W8A8 pack/unpack utilities in
-   :mod:`worldfoundry_inf.quantize` (W26 CPU prep). The acceptance gate
+   :mod:`worldfoundry_inf.compile.quantize_primitives` (W26 CPU prep). The acceptance gate
    is MSE <= ``ACCEPTANCE_MSE_THRESHOLD`` (= 1e-3) on a random bf16
    tensor — tight enough that a broken unpacker fails loudly but
    generous enough that float32 round-off is invisible.
@@ -24,8 +24,8 @@ import pytest
 import torch
 
 from worldfoundry_inf import _vllm_ascend_plugin as plugin
-from worldfoundry_inf import quantize as quantize_mod
-from worldfoundry_inf.quantize import (
+from worldfoundry_inf.compile import quantize_primitives as quantize_mod
+from worldfoundry_inf.compile.quantize_primitives import (
     ACCEPTANCE_MSE_THRESHOLD,
     DEFAULT_QUANT_TYPE,
     is_w8a8_quantized,

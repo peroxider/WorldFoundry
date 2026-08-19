@@ -1,7 +1,7 @@
 # Atlas 硬件窗口 Runbook（W20 → W5 → W39）
 
 > 用途：Atlas 8×NPU 预约到位后，从「窗口开放」到「W20 baseline 入库」
-> 的端到端操作清单。本 runbook 配套 `scripts/w20_atlas_smoke.sh`（W20
+> 的端到端操作清单。本 runbook 配套 `scripts/archive/w20/w20_atlas_smoke.sh`（W20
 > 交付 #3，CPU-only 起草、syntax-clean，端到端需 NPU）。每一步都标注
 >「如果失败怎么办」——不在 Atlas 上浪费时间做考古。
 
@@ -48,11 +48,11 @@ ls -la /data/videomix22m/manifest.csv          # 期望存在
 
 ```bash
 # 2.1 直接跑（容器外调度，Docker 包装已内置）
-bash scripts/w20_atlas_smoke.sh
+bash scripts/archive/w20/w20_atlas_smoke.sh
 # 或：已经进容器内
-WORLDFORGE_NO_DOCKER=1 bash scripts/w20_atlas_smoke.sh
+WORLDFORGE_NO_DOCKER=1 bash scripts/archive/w20/w20_atlas_smoke.sh
 # 或：只跑 5 步门槛（不在 Atlas 上烧 100 步时间）
-bash scripts/w20_atlas_smoke.sh --steps 5
+bash scripts/archive/w20/w20_atlas_smoke.sh --steps 5
 ```
 
 预期产物：
