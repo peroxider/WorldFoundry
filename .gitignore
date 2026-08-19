@@ -20,3 +20,4 @@ om_cache/
 /.idea/
 /bench_results/
 /.venv-rlinf/
+/spikes/
