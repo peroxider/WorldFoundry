@@ -173,7 +173,7 @@
 - [ ] **C-T3** 在 `docker/worldfoundry-franka/Dockerfile` 引入可选层：
   - 取消对 vLLM-Ascend 的强依赖；允许基础层仅含 NPU + EGL/MuJoCo。
   - 提供 `--target npu` / `--target npu-vllm` / `--target npu-diffusion` 多 stage 构建。
-- [ ] **C-T4** 容器化 RLinf/verl：复用 `worldfoundry-franka` 镜像，挂载 `spikes/w35-3-rlinf/rlinf-src`（或相应 verl 包）作为可选层。
+- [ ] **C-T4** 容器化 RLinf/verl：复用 `worldfoundry-franka` 镜像，安装 PyPI 的 `rlinf==0.3.0`（见 `requirements/rlinf.txt`；W35 spike 已归档，不再挂载 `spikes/w35-3-rlinf/rlinf-src`）与相应 verl 包作为可选层。
 
 ### 4.3 文档与示例
 

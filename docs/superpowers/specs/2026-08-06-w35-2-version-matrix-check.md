@@ -49,7 +49,7 @@
 | `torchdata` | `0.11.0` | 数据加载 |
 | `triton` | `3.7.1` | 编译器内核（NPU 侧通常禁用） |
 
-> **注**：vllm-ascend / Megatron / DeepSpeed / FlashAttention 等均**不在 RLinf 默认依赖**——RLinf v0.3 的 actor 走 HF `transformers` + FSDP；rollout 走 huggingface worker（不经推理引擎）——证据见 `spikes/w35-3-rlinf/integration-points-memo.md` c 节（"无 vLLM/SGLang 依赖 ⇒ VJEPA2 encoder 的前向（torch 原生）可直接在 rollout worker 内执行"）。
+> **注**：vllm-ascend / Megatron / DeepSpeed / FlashAttention 等均**不在 RLinf 默认依赖**——RLinf v0.3 的 actor 走 HF `transformers` + FSDP；rollout 走 huggingface worker（不经推理引擎）——证据见 `docs/superpowers/specs/2026-08-04-w35-3-rlinf-integration-points-memo.md` c 节（"无 vLLM/SGLang 依赖 ⇒ VJEPA2 encoder 的前向（torch 原生）可直接在 rollout worker 内执行"）。
 
 ---
 
@@ -174,6 +174,6 @@
 - 项目锁：`pyproject.toml:12,29-30`
 - RLinf v0.3 实际依赖：`spikes/w35-3-rlinf/pip-freeze.txt`
 - W35 ADR：`docs/superpowers/specs/2026-08-04-w35-rl-framework-adr.md`
-- W35.3 spike 集成点纪要：`spikes/w35-3-rlinf/integration-points-memo.md`
-- W35.3 spike 成本评估：`spikes/w35-3-rlinf/integration-cost-assessment.md`
+- W35.3 spike 集成点纪要：`docs/superpowers/specs/2026-08-04-w35-3-rlinf-integration-points-memo.md`
+- W35.3 spike 成本评估：`docs/superpowers/specs/2026-08-04-w35-3-rlinf-integration-cost-assessment.md`
 - W28 编排设计（D7/D9/D10 决策）：`docs/superpowers/specs/2026-08-06-w28-train-inference-orchestration-design.md`

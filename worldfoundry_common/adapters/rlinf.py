@@ -9,9 +9,11 @@ Wraps RLinf's orchestration behind WorldFoundry's adapter contracts:
   WorldFoundry simulator (mock / mujoco / droid / …) can be rolled out by an
   RLinf worker.
 
-RLinf lives under ``spikes/w35-3-rlinf`` (evaluated in W35) and is not yet a
-declared dependency (verl superseded it). Both adapters import ``rlinf``
-lazily so this module imports cleanly when RLinf is absent.
+RLinf is an optional dependency (``rlinf==0.3.0``, see
+``requirements/rlinf.txt``; the W35 spike that evaluated it concluded and
+verl superseded it as the recommended external RL framework). Both
+adapters import ``rlinf`` lazily so this module imports cleanly when
+RLinf is absent.
 """
 from __future__ import annotations
 
@@ -28,8 +30,8 @@ def _require_rlinf(component: str) -> Any:
     except ImportError as exc:  # pragma: no cover - depends on env
         raise ImportError(
             f"rlinf is required to build the {component}. "
-            "It is vendored under spikes/w35-3-rlinf and not yet a declared "
-            "dependency; install it first."
+            "Install it first: pip install rlinf==0.3.0 "
+            "(see requirements/rlinf.txt)."
         ) from exc
     return rlinf
 

@@ -126,7 +126,7 @@ registry.register(
         "RLinf embodied-RL framework runner adapter (RLinfRunner).",
         build=_build_rlinf,
         available=_rlinf_available,
-        hint="RLinf is vendored under spikes/w35-3-rlinf; install it to use this backend.",
+        hint="pip install rlinf==0.3.0 (see requirements/rlinf.txt) to use this backend.",
     ),
 )
 
