@@ -111,7 +111,17 @@ def parse_args(argv=None) -> argparse.Namespace:
              "tubelet_size=1 (W2.18 default).",
     )
     # env / data
-    p.add_argument("--env", choices=("mock", "franka_kitchen"), default="mock")
+    p.add_argument(
+        "--env",
+        choices=("mock", "mujoco", "franka_kitchen", "droid", "manipulator"),
+        default="mock",
+        help="Env for the policy phase. ``mock`` (default) is the in-process "
+             "random agent; ``franka_kitchen`` / ``mujoco`` (alias) use a "
+             "real MuJoCo 9-DoF manipulation env via dm_control.manipulation; "
+             "``manipulator`` uses the dm_control 5-DoF bring_ball env "
+             "(flat obs 27-dim, action 5-dim); ``droid`` is offline dataset "
+             "replay only and cannot drive the live policy loop.",
+    )
     p.add_argument("--franka-task-name", default="lift_brick_features")
     p.add_argument("--data-source", choices=("synthetic", "franka_kitchen"),
                    default="synthetic")
@@ -140,14 +150,28 @@ def main(argv=None) -> int:
     args = parse_args(argv)
 
     # franka env overrides obs/action dims (mirrors render_train_rl_cpu.py).
-    if args.env == "franka_kitchen":
+    if args.env in ("franka_kitchen", "mujoco"):
         obs_dim, action_dim = 6, 9
+    elif args.env == "manipulator":
+        # Flat 27-dim obs (5+5+5+3+3+3+3) / 5-DoF action — mirrors
+        # render_train_rl_cpu.py's _ManipulatorAdapter.FLAT_OBS_DIM/ACTION_DIM.
+        obs_dim, action_dim = 27, 5
+    elif args.env == "droid":
+        print(
+            "ERROR: --env=droid is offline dataset replay only (no live "
+            "reset/step env); it cannot drive the policy phase. Use "
+            "--env=mock / franka_kitchen / mujoco / manipulator.",
+            file=sys.stderr,
+        )
+        return 2
     else:
         obs_dim, action_dim = args.obs_dim, args.action_dim
-    if args.data_source == "franka_kitchen" and args.env != "franka_kitchen":
+    if args.data_source == "franka_kitchen" and args.env not in (
+        "franka_kitchen", "mujoco",
+    ):
         print(
             f"ERROR: --data-source=franka_kitchen requires --env=franka_kitchen "
-            f"(env={args.env})",
+            f"or --env=mujoco (env={args.env})",
             file=sys.stderr,
         )
         return 2

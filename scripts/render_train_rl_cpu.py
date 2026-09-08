@@ -934,6 +934,56 @@ class _FrankaKitchenAdapter:
         return np.concatenate([ee, tgt])
 
 
+class _ManipulatorAdapter:
+    """Adapter: ManipulatorEnv (dict obs, 5-dim action) -> flat obs (27-dim).
+
+    Translates ``ManipulatorEnv``'s dm_control dict observation to a flat
+    ``np.ndarray`` so it slots into the orchestrator's existing
+    ``VisionPolicy.from_state_dim`` contract, mirroring
+    :class:`_FrankaKitchenAdapter`.
+
+    The 27 dims concatenate dm_control ``manipulator:bring_ball``'s obs
+    keys in a fixed order: ``arm_pos(5) + arm_vel(5) + touch(5) +
+    hand_pos(3) + object_pos(3) + object_vel(3) + target_pos(3)``.
+    Action is 5-DoF continuous (dm_control clamps internally).
+
+    See :class:`worldfoundry_rl.env_manipulator.ManipulatorEnv`
+    (W41 Phase-5 v1 deliverable).
+    """
+
+    FLAT_OBS_DIM = 27  # 5+5+5+3+3+3+3
+    ACTION_DIM = 5
+    _KEYS = (
+        "arm_pos", "arm_vel", "touch",
+        "hand_pos", "object_pos", "object_vel", "target_pos",
+    )
+
+    def __init__(self, seed: int = 0):
+        from worldfoundry_rl.env_manipulator import ManipulatorEnv
+
+        self._env = ManipulatorEnv(seed=seed)
+
+    def reset(self, *, seed=None, options=None):
+        obs_dict, info = self._env.reset(seed=seed, options=options)
+        return self._flatten(obs_dict), info
+
+    def step(self, action):
+        obs_dict, reward, term, trunc, info = self._env.step(action)
+        return self._flatten(obs_dict), reward, term, trunc, info
+
+    def close(self):
+        self._env.close()
+
+    @staticmethod
+    def _flatten(obs_dict: dict) -> np.ndarray:
+        return np.concatenate(
+            [
+                np.asarray(obs_dict[k], dtype=np.float32).ravel()
+                for k in _ManipulatorAdapter._KEYS
+            ]
+        )
+
+
 def _env_seed_pixel_frame(env: Any, cfg: V2Config, device: str) -> torch.Tensor:
     """Return ``(1, num_context_frames, 3, H, W)`` float in ``[0, 1]``.
 
@@ -975,8 +1025,16 @@ def policy_bootstrap_phase(cfg: V2Config, ckpt: Path, device: str) -> dict[str, 
     # Defer the env import so the cold-start path of the orchestrator
     # does not pay dm_control's loader cost when running --env=mock.
     def _build_env(cfg: V2Config):
-        if cfg.env_type == "franka_kitchen":
+        if cfg.env_type in ("franka_kitchen", "mujoco"):
             return _FrankaKitchenAdapter(cfg.franka_task_name, seed=cfg.seed)
+        if cfg.env_type == "manipulator":
+            return _ManipulatorAdapter(seed=cfg.seed)
+        if cfg.env_type == "droid":
+            raise ValueError(
+                "--env=droid is offline dataset replay only (no live "
+                "reset/step env); it cannot drive the policy phase. Use "
+                "--env=mock / franka_kitchen / mujoco / manipulator."
+            )
         return _MockCPUEnv(cfg.obs_dim, cfg.action_dim, seed=cfg.seed)
 
     t0 = time.perf_counter()
@@ -1485,11 +1543,18 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="World-model train steps per outer iteration.")
     p.add_argument("--num-ppo-epochs", type=int, default=4,
                    help="PPO epochs per (rollout, update) cycle. RLinf default is 4-8.")
-    p.add_argument("--env", choices=("mock", "franka_kitchen"), default="mock",
+    p.add_argument("--env",
+                   choices=("mock", "mujoco", "franka_kitchen", "droid", "manipulator"),
+                   default="mock",
                    help="Env for the policy phase. ``mock`` (default) is the "
                         "v2.x in-process random agent at ~3.5 s smoke. "
-                        "``franka_kitchen`` swaps in a real MuJoCo 9-DoF "
-                        "manipulation env via dm_control.manipulation.")
+                        "``franka_kitchen`` / ``mujoco`` (alias) swap in a "
+                        "real MuJoCo 9-DoF manipulation env via "
+                        "dm_control.manipulation. ``manipulator`` uses the "
+                        "dm_control 5-DoF manipulator:bring_ball env "
+                        "(flat obs 27-dim, action 5-dim). ``droid`` is "
+                        "offline dataset replay only and cannot drive the "
+                        "live policy loop.")
     p.add_argument("--franka-task-name", default="lift_brick_features",
                    help="dm_control.manipulation task name when "
                         "--env=franka_kitchen. Available: lift_brick_features, "
@@ -1982,21 +2047,36 @@ def main(argv=None) -> int:
     # This anchors the rest of the trace (each subsequent sample tells
     # us how much MORE memory the encoder+EMA+optimizer adds).
     rss_after_imports_mb = _rss_mb()
-    # When the franka_kitchen env is selected, override obs_dim + action_dim
-    # BEFORE constructing V2Config: VisionPolicy.from_state_dim is built off
-    # cfg.action_dim / cfg.obs_dim in policy_bootstrap_phase, and the
-    # adapter's flat obs is exactly 6-dim (ee_pos 3 + target_pos 3).
-    if args.env == "franka_kitchen":
+    # When the franka_kitchen / mujoco env is selected, override obs_dim +
+    # action_dim BEFORE constructing V2Config: VisionPolicy.from_state_dim
+    # is built off cfg.action_dim / cfg.obs_dim in
+    # policy_bootstrap_phase, and the adapter's flat obs is exactly 6-dim
+    # (ee_pos 3 + target_pos 3). ``manipulator`` overrides to the
+    # _ManipulatorAdapter flat 27-dim obs / 5-dim action; ``droid`` is
+    # offline replay and rejected up front.
+    if args.env in ("franka_kitchen", "mujoco"):
         obs_dim = 6
         action_dim = 9
+    elif args.env == "manipulator":
+        obs_dim = _ManipulatorAdapter.FLAT_OBS_DIM
+        action_dim = _ManipulatorAdapter.ACTION_DIM
+    elif args.env == "droid":
+        raise SystemExit(
+            "--env=droid is offline dataset replay only (no live "
+            "reset/step env); it cannot drive the policy phase. Use "
+            "--env=mock / franka_kitchen / mujoco / manipulator."
+        )
     else:
         obs_dim = args.obs_dim
         action_dim = args.action_dim
-    # W2.16 cross-validation: franka data source needs a frankk env to drive.
-    if args.data_source == "franka_kitchen" and args.env != "franka_kitchen":
+    # W2.16 cross-validation: franka data source needs a franka env to drive.
+    if args.data_source == "franka_kitchen" and args.env not in (
+        "franka_kitchen", "mujoco",
+    ):
         raise SystemExit(
-            f"--data-source=franka_kitchen requires --env=franka_kitchen "
-            f"(env={args.env}); the collector has no env to drive otherwise."
+            f"--data-source=franka_kitchen requires --env=franka_kitchen or "
+            f"--env=mujoco (env={args.env}); the collector has no env to "
+            f"drive otherwise."
         )
     # W22-quant cross-validation: ``--quant`` only takes effect on the
     # HF encoder path. The tiny stack has no torchao integration, so
@@ -2476,14 +2556,14 @@ def main(argv=None) -> int:
             "Action-conditioned predictor (`TinyActionConditionedPredictor`) wires the policy's action into the predictor's transformer as a FiLM-style additive bias.",
             (
                 f"Env for policy phase: "
-                f"{'real MuJoCo 9-DoF manipulation (dm_control.manipulation/' + cfg.franka_task_name + ') via FrankaKitchenEnv + _FrankaKitchenAdapter' if cfg.env_type == 'franka_kitchen' else 'in-process random agent (_MockCPUEnv); no mujoco/dm_control dep — matches v1 CPU-only promise'}."
+                f"{'real MuJoCo 9-DoF manipulation (dm_control.manipulation/' + cfg.franka_task_name + ') via FrankaKitchenEnv + _FrankaKitchenAdapter' if cfg.env_type in ('franka_kitchen', 'mujoco') else ('real dm_control 5-DoF manipulator:bring_ball via ManipulatorEnv + _ManipulatorAdapter' if cfg.env_type == 'manipulator' else 'in-process random agent (_MockCPUEnv); no mujoco/dm_control dep — matches v1 CPU-only promise')}."
             ),
             "PPO IS trained here (default 4 epochs per outer iter) — reward_pre -> reward_post proves policy learned from world-model imagination.",
             "v2.2 outer iterative loop: world-model train <-> PPO update repeated N times (RLinf's defining pattern). reward_trend_delta quantifies whether reward is trending up across iters.",
             (
-                f"env_type={cfg.env_type!r}; obs_dim={cfg.obs_dim} (ee_pos 3 + target_pos 3 for franka_kitchen); "
-                f"action_dim={cfg.action_dim} (9-DoF for franka_kitchen)."
-            ) if cfg.env_type == "franka_kitchen" else f"env_type={cfg.env_type!r}.",
+                f"env_type={cfg.env_type!r}; obs_dim={cfg.obs_dim} (ee_pos 3 + target_pos 3 for franka_kitchen/mujoco; 27-dim flat for manipulator); "
+                f"action_dim={cfg.action_dim} (9-DoF for franka_kitchen/mujoco; 5-DoF for manipulator)."
+            ) if cfg.env_type in ("franka_kitchen", "mujoco", "manipulator") else f"env_type={cfg.env_type!r}.",
             (
                 f"data_source={cfg.data_source!r} "
                 f"({'real FrankaKitchen RGB + aligned action transitions via dm_control.physics.render' if cfg.data_source == 'franka_kitchen' else 'procedural cv2 .mp4s (v2.x contract)'}) "

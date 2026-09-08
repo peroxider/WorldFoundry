@@ -21,3 +21,5 @@ om_cache/
 /bench_results/
 /.venv-rlinf/
 /spikes/
+/.playwright-cli/
+/docs/architecture-images/
